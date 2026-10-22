@@ -234,7 +234,7 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
             <p className="text-sm">Receipt {order.receiptNumber}{order.source === 'offline' ? ' · pending cloud verification' : ''}</p>
           </div>
         </div>
-        <ReceiptPaper doc={data?.doc} />
+        <ReceiptPaper doc={data?.doc} animate />
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" icon={<Printer className="h-4 w-4" />} onClick={print} disabled={(data?.printCount ?? 0) > 0 && !can('receipts.reprint')}>
             {(data?.printCount ?? 0) > 0 ? 'Reprint (duplicate)' : 'Print receipt'}
