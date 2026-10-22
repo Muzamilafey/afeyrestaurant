@@ -4,6 +4,7 @@ import { Order, Payment, PaymentAttempt, Receipt, Refund, Customer } from '../..
 import { PERMISSIONS as P } from '../../auth/permissions';
 import * as svc from '../../services/orders';
 import * as pay from '../../services/payments';
+import { receiptDoc } from '../../services/receipt';
 import { zApproval } from '../../services/approval';
 import { audit } from '../../services/audit';
 import { notify } from '../../services/notify';
@@ -119,7 +120,7 @@ m.route({ method: 'get', path: '/:id/receipt', summary: 'Structured receipt or p
   const order = await svc.loadOrder(ctx, params.id);
   const r = await pay.buildReceipt(ctx.tenantId, order._id);
   const rec = await Receipt.findOne({ tenantId: ctx.tenantId, orderId: order._id, kind: 'receipt' }).lean();
-  return { receipt: r, text: pay.receiptText(r), printCount: rec?.printCount ?? 0 };
+  return { receipt: r, doc: receiptDoc(r), text: pay.receiptText(r), printCount: rec?.printCount ?? 0 };
 });
 /**
  * Register a print of a receipt. The first successful print is the ORIGINAL; any later print is a DUPLICATE COPY
@@ -140,7 +141,7 @@ m.route({ method: 'post', path: '/:id/receipt/print', summary: 'Record a receipt
   await rec.save();
   if (copy === 'duplicate' && body.status === 'printed') await audit(ctx, { action: 'receipt.reprint', entity: 'Order', entityId: order._id, reason: body.reason }, req);
   const r = await pay.buildReceipt(ctx.tenantId, order._id);
-  return { copy, text: pay.receiptText(r, copy), receipt: r };
+  return { copy, doc: receiptDoc(r, copy), text: pay.receiptText(r, copy), receipt: r };
 });
 m.route({ method: 'post', path: '/:id/receipt/send', summary: 'Send the receipt by SMS or email', permission: P.ORDERS_VIEW, body: z.object({ channel: z.enum(['sms', 'email']), to: z.string().min(5).max(120) }) }, async ({ ctx, params, body }) => {
   const order = await svc.loadOrder(ctx, params.id);

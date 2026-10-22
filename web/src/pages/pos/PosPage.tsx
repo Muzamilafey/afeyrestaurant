@@ -8,7 +8,7 @@ import { Button, Input, Modal, Pill, Select, Skeleton, StatusPill, cx, Empty, Fi
 import { ApiError, get, post, patch } from '@/lib/api';
 import { money, uuid, toCents } from '@/lib/format';
 import { cacheCatalog, cachedCatalog, queueOfflineOrder, terminalId } from '@/lib/offline';
-import { printText } from '@/lib/printing';
+import { printReceipt, type ReceiptDoc } from '@/lib/printing';
 import { useOnline } from '@/layout/AppShell';
 import { ProductCard } from './ProductCard';
 import { ModifierDialog } from './ModifierDialog';
@@ -276,11 +276,32 @@ export default function PosPage() {
       items: draft.map((d) => ({ lineId: d.lineId, productId: d.productId, qty: d.qty, variant: d.variant, modifiers: d.modifiers.map(({ groupId, optionId }) => ({ groupId, optionId })), notes: d.notes, unitPrice: d.unitPrice, name: d.name })),
       payments: [{ clientPaymentId: uuid(), method: 'cash', amount: total, tendered: total }],
     });
-    const text = [session?.business?.name, branch?.name, '*** OFFLINE SALE — PENDING SYNC ***', `Ref: ${clientId.slice(0, 8).toUpperCase()}`, new Date().toLocaleString(), '-'.repeat(32), ...draft.map((d) => `${d.qty} x ${d.name}`.padEnd(22) + (d.unitPrice * d.qty / 100).toFixed(2).padStart(10)), '-'.repeat(32), 'TOTAL (CASH)'.padEnd(22) + (total / 100).toFixed(2).padStart(10)].join('\n');
+    const amt = (c: number) => (c / 100).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const offlineDoc: ReceiptDoc = {
+      kind: 'receipt',
+      copy: 'original',
+      lines: [
+        ...(session?.business?.branding?.logoUrl ? [{ k: 'logo' as const, url: session.business.branding.logoUrl }] : []),
+        { k: 'title', t: (session?.business?.name ?? 'Chili POS').toUpperCase() },
+        ...(branch?.name ? [{ k: 'center' as const, t: branch.name, bold: true }] : []),
+        { k: 'rule', heavy: true },
+        { k: 'banner', t: 'OFFLINE SALE - PENDING SYNC' },
+        { k: 'row', l: 'Reference', r: clientId.slice(0, 8).toUpperCase() },
+        { k: 'row', l: 'Date', r: new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) },
+        { k: 'rule' },
+        ...draft.map((d) => ({ k: 'item' as const, qty: d.qty, name: d.name, total: amt(d.unitPrice * d.qty), each: d.qty > 1 ? amt(d.unitPrice) : undefined, mods: [] })),
+        { k: 'rule', heavy: true },
+        { k: 'row', l: 'TOTAL', r: `KSh ${amt(total)}`, bold: true, big: true },
+        { k: 'row', l: 'Cash', r: amt(total), bold: true },
+        { k: 'rule' },
+        { k: 'center', t: 'Official receipt issued once the sale syncs.', muted: true },
+        { k: 'center', t: 'Powered by Chili POS', muted: true },
+      ],
+    };
     setOfflineReceipt({ _id: clientId, number: clientId.slice(0, 8), totals: { total } } as Order);
     resetDraft();
     try {
-      printText(text, 'Offline receipt');
+      printReceipt(offlineDoc, 'Offline receipt');
     } catch {
       /* printing is optional */
     }
@@ -313,8 +334,8 @@ export default function PosPage() {
 
   async function printBill() {
     if (!order) return;
-    const r = await get<{ text: string }>(`/orders/${order._id}/receipt`).catch(handleError);
-    if (r) printText(r.text.replace('Receipt: (unpaid bill)', '*** PRELIMINARY BILL — NOT A RECEIPT ***'), 'Bill');
+    const r = await get<{ doc: ReceiptDoc }>(`/orders/${order._id}/receipt`).catch(handleError);
+    if (r) printReceipt(r.doc, 'Bill');
   }
 
   // Barcode scanners type the code and press Enter.

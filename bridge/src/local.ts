@@ -60,7 +60,7 @@ export function startLocalServer() {
         const body = await readBody(req);
         const printer = state.printers.find((p) => String(p._id) === body.printerId) ?? state.printers.find((p) => p.role === (body.role ?? 'receipt'));
         if (!printer?.host) return json(res, 404, { error: 'No network printer configured for this role' });
-        await sendToNetworkPrinter(printer.host, printer.port ?? 9100, render(body.kind ?? 'receipt', { text: String(body.text ?? ''), copy: body.copy, openDrawer: !!body.openDrawer }, printer.paperWidth ?? 80));
+        await sendToNetworkPrinter(printer.host, printer.port ?? 9100, render(body.kind ?? 'receipt', { text: String(body.text ?? ''), doc: body.doc, copy: body.copy, openDrawer: !!body.openDrawer }, printer.paperWidth ?? 80));
         return json(res, 200, { ok: true });
       }
 

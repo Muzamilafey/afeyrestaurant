@@ -161,6 +161,13 @@ describe('table order → kitchen/bar → payment', () => {
     expect((await chef.as(api().post(`/api/v1/stations/tickets/${kt._id}/status`).send({ status: 'completed' }))).status).toBe(200);
     // Receipt: original, then duplicate needs permission + reason
     const p1 = await cashier.as(api().post(`/api/v1/orders/${orderId}/receipt/print`).send({}));
+    // Structured receipt for the browser and thermal printers
+    expect(p1.body.data.doc).toMatchObject({ kind: 'receipt', copy: 'original' });
+    const kinds = p1.body.data.doc.lines.map((l: { k: string }) => l.k);
+    expect(kinds).toEqual(expect.arrayContaining(['title', 'item', 'row', 'rule']));
+    expect(p1.body.data.doc.lines.find((l: { k: string; l?: string }) => l.k === 'row' && l.l === 'TOTAL')).toMatchObject({ big: true, r: expect.stringMatching(/^KSh [\d,]+\.\d{2}$/) });
+    expect(p1.body.data.text).toContain('SALES RECEIPT');
+    expect(p1.body.data.text).toMatch(/Receipt No\. +RC-WST-/);
     expect(p1.body.data.copy).toBe('original');
     expect(p1.body.data.text).not.toContain('DUPLICATE');
     const p2 = await cashier.as(api().post(`/api/v1/orders/${orderId}/receipt/print`).send({ reason: 'Customer copy' }));

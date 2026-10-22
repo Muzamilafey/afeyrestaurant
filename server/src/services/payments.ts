@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Types, ClientSession } from 'mongoose';
-import { Order, type OrderDoc, Payment, PaymentAttempt, Refund, Customer, LoyaltyAccount, LoyaltyTransaction, Tenant, Branch, Receipt, KitchenTicket } from '../models';
+import { Order, type OrderDoc, Payment, PaymentAttempt, Refund, Customer, LoyaltyAccount, LoyaltyTransaction, Tenant, Branch, Receipt, KitchenTicket, User } from '../models';
 import type { BranchContext } from '../http/context';
 import { AppError, badRequest, conflict, notFound, unprocessable } from '../lib/errors';
 import { PERMISSIONS as P } from '../auth/permissions';
@@ -20,6 +20,7 @@ import { normalizeKePhone } from '../lib/phone';
 import { randomToken, sha256 } from '../lib/crypto';
 import { env } from '../config/env';
 import { recordIntegrationResult } from './integrations';
+import { receiptDoc, docToText, type ReceiptData } from './receipt';
 import { findOpenDrawer, noDrawerMessage } from './cash';
 import { logger } from '../lib/logger';
 import { toMajor } from '../lib/money';
@@ -489,42 +490,28 @@ export async function refundPayment(ctx: BranchContext, paymentId: string, input
 }
 
 /** Structured receipt used by the print bridge, browser printing and email. */
-export async function buildReceipt(tenantId: Types.ObjectId, orderId: Types.ObjectId | string) {
+export async function buildReceipt(tenantId: Types.ObjectId, orderId: Types.ObjectId | string): Promise<ReceiptData> {
   const order = await Order.findOne({ tenantId, _id: orderId }).lean();
   if (!order) throw notFound('Order');
-  const [tenant, branch, payments] = await Promise.all([
+  const [tenant, branch, payments, cashier] = await Promise.all([
     Tenant.findById(tenantId).lean(),
     Branch.findOne({ tenantId, _id: order.branchId }).lean(),
-    Payment.find({ tenantId, orderId: order._id }).lean(),
+    Payment.find({ tenantId, orderId: order._id }).sort({ receivedAt: 1 }).lean(),
+    order.cashierId ? User.findOne({ tenantId, _id: order.cashierId }, { name: 1 }).lean() : null,
   ]);
-  const lines = order.items.filter((i) => !i.voided).map((i) => ({ name: i.name, qty: i.qty, unitPrice: i.unitPrice, total: i.lineTotal, modifiers: i.modifiers.map((m) => m.name), complimentary: !!i.complimentary }));
+  const lines = order.items.filter((i) => !i.voided).map((i) => ({ name: i.name, qty: i.qty, unitPrice: i.unitPrice, total: i.lineTotal, modifiers: i.modifiers.map((m) => m.name ?? '').filter(Boolean), complimentary: !!i.complimentary }));
   return {
-    business: { name: tenant?.name, kraPin: tenant?.kraPin, header: tenant?.branding?.receiptHeader, footer: tenant?.branding?.receiptFooter },
+    business: { name: tenant?.name, kraPin: tenant?.kraPin, header: tenant?.branding?.receiptHeader, footer: tenant?.branding?.receiptFooter, logoUrl: tenant?.branding?.logoUrl, timezone: tenant?.settings?.timezone },
     branch: { name: branch?.name, address: branch?.address, phone: branch?.phone },
-    order: { number: order.number, receiptNumber: order.receiptNumber, type: order.type, table: order.tableNumber, waiter: order.waiterName, createdAt: (order as { createdAt?: Date }).createdAt, paidAt: order.paidAt, status: order.status, offline: order.source === 'offline' },
+    order: { number: order.number, receiptNumber: order.receiptNumber, type: order.type, table: order.tableNumber, waiter: order.waiterName, cashier: cashier?.name, customer: order.customerName, guests: order.guests, createdAt: (order as { createdAt?: Date }).createdAt, paidAt: order.paidAt, status: order.status, offline: order.source === 'offline' },
     lines,
     totals: order.totals,
     taxes: order.taxBreakdown,
-    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference, verification: p.verification })),
+    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference, phone: p.phone })),
   };
 }
 
-export function receiptText(r: Awaited<ReturnType<typeof buildReceipt>>, copy: 'original' | 'duplicate' = 'original') {
-  const m = (c: number) => (c / 100).toFixed(2);
-  const out: string[] = [];
-  out.push(r.business.name ?? '', r.branch.name ?? '');
-  if (r.business.kraPin) out.push(`PIN: ${r.business.kraPin}`);
-  if (copy === 'duplicate') out.push('*** DUPLICATE COPY ***');
-  out.push(`Receipt: ${r.order.receiptNumber ?? '(unpaid bill)'}`, `Order: ${r.order.number}${r.order.table ? `  Table ${r.order.table}` : ''}`, '-'.repeat(32));
-  for (const l of r.lines) out.push(`${l.qty} x ${l.name}`.padEnd(22) + (l.complimentary ? 'COMP' : m(l.total)).padStart(10));
-  out.push('-'.repeat(32), `Subtotal`.padEnd(22) + m(r.totals!.subtotal).padStart(10));
-  if (r.totals!.discount) out.push(`Discount`.padEnd(22) + `-${m(r.totals!.discount)}`.padStart(10));
-  if (r.totals!.serviceCharge) out.push(`Service charge`.padEnd(22) + m(r.totals!.serviceCharge).padStart(10));
-  for (const t of r.taxes ?? []) out.push(`${t.code} ${(t.rateBps! / 100).toFixed(0)}%${t.inclusive ? ' (incl)' : ''}`.padEnd(22) + m(t.amount!).padStart(10));
-  out.push(`TOTAL`.padEnd(22) + m(r.totals!.total).padStart(10));
-  for (const p of r.payments) out.push(`${p.method.toUpperCase()} ${p.reference ?? ''}`.padEnd(22) + m(p.amount).padStart(10));
-  if (r.order.offline) out.push('Recorded offline — pending cloud verification');
-  if (r.business.footer) out.push('', r.business.footer);
-  return out.join('\n');
+export function receiptText(r: ReceiptData, copy: 'original' | 'duplicate' = 'original') {
+  return docToText(receiptDoc(r, copy));
 }
 

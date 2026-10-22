@@ -7,6 +7,7 @@ import { renderTemplate, smsSegments } from '../src/lib/template';
 import { encryptSecret, decryptSecret, maskSecret } from '../src/lib/crypto';
 import { toBaseQty } from '../src/lib/units';
 import { toCsv } from '../src/services/attendance';
+import { receiptDoc, docToText } from '../src/services/receipt';
 
 describe('pricing', () => {
   const vat = { _id: new Types.ObjectId(), code: 'VAT', rateBps: 1600, inclusive: true };
@@ -78,5 +79,39 @@ describe('helpers', () => {
   });
   it('neutralises CSV formula injection', () => {
     expect(toCsv([{ a: '=HYPERLINK("x")', b: 'ok' }])).toContain(`"'=HYPERLINK(""x"")"`);
+  });
+});
+
+describe('receipt layout', () => {
+  const data = {
+    business: { name: 'Afey Resort', kraPin: 'P051234567X', footer: 'Asante sana!', timezone: 'Africa/Nairobi' },
+    branch: { name: 'Main', phone: '0712 345 678' },
+    order: { number: 'ORD-1', receiptNumber: 'RC-1', type: 'dine_in', table: 'M1', waiter: 'Grace', guests: 2, paidAt: new Date('2026-10-22T16:21:00Z'), status: 'paid' },
+    lines: [{ name: 'Classic Beef Burger with a very long descriptive name', qty: 2, unitPrice: 110000, total: 220000, modifiers: ['Medium'], complimentary: false }, { name: 'Water', qty: 1, unitPrice: 5000, total: 5000, modifiers: [], complimentary: true }],
+    totals: { subtotal: 225000, discount: 0, serviceCharge: 0, total: 220000, paid: 220000, balance: 0 },
+    taxes: [{ code: 'VAT', rateBps: 1600, inclusive: true, amount: 30345 }],
+    payments: [{ method: 'mpesa', amount: 100000, reference: 'SJK8H2LQ1P', phone: '0712345678' }, { method: 'cash', amount: 120000, tendered: 150000, change: 30000 }],
+  };
+  it('lays out a receipt that fits the paper width, with local time and masked phone numbers', () => {
+    for (const cols of [32, 40, 48]) {
+      const text = docToText(receiptDoc(data), cols);
+      expect(text.split('\n').every((l) => l.length <= cols)).toBe(true);
+    }
+    const text = docToText(receiptDoc(data));
+    expect(text).toContain('AFEY RESORT');
+    expect(text).toContain('22 Oct 2026  19:21'); // Nairobi time
+    expect(text).toMatch(/TOTAL +KSh 2,200\.00/);
+    expect(text).toContain('0712***678');
+    expect(text).not.toContain('0712345678');
+    expect(text).toMatch(/Change +300\.00/);
+    expect(text).toMatch(/1 x Water +FREE/);
+    expect(text).toMatch(/VAT 16% included +303\.45/);
+  });
+  it('marks bills and duplicates', () => {
+    const bill = docToText(receiptDoc({ ...data, order: { ...data.order, status: 'open', receiptNumber: null }, payments: [], totals: { ...data.totals, paid: 0 } }));
+    expect(bill).toContain('BILL - NOT A RECEIPT');
+    expect(bill).toMatch(/AMOUNT DUE +KSh 2,200\.00/);
+    expect(bill).not.toContain('Receipt No.');
+    expect(docToText(receiptDoc(data, 'duplicate'))).toContain('*** DUPLICATE COPY ***');
   });
 });

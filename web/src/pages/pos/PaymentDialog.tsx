@@ -5,7 +5,8 @@ import { Button, Field, Input, Modal, Pill, Select, cx } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { api, get, post } from '@/lib/api';
 import { money, toCents, uuid, fromCents } from '@/lib/format';
-import { printText } from '@/lib/printing';
+import { printReceipt, type ReceiptDoc } from '@/lib/printing';
+import { ReceiptPaper } from '@/components/ReceiptPaper';
 import { useAuth } from '@/auth/AuthContext';
 import type { Order } from './types';
 
@@ -186,7 +187,7 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
   const { toast, handleError, confirm } = useFeedback();
   const { can } = useAuth();
   const [to, setTo] = useState(order.customerPhone ? `0${order.customerPhone.slice(3)}` : '');
-  const { data, refetch } = useQuery<{ text: string; printCount: number }>({ queryKey: ['receipt', order._id], queryFn: () => get(`/orders/${order._id}/receipt`) });
+  const { data, refetch } = useQuery<{ text: string; doc: ReceiptDoc; printCount: number }>({ queryKey: ['receipt', order._id], queryFn: () => get(`/orders/${order._id}/receipt`) });
   async function print() {
     try {
       let reason: string | undefined;
@@ -198,13 +199,13 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
       // Use the branch's network receipt printer (via the local bridge) when one is set up; otherwise the browser.
       const printers = await get<Array<{ _id: string; role: string; connection: string; active: boolean; name: string }>>('/integrations/printers').catch(() => []);
       const receiptPrinter = printers.find((p) => p.active && p.role === 'receipt' && p.connection !== 'browser');
-      const r = await post<{ text: string; copy: 'original' | 'duplicate' }>(`/orders/${order._id}/receipt/print`, { reason, printer: receiptPrinter?.name ?? 'browser' });
+      const r = await post<{ text: string; doc: ReceiptDoc; copy: 'original' | 'duplicate' }>(`/orders/${order._id}/receipt/print`, { reason, printer: receiptPrinter?.name ?? 'browser' });
       if (receiptPrinter) {
-        await post(`/integrations/printers/${receiptPrinter._id}/jobs`, { kind: 'receipt', refId: order._id, copy: r.copy, payload: { text: r.text }, dedupeKey: `receipt:${order._id}:${r.copy}:${Date.now()}` });
+        await post(`/integrations/printers/${receiptPrinter._id}/jobs`, { kind: 'receipt', refId: order._id, copy: r.copy, payload: { text: r.text, doc: r.doc }, dedupeKey: `receipt:${order._id}:${r.copy}:${Date.now()}` });
         toast(`Sent to ${receiptPrinter.name}`);
       } else {
         try {
-          printText(r.text);
+          printReceipt(r.doc);
         } catch (e) {
           await post(`/orders/${order._id}/receipt/print`, { status: 'failed', error: (e as Error).message, printer: 'browser' });
           throw e;
@@ -233,7 +234,7 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
             <p className="text-sm">Receipt {order.receiptNumber}{order.source === 'offline' ? ' · pending cloud verification' : ''}</p>
           </div>
         </div>
-        <pre className="max-h-64 overflow-auto rounded-xl bg-page p-3 font-mono text-xs leading-relaxed">{data?.text ?? 'Loading…'}</pre>
+        <ReceiptPaper doc={data?.doc} />
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" icon={<Printer className="h-4 w-4" />} onClick={print} disabled={(data?.printCount ?? 0) > 0 && !can('receipts.reprint')}>
             {(data?.printCount ?? 0) > 0 ? 'Reprint (duplicate)' : 'Print receipt'}

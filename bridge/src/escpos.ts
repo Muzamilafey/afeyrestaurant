@@ -20,6 +20,14 @@ export class EscPos {
   size(double: boolean) {
     return this.raw(GS, 0x21, double ? 0x11 : 0x00);
   }
+  /** Double height only — keeps the full line width (used for the total). */
+  tall(on: boolean) {
+    return this.raw(GS, 0x21, on ? 0x01 : 0x00);
+  }
+  /** White on black (reverse) printing for banners. */
+  invert(on: boolean) {
+    return this.raw(GS, 0x42, on ? 1 : 0);
+  }
   text(s: string) {
     // Printers use a single-byte code page; replace characters they cannot print.
     this.chunks.push(Buffer.from(s.normalize('NFKD').replace(/[^\x20-\x7E\n]/g, '?'), 'ascii'));
@@ -65,9 +73,21 @@ export function sendToNetworkPrinter(host: string, port: number, data: Buffer, t
   });
 }
 
+/** Structured receipt from the server (server/src/services/receipt.ts). */
+export type ReceiptLine =
+  | { k: 'logo'; url: string }
+  | { k: 'title'; t: string }
+  | { k: 'center'; t: string; bold?: boolean; muted?: boolean }
+  | { k: 'banner'; t: string }
+  | { k: 'rule'; heavy?: boolean }
+  | { k: 'row'; l: string; r: string; bold?: boolean; big?: boolean; muted?: boolean }
+  | { k: 'item'; qty: number; name: string; total: string; each?: string; mods: string[] }
+  | { k: 'space' };
+
 export interface PrintPayload {
   title?: string;
   text?: string;
+  doc?: { kind: 'receipt' | 'bill'; copy: 'original' | 'duplicate'; lines: ReceiptLine[] };
   lines?: Array<{ qty?: number; name: string; notes?: string; modifiers?: string[] }>;
   meta?: string[];
   copy?: 'original' | 'duplicate';
@@ -89,6 +109,8 @@ export function render(kind: string, p: PrintPayload, paperWidth: 58 | 80): Buff
       if (l.notes) e.line(`   ! ${l.notes}`);
     }
     e.rule();
+  } else if (p.doc) {
+    renderDoc(e, p.doc.lines);
   } else {
     e.align('left');
     if (p.copy === 'duplicate') e.align('center').bold(true).line('*** DUPLICATE COPY ***').bold(false).align('left');
@@ -96,4 +118,72 @@ export function render(kind: string, p: PrintPayload, paperWidth: 58 | 80): Buff
   }
   if (p.openDrawer) e.openDrawer();
   return e.cut().build();
+}
+
+function wrap(s: string, width: number): string[] {
+  const out: string[] = [];
+  let cur = '';
+  for (const w of s.split(/\s+/).filter(Boolean)) {
+    if (!cur) cur = w;
+    else if (cur.length + 1 + w.length <= width) cur += ` ${w}`;
+    else {
+      out.push(cur);
+      cur = w;
+    }
+    while (cur.length > width) {
+      out.push(cur.slice(0, width));
+      cur = cur.slice(width);
+    }
+  }
+  if (cur) out.push(cur);
+  return out.length ? out : [''];
+}
+
+/** Lay out a structured receipt for the printer: big bold name and total, reverse banners, aligned columns. */
+function renderDoc(e: EscPos, lines: ReceiptLine[]) {
+  const W = e.width;
+  for (const l of lines) {
+    switch (l.k) {
+      case 'logo': // raster logos need per-printer setup; the business name is printed large instead
+        break;
+      case 'title':
+        e.align('center').bold(true).size(true);
+        for (const w of wrap(l.t, Math.floor(W / 2))) e.line(w);
+        e.size(false).bold(false).align('left');
+        break;
+      case 'center':
+        e.align('center').bold(!!l.bold);
+        for (const w of wrap(l.t, W)) e.line(w);
+        e.bold(false).align('left');
+        break;
+      case 'banner':
+        e.align('center').bold(true).invert(true).line(` ${l.t} `).invert(false).bold(false).align('left');
+        break;
+      case 'rule':
+        e.rule(l.heavy ? '=' : '-');
+        break;
+      case 'row':
+        e.bold(!!l.bold || !!l.big);
+        if (l.big) e.tall(true);
+        if (l.l.length + l.r.length + 1 <= W) e.pair(l.l, l.r);
+        else {
+          for (const w of wrap(l.l, W)) e.line(w);
+          e.align('right').line(l.r).align('left');
+        }
+        if (l.big) e.tall(false);
+        e.bold(false);
+        break;
+      case 'item': {
+        const [first, ...rest] = wrap(`${l.qty} x ${l.name}`, W - l.total.length - 1);
+        e.bold(true).pair(first, l.total).bold(false);
+        for (const r of rest) e.line(`    ${r}`);
+        if (l.each) e.line(`    @ ${l.each}`);
+        for (const m of l.mods) e.line(`    + ${m}`);
+        break;
+      }
+      case 'space':
+        e.line();
+        break;
+    }
+  }
 }
