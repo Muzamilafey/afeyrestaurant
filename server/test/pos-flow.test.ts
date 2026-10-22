@@ -347,3 +347,28 @@ describe('reports & reconciliation', () => {
     expect(close.body.data.variance).toBe(-5000);
   });
 });
+
+describe('owner dashboard', () => {
+  it('summarises today against yesterday with live floor status, and is limited to report users', async () => {
+    const r = await manager.as(api().get('/api/v1/dashboard').query({ range: 'today' }));
+    expect(r.status).toBe(200);
+    const d = r.body.data;
+    const paidToday = await Order.countDocuments({ tenantId: seed.tenantId, branchId: seed.mainBranchId, status: 'paid' });
+    expect(d.kpis.current.orders).toBe(paidToday);
+    expect(d.kpis.current.revenue).toBeGreaterThan(0);
+    expect(d.kpis.current.aov).toBe(Math.round(d.kpis.current.revenue / d.kpis.current.orders));
+    expect(d.range.granularity).toBe('hour');
+    expect(d.trend.reduce((a: number, t: { current: number }) => a + t.current, 0)).toBe(d.kpis.current.revenue);
+    expect(d.payments.reduce((a: number, p: { amount: number }) => a + p.amount, 0)).toBeGreaterThan(0);
+    expect(d.topItems.length).toBeGreaterThan(0);
+    expect(d.live).toMatchObject({ tables: expect.objectContaining({ total: expect.any(Number) }), kitchen: expect.any(Number), openOrders: expect.any(Number) });
+    for (const range of ['yesterday', '7d', '30d']) {
+      const x = await manager.as(api().get('/api/v1/dashboard').query({ range }));
+      expect(x.status).toBe(200);
+      expect(x.body.data.trend.length).toBe(range === 'yesterday' ? 24 : range === '7d' ? 7 : 30);
+    }
+    expect((await manager.as(api().get('/api/v1/dashboard').query({ range: 'week' }))).status).toBe(400);
+    expect((await cashier.as(api().get('/api/v1/dashboard'))).status).toBe(403);
+    expect((await chef.as(api().get('/api/v1/dashboard'))).status).toBe(403);
+  });
+});

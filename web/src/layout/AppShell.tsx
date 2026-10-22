@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import {
-  LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList,
+  LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList,
 } from 'lucide-react';
 import { useAuth, shiftStaff } from '@/auth/AuthContext';
 import { cx } from '@/components/ui';
@@ -12,6 +12,7 @@ import { AccountMenu } from './AccountMenu';
 import { useTheme } from '@/lib/theme';
 
 const NAV = [
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perms: ['reports.sales'] },
   { to: '/pos', label: 'POS / Menu', icon: LayoutGrid, perms: ['orders.create'] },
   { to: '/orders', label: 'Orders', icon: ClipboardList, perms: ['orders.view'] },
   { to: '/tables', label: 'Table Services', icon: Armchair, perms: ['tables.view'] },

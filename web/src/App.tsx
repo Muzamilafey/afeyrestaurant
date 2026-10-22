@@ -6,6 +6,7 @@ import Login from '@/pages/Login';
 import { ForgotPassword, ResetPassword } from '@/pages/PasswordReset';
 import { Skeleton, Empty } from '@/components/ui';
 
+const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const PosPage = lazy(() => import('@/pages/pos/PosPage'));
 const TablesPage = lazy(() => import('@/pages/TablesPage'));
 const OrdersBoard = lazy(() => import('@/pages/OrdersBoard'));
@@ -38,6 +39,8 @@ function Guard({ perms, children }: { perms?: string[]; children: ReactNode }) {
 
 function Home() {
   const { session, can } = useAuth();
+  // Owners and managers land on the business dashboard; tills, kitchen and bar go straight to their screen.
+  if (can('reports.sales')) return <Navigate to="/dashboard" replace />;
   if (can('orders.create')) return <Navigate to="/pos" replace />;
   if (can('kitchen.view')) return <Navigate to="/kitchen" replace />;
   if (can('bar.view')) return <Navigate to="/bar" replace />;
@@ -58,6 +61,7 @@ export default function App() {
           <Route path="/track/:code" element={<TrackOrder />} />
           <Route element={<Guard><AppShell /></Guard>}>
             <Route index element={<Home />} />
+            <Route path="dashboard" element={<Guard perms={['reports.sales']}><DashboardPage /></Guard>} />
             <Route path="pos" element={<Guard perms={['orders.create']}><PosPage /></Guard>} />
             <Route path="orders" element={<Guard perms={['orders.view']}><OrdersBoard /></Guard>} />
             <Route path="tables" element={<Guard perms={['tables.view']}><TablesPage /></Guard>} />

@@ -26,6 +26,7 @@ import integrations from './modules/integrations/routes';
 import staff, { bridgeModule } from './modules/attendance/routes';
 import crm, { publicModule } from './modules/customers/routes';
 import reports from './modules/reports/routes';
+import dashboard from './modules/reports/dashboard';
 import sync from './modules/sync/routes';
 import { AppError } from './lib/errors';
 
@@ -54,7 +55,7 @@ export function createApp() {
 
   app.use('/api/v1', healthRouter);
   app.use('/api/v1', manifestRouter);
-  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, integrations, staff, bridgeModule, crm, publicModule, reports, sync]) {
+  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, integrations, staff, bridgeModule, crm, publicModule, reports, dashboard, sync]) {
     app.use(`/api/v1${mod.basePath}`, mod.router);
   }
   const spec = buildOpenApi();
