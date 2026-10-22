@@ -1,0 +1,16 @@
+{
+  "name": "chili-pos",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Chili POS — multi-tenant restaurant & bar management SaaS",
+  "workspaces": ["server", "web", "bridge"],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w server && npm run build -w web && npm run build -w bridge",
+    "test": "npm test -w server && npm test -w web",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web && npm run typecheck -w bridge",
+    "seed": "npm run seed -w server"
+  },
+  "engines": { "node": ">=20" }
+}
