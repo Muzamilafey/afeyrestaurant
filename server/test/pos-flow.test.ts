@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { setupDb, teardownDb, api, login, uuid, approval, type Session } from './helpers';
-import { Product, Table, ModifierGroup, StockBalance, StockLedger, Ingredient, KitchenTicket, Payment, Order, Receipt } from '../src/models';
+import { Product, Table, ModifierGroup, StockBalance, StockLedger, Ingredient, KitchenTicket, Payment, Order, Receipt, Branch } from '../src/models';
 import { MockSmsProvider } from '../src/integrations/sms/provider';
 import { processNotificationQueue } from '../src/services/notify';
 
@@ -18,6 +18,9 @@ async function stock(name: string, branchId = seed.mainBranchId) {
 
 beforeAll(async () => {
   seed = await setupDb();
+  // The demo branch has a weekday 17:00–19:00 happy hour; switch it off so prices here don't depend on the time of
+  // day the suite runs (happy-hour pricing is covered with a fixed clock in unit.test.ts).
+  await Branch.updateOne({ tenantId: seed.tenantId, _id: seed.mainBranchId }, { $set: { 'settings.happyHours': [] } });
   [cashier, manager, chef, bartender] = await Promise.all([login('cashier@chili.demo'), login('manager@chili.demo'), login('chef@chili.demo'), login('bartender@chili.demo')]);
   for (const [k, sku] of Object.entries({ burger: 'BRG-001', tusker: 'BR-001', coke: 'SD-001', wine: 'WN-001', curry: 'MN-002' })) ids[k] = String((await Product.findOne({ tenantId: seed.tenantId, sku }).lean())!._id);
   ids.table = String((await Table.findOne({ tenantId: seed.tenantId, branchId: seed.mainBranchId, number: 'M1' }).lean())!._id);
@@ -141,6 +144,21 @@ describe('table order → kitchen/bar → payment', () => {
     expect((await cashier.as(api().post(`/api/v1/orders/${orderId}/items`).send({ items: [{ productId: ids.coke, qty: 1 }] }))).body.error.code).toBe('ORDER_LOCKED');
     // Table goes to cleaning
     expect((await Table.findOne({ tenantId: seed.tenantId, _id: ids.table }).lean())!.status).toBe('cleaning');
+    // Paying a dine-in order clears it from the kitchen and bar displays and marks its lines served
+    const tickets = await KitchenTicket.find({ tenantId: seed.tenantId, orderId }).lean();
+    expect(tickets.every((t) => t.status === 'completed' && t.completedVia === 'payment')).toBe(true);
+    const lines = (await Order.findOne({ tenantId: seed.tenantId, _id: orderId }).lean())!.items;
+    expect(lines.filter((l) => !l.voided).every((l) => l.status === 'served' && l.servedAt)).toBe(true);
+    expect(lines.find((l) => l.voided)!.status).not.toBe('served');
+    for (const [who, station] of [[chef, 'kitchen'], [bartender, 'bar']] as const) {
+      const active = await who.as(api().get(`/api/v1/stations/${station}/tickets`));
+      expect(active.body.data.tickets.some((t: { orderId: string }) => t.orderId === orderId)).toBe(false);
+      const done = await who.as(api().get(`/api/v1/stations/${station}/tickets`).query({ include: 'recent' }));
+      expect(done.body.data.tickets.find((t: { orderId: string }) => t.orderId === orderId).completedVia).toBe('payment');
+    }
+    // A late "Served" tap on a ticket that payment already closed is harmless
+    const kt = tickets.find((t) => t.station === 'kitchen')!;
+    expect((await chef.as(api().post(`/api/v1/stations/tickets/${kt._id}/status`).send({ status: 'completed' }))).status).toBe(200);
     // Receipt: original, then duplicate needs permission + reason
     const p1 = await cashier.as(api().post(`/api/v1/orders/${orderId}/receipt/print`).send({}));
     expect(p1.body.data.copy).toBe('original');
@@ -155,6 +173,47 @@ describe('table order → kitchen/bar → payment', () => {
     expect(fail.status).toBe(200);
     expect((await Order.findOne({ tenantId: seed.tenantId, _id: orderId }).lean())!.status).toBe('paid');
     expect((await Receipt.findOne({ tenantId: seed.tenantId, orderId }).lean())!.printCount).toBe(2);
+  });
+});
+
+describe('payment clears prepaid takeaway tickets only once they are ready', () => {
+  async function takeaway() {
+    const o = await cashier.as(api().post('/api/v1/orders').send({ clientId: uuid(), type: 'takeaway', customerName: 'Walk-in', items: [{ productId: ids.wings, qty: 1 }] }));
+    expect(o.status).toBe(201);
+    expect((await cashier.as(api().post(`/api/v1/orders/${o.body.data._id}/send`).send({ submissionKey: uuid() }))).status).toBe(200);
+    return o.body.data as { _id: string; totals: { total: number } };
+  }
+  const pay = (o: { _id: string; totals: { total: number } }) => cashier.as(api().post(`/api/v1/orders/${o._id}/payments`).send({ method: 'cash', amount: o.totals.total, tendered: o.totals.total, idempotencyKey: uuid() }));
+
+  it('keeps a prepaid takeaway ticket on the kitchen display until it is cooked', async () => {
+    ids.wings = String((await Product.findOne({ tenantId: seed.tenantId, sku: 'ST-002' }).lean())!._id);
+    const o = await takeaway();
+    expect((await pay(o)).body.data.order.status).toBe('paid');
+    const t = await KitchenTicket.findOne({ tenantId: seed.tenantId, orderId: o._id }).lean();
+    expect(t!.status).toBe('pending');
+    const kds = await chef.as(api().get('/api/v1/stations/kitchen/tickets'));
+    expect(kds.body.data.tickets.some((x: { orderId: string }) => x.orderId === o._id)).toBe(true);
+    // The kitchen still bumps it normally afterwards.
+    for (const s of ['accepted', 'preparing', 'ready', 'completed']) expect((await chef.as(api().post(`/api/v1/stations/tickets/${t!._id}/status`).send({ status: s }))).status).toBe(200);
+    expect((await KitchenTicket.findOne({ tenantId: seed.tenantId, _id: t!._id }).lean())!.completedVia).toBe('station');
+  });
+
+  it('clears a takeaway ticket that is ready when it is paid', async () => {
+    const o = await takeaway();
+    const t = await KitchenTicket.findOne({ tenantId: seed.tenantId, orderId: o._id }).lean();
+    for (const s of ['accepted', 'preparing', 'ready']) await chef.as(api().post(`/api/v1/stations/tickets/${t!._id}/status`).send({ status: s }));
+    expect((await pay(o)).status).toBe(201);
+    expect(await KitchenTicket.findOne({ tenantId: seed.tenantId, _id: t!._id }).lean()).toMatchObject({ status: 'completed', completedVia: 'payment' });
+    expect((await Order.findOne({ tenantId: seed.tenantId, _id: o._id }).lean())!.items[0].status).toBe('served');
+  });
+
+  it('does not touch tickets on a partial payment', async () => {
+    const o = await takeaway();
+    const t = await KitchenTicket.findOne({ tenantId: seed.tenantId, orderId: o._id }).lean();
+    for (const s of ['accepted', 'preparing', 'ready']) await chef.as(api().post(`/api/v1/stations/tickets/${t!._id}/status`).send({ status: s }));
+    const part = await cashier.as(api().post(`/api/v1/orders/${o._id}/payments`).send({ method: 'cash', amount: 100, tendered: 100, idempotencyKey: uuid() }));
+    expect(part.body.data.order.paymentStatus).toBe('partial');
+    expect((await KitchenTicket.findOne({ tenantId: seed.tenantId, _id: t!._id }).lean())!.status).toBe('ready');
   });
 });
 

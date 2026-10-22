@@ -144,6 +144,8 @@ const kitchenTicketSchema = new Schema(
     startedAt: Date,
     readyAt: Date,
     completedAt: Date,
+    /** 'station' when bumped on the display, 'payment' when closed automatically because the order was paid. */
+    completedVia: { type: String, enum: ['station', 'payment'] },
     handledBy: Schema.Types.ObjectId,
     /** Idempotency: one ticket per order submission. */
     submissionKey: { type: String, required: true },

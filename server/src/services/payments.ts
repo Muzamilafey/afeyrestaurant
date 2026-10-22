@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Types, ClientSession } from 'mongoose';
-import { Order, type OrderDoc, Payment, PaymentAttempt, Refund, CashSession, Customer, LoyaltyAccount, LoyaltyTransaction, Tenant, Branch, Receipt } from '../models';
+import { Order, type OrderDoc, Payment, PaymentAttempt, Refund, CashSession, Customer, LoyaltyAccount, LoyaltyTransaction, Tenant, Branch, Receipt, KitchenTicket } from '../models';
 import type { BranchContext } from '../http/context';
 import { AppError, badRequest, conflict, notFound, unprocessable } from '../lib/errors';
 import { PERMISSIONS as P } from '../auth/permissions';
@@ -11,7 +11,7 @@ import { nextNumber } from './counters';
 import { audit } from './audit';
 import { notify } from './notify';
 import { broadcastOrder, releaseTableIfFree } from './orders';
-import { emitBranch } from '../realtime/bus';
+import { emitBranch, emitStation } from '../realtime/bus';
 import { resolveApproval, type ApprovalInput } from './approval';
 import { getMpesa } from '../integrations/factory';
 import { parseStkCallback, STK_RESULT_CODES, type StkCallbackParsed } from '../integrations/mpesa/daraja';
@@ -137,6 +137,49 @@ export async function finalizePaidOrder(order: OrderDoc, session: ClientSession)
     await awardLoyalty(order, session);
     order.loyaltyAwarded = true;
   }
+  await serveTicketsOnPayment(order, session);
+}
+
+/** Order types where food is served before the bill is settled — paying means the guest has been served. */
+const SERVED_BEFORE_PAYMENT = new Set(['dine_in', 'bar_counter', 'room_service']);
+const ACTIVE_TICKET_STATUSES = ['pending', 'accepted', 'preparing', 'ready'];
+
+/**
+ * Clear a paid order from the kitchen and bar displays: its open tickets become completed and their lines served.
+ * Dine-in, bar and room-service orders are paid after eating, so every open ticket is closed. Takeaway, delivery and
+ * online orders are often paid up front, so only tickets that are already ready are closed — a prepaid order that has
+ * not been cooked yet stays on the display. Runs inside the payment transaction; the order is saved by the caller.
+ */
+export async function serveTicketsOnPayment(order: OrderDoc, session: ClientSession) {
+  const statuses = SERVED_BEFORE_PAYMENT.has(order.type) ? ACTIVE_TICKET_STATUSES : ['ready'];
+  const tickets = await KitchenTicket.find({ tenantId: order.tenantId, orderId: order._id, status: { $in: statuses } }).session(session);
+  if (!tickets.length) return;
+  const now = new Date();
+  const served = new Set<string>();
+  for (const t of tickets) {
+    t.status = 'completed';
+    t.completedAt = now;
+    t.completedVia = 'payment';
+    for (const it of t.items) {
+      if (it.status === 'cancelled') continue;
+      it.status = 'served';
+      served.add(String(it.lineId));
+    }
+    await t.save({ session });
+  }
+  for (const line of order.items) {
+    if (line.voided || line.status === 'cancelled' || !served.has(String(line.lineId))) continue;
+    line.status = 'served';
+    line.servedAt ??= now;
+  }
+}
+
+/** Refresh the kitchen and bar displays after a payment has committed (tickets may have been closed). */
+export function emitTicketsClosed(order: { tenantId: unknown; branchId: unknown; _id: unknown; status?: string | null }) {
+  if (order.status !== 'paid') return;
+  for (const station of ['kitchen', 'bar']) {
+    emitStation(order.tenantId as Types.ObjectId, order.branchId as Types.ObjectId, station, 'ticket.updated', { orderId: String(order._id), status: 'completed', via: 'payment' });
+  }
 }
 
 /** Deduct recipe ingredients for every sold line. Ledger idempotency keys make retries and re-syncs safe. */
@@ -180,6 +223,7 @@ async function afterPayment(order: OrderDoc) {
   broadcastOrder(order);
   emitBranch(order.tenantId, order.branchId, 'payment.updated', { orderId: String(order._id), paymentStatus: order.paymentStatus });
   if (order.status !== 'paid') return;
+  emitTicketsClosed(order);
   if (order.tableId) {
     const ctxLike = { tenantId: order.tenantId, branchId: order.branchId } as BranchContext;
     await releaseTableIfFree(ctxLike, order.tableId as Types.ObjectId, 'cleaning');

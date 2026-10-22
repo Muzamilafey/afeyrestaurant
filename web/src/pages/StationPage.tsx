@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, BellOff, Flame, AlertTriangle, Timer } from 'lucide-react';
+import { Bell, BellOff, Flame, AlertTriangle, Timer, Receipt } from 'lucide-react';
 import { get, post } from '@/lib/api';
 import { elapsed, time } from '@/lib/format';
 import { Button, Empty, PageHeader, Pill, Skeleton, StatusPill, Tabs, cx } from '@/components/ui';
@@ -8,7 +8,7 @@ import { useFeedback } from '@/components/feedback';
 import { onSocket } from '@/lib/socket';
 import { useAuth } from '@/auth/AuthContext';
 
-interface Ticket { _id: string; orderNumber: string; tableNumber?: string; orderType: string; waiterName?: string; priority: boolean; status: string; createdAt: string; ageSeconds: number; items: Array<{ lineId: string; name: string; qty: number; modifiers: string[]; notes?: string; status: string; ageRestricted?: boolean }> }
+interface Ticket { _id: string; orderNumber: string; tableNumber?: string; orderType: string; waiterName?: string; priority: boolean; status: string; completedVia?: 'station' | 'payment'; createdAt: string; ageSeconds: number; items: Array<{ lineId: string; name: string; qty: number; modifiers: string[]; notes?: string; status: string; ageRestricted?: boolean }> }
 const NEXT: Record<string, { status: string; label: string }> = { pending: { status: 'accepted', label: 'Accept' }, accepted: { status: 'preparing', label: 'Start' }, preparing: { status: 'ready', label: 'Ready' }, ready: { status: 'completed', label: 'Served' } };
 
 /** A short two-tone chime generated with WebAudio (no audio files to load). */
@@ -83,6 +83,7 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
                 <div className="flex flex-wrap gap-1 px-4 pt-2">
                   {t.priority && <Pill color="yellow"><Flame className="h-3 w-3" /> Priority</Pill>}
                   {late && <Pill color="red"><AlertTriangle className="h-3 w-3" /> Delayed</Pill>}
+                  {t.completedVia === 'payment' && <Pill color="green"><Receipt className="h-3 w-3" /> Paid — cleared automatically</Pill>}
                 </div>
                 <ul className="flex-1 space-y-2 px-4 py-3">
                   {t.items.map((i) => (

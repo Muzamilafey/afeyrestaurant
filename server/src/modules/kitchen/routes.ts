@@ -28,6 +28,8 @@ m.route({ method: 'post', path: '/tickets/:id/status', summary: 'Advance a ticke
   const t = await KitchenTicket.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: params.id });
   if (!t) throw notFound('Ticket');
   if (!ctx.permissions.has(updatePerm(t.station))) throw forbidden();
+  // Already completed (e.g. cleared automatically when the order was paid): tapping "Served" again is a no-op.
+  if (t.status === 'completed' && body.status === 'completed') return t;
   if (!NEXT[t.status].includes(body.status)) throw badRequest(`Cannot move a ${t.status} ticket to ${body.status}`);
   if (body.status === 'cancelled' && !ctx.permissions.has(P.ORDERS_VOID_SENT_ITEM)) throw forbidden('Cancelling a ticket requires manager permission — void the items from the POS');
   const now = new Date();
@@ -35,7 +37,10 @@ m.route({ method: 'post', path: '/tickets/:id/status', summary: 'Advance a ticke
   if (body.status === 'accepted') t.acceptedAt = now;
   if (body.status === 'preparing') t.startedAt = now;
   if (body.status === 'ready') t.readyAt = now;
-  if (body.status === 'completed') t.completedAt = now;
+  if (body.status === 'completed') {
+    t.completedAt = now;
+    t.completedVia = 'station';
+  }
   t.handledBy = ctx.userId;
   for (const it of t.items) if (it.status !== 'cancelled') it.status = ITEM_STATUS[body.status];
   await t.save();

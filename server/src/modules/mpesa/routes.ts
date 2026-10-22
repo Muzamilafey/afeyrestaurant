@@ -4,7 +4,7 @@ import { Types } from 'mongoose';
 import { createModule, zId } from '../../http/route';
 import { PaymentAttempt, MpesaC2BTransaction, IntegrationConfiguration, Order, Payment } from '../../models';
 import { PERMISSIONS as P } from '../../auth/permissions';
-import { handleStkCallback, applyStkResult, finalizePaidOrder } from '../../services/payments';
+import { handleStkCallback, applyStkResult, finalizePaidOrder, emitTicketsClosed } from '../../services/payments';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../../lib/errors';
 import { env, mocksAllowed } from '../../config/env';
 import { logger } from '../../lib/logger';
@@ -98,6 +98,7 @@ m.route({ method: 'post', path: '/c2b/:id/match', summary: 'Apply a C2B transact
   });
   await audit(ctx, { action: 'payment.c2b_matched', entity: 'Order', entityId: r.order._id, meta: { transaction: params.id, overpaid: r.overpaid } }, req);
   emitBranch(ctx.tenantId, ctx.branchId, 'order.updated', { id: String(r.order._id) });
+  emitTicketsClosed(r.order);
   return r;
 });
 

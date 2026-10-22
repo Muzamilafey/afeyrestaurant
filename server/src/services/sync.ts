@@ -2,7 +2,7 @@ import type { Types } from 'mongoose';
 import { Order, Payment, CashSession, Branch, Table } from '../models';
 import type { BranchContext } from '../http/context';
 import { buildLines, recalc, type ItemInput } from './orders';
-import { finalizePaidOrder } from './payments';
+import { finalizePaidOrder, emitTicketsClosed } from './payments';
 import { withTransaction } from '../db/connect';
 import { nextNumber } from './counters';
 import { audit } from './audit';
@@ -69,6 +69,7 @@ export async function syncOfflineOrder(ctx: BranchContext, o: OfflineOrder): Pro
     });
     if (conflicts.length) await audit(ctx, { action: 'sync.price_conflict', entity: 'Order', entityId: result._id, meta: { conflicts } });
     emitBranch(ctx.tenantId, ctx.branchId, 'order.updated', { id: String(result._id) });
+    emitTicketsClosed(result);
     return { clientId: o.clientId, status: 'created', orderId: String(result._id), number: result.number, priceConflicts: conflicts.length };
   } catch (e) {
     if ((e as { code?: number }).code === 11000) {
