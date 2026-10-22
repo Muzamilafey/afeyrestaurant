@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Utensils, Beef, Salad, Sandwich, CupSoda, Beer, Martini as MartiniIcon, Wine, Pizza, Coffee, IceCream, Fish, Soup, Cake, Croissant, Drumstick, Egg, Apple, Citrus, GlassWater, LayoutGrid, type LucideIcon, Search, ScanBarcode, Trash2, Minus, Plus, Send, PauseCircle, PlayCircle, ArrowRightLeft, Merge, Split, Printer, Percent, Ban, UtensilsCrossed, ShoppingBag, Bike, Martini, ChefHat, StickyNote, UserRound, CloudOff } from 'lucide-react';
+import { Utensils, Beef, Salad, Sandwich, CupSoda, Beer, Martini as MartiniIcon, Wine, Pizza, Coffee, IceCream, Fish, Soup, Cake, Croissant, Drumstick, Egg, Apple, Citrus, GlassWater, LayoutGrid, Users, type LucideIcon, Search, ScanBarcode, Trash2, Minus, Plus, Send, PauseCircle, PlayCircle, ArrowRightLeft, Merge, Split, Printer, Percent, Ban, UtensilsCrossed, ShoppingBag, Bike, Martini, ChefHat, StickyNote, UserRound, CloudOff } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { useFeedback } from '@/components/feedback';
 import { Button, Input, Modal, Pill, Select, Skeleton, StatusPill, cx, Empty, Field } from '@/components/ui';
@@ -86,6 +86,8 @@ export default function PosPage() {
   const [paying, setPaying] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<null | 'transfer' | 'merge' | 'split' | 'held' | 'customer'>(null);
+  /** Dine-in without a table: ask for one, then carry on with the action that was pressed. */
+  const [pickTableFor, setPickTableFor] = useState<null | 'send' | 'pay'>(null);
   const [offlineReceipt, setOfflineReceipt] = useState<Order | null>(null);
   // Phones: the order panel is a full-screen sheet opened from a floating button.
   const [showCart, setShowCart] = useState(false);
@@ -211,13 +213,13 @@ export default function PosPage() {
 
   /** Create the order on the server from the draft (idempotent by clientId). */
   const draftClientId = useRef(uuid());
-  async function createFromDraft(send: boolean): Promise<Order | null> {
-    if (mode === 'dine_in' && !tableId) {
+  async function createFromDraft(send: boolean, table = tableId): Promise<Order | null> {
+    if (mode === 'dine_in' && !table) {
       toast('Select a table for dine-in orders', 'error');
       return null;
     }
     const items = draft.map((d) => ({ productId: d.productId, qty: d.qty, variant: d.variant, modifiers: d.modifiers.map(({ groupId, optionId }) => ({ groupId, optionId })), notes: d.notes, lineId: d.lineId, ageCheckConfirmed: d.ageCheckConfirmed }));
-    const body = { clientId: draftClientId.current, type: mode, tableId: mode === 'dine_in' ? tableId : undefined, customerName: customerName || undefined, customerPhone: customerPhone || undefined, delivery: mode === 'delivery' ? { address: deliveryAddress } : undefined, items, sendToStations: send };
+    const body = { clientId: draftClientId.current, type: mode, tableId: mode === 'dine_in' ? table : undefined, customerName: customerName || undefined, customerPhone: customerPhone || undefined, delivery: mode === 'delivery' ? { address: deliveryAddress } : undefined, items, sendToStations: send };
     const o = await withApproval((approval) => post<Order>('/orders', { ...body, approval }));
     draftClientId.current = uuid();
     resetDraft();
@@ -227,11 +229,14 @@ export default function PosPage() {
     return o;
   }
 
-  async function placeOrder() {
+  const needsTable = () => !order && online && mode === 'dine_in' && !tableId;
+
+  async function placeOrder(table = tableId) {
+    if (table === tableId && needsTable()) return setPickTableFor('send');
     setBusy('send');
     try {
       if (!order) {
-        const o = await createFromDraft(true);
+        const o = await createFromDraft(true, table);
         if (o) toast(`Order ${o.number} sent`);
       } else {
         const r = await post<{ order: Order; tickets: unknown[] }>(`/orders/${order._id}/send`, { submissionKey: uuid() });
@@ -245,12 +250,13 @@ export default function PosPage() {
     }
   }
 
-  async function startPayment() {
+  async function startPayment(table = tableId) {
     if (!online) return payOffline();
+    if (table === tableId && needsTable()) return setPickTableFor('pay');
     if (!order) {
       setBusy('pay');
       try {
-        const o = await createFromDraft(true);
+        const o = await createFromDraft(true, table);
         if (o) setPaying(true);
       } catch (e) {
         handleError(e);
@@ -530,11 +536,11 @@ export default function PosPage() {
               }}><Ban className="h-3.5 w-3.5" /> Void order</button>
             )}
             <div className="mt-3 grid grid-cols-2 gap-2">
-              <Button variant="secondary" size="lg" icon={<Send className="h-4 w-4" />} disabled={!hasNew || !!locked || !online} loading={busy === 'send'} onClick={placeOrder}>Place order</Button>
+              <Button variant="secondary" size="lg" icon={<Send className="h-4 w-4" />} disabled={!hasNew || !!locked || !online} loading={busy === 'send'} onClick={() => placeOrder()}>Place order</Button>
               {locked ? (
                 <Button size="lg" onClick={() => setPaying(true)} disabled={order?.status !== 'paid'}>Receipt</Button>
               ) : (
-                <Button size="lg" disabled={lines.length === 0 || (order ? order.totals.total - order.totals.paid <= 0 : false)} loading={busy === 'pay'} onClick={startPayment}>{online ? 'Pay' : 'Cash (offline)'}</Button>
+                <Button size="lg" disabled={lines.length === 0 || (order ? order.totals.total - order.totals.paid <= 0 : false)} loading={busy === 'pay'} onClick={() => startPayment()}>{online ? 'Pay' : 'Cash (offline)'}</Button>
               )}
             </div>
           </div>
@@ -568,6 +574,26 @@ export default function PosPage() {
       {modFor && catalog && <ModifierDialog product={modFor} groups={catalog.modifierGroups} station={stationFor(modFor)} onClose={() => setModFor(null)} onConfirm={(l) => { setModFor(null); addLine(l); }} />}
       {paying && order && <PaymentDialog order={order} onClose={() => { setPaying(false); if (order.status === 'paid' || qc.getQueryData<{ order: Order }>(['order', order._id])?.order.status === 'paid') setOrder(null); }} onPaid={(o) => { qc.setQueryData(['order', o._id], { order: o }); qc.invalidateQueries({ queryKey: ['tables'] }); qc.invalidateQueries({ queryKey: ['catalog'] }); }} />}
       {offlineReceipt && <Modal open onClose={() => setOfflineReceipt(null)} title="Offline sale recorded" footer={<Button onClick={() => setOfflineReceipt(null)}>New order</Button>}><p className="text-sm">Cash sale of <b>{money(offlineReceipt.totals.total)}</b> saved on this terminal (ref {offlineReceipt.number.toUpperCase()}). It is <b>pending synchronisation</b> and will be verified by the server when the connection returns.</p></Modal>}
+      {pickTableFor && (
+        <TablePicker
+          title="Choose a table"
+          subtitle={`Pick the table for this dine-in order, then it will be ${pickTableFor === 'pay' ? 'sent and opened for payment' : 'sent to the kitchen and bar'}.`}
+          tables={tables}
+          onClose={() => setPickTableFor(null)}
+          onPick={(id) => {
+            const action = pickTableFor;
+            setPickTableFor(null);
+            setTableId(id);
+            if (action === 'pay') startPayment(id);
+            else placeOrder(id);
+          }}
+          onTakeaway={() => {
+            setPickTableFor(null);
+            setMode('takeaway');
+            toast('Switched to takeaway — press the button again to continue', 'info');
+          }}
+        />
+      )}
       {dialog === 'transfer' && order && <TablePicker title="Transfer to table" tables={tables.filter((t) => t._id !== order.tableId)} onClose={() => setDialog(null)} onPick={(id) => action('transfer', () => post(`/orders/${order._id}/transfer`, { tableId: id }), 'Order transferred').then(() => setDialog(null))} />}
       {dialog === 'merge' && order && <OrderPicker title="Merge another order into this one" orders={activeChips.filter((c) => c.id !== order._id)} onClose={() => setDialog(null)} onPick={(id) => action('merge', () => post(`/orders/${order._id}/merge`, { sourceOrderId: id }), 'Orders merged').then(() => setDialog(null))} />}
       {dialog === 'held' && <HeldOrders onClose={() => setDialog(null)} onPick={(id) => { setOrder(id); setDialog(null); }} />}
@@ -597,17 +623,43 @@ function CategoryCard({ active, onClick, icon, name, count }: { active: boolean;
   );
 }
 
-function TablePicker({ title, tables, onClose, onPick }: { title: string; tables: TablesResp['tables']; onClose: () => void; onPick: (id: string) => void }) {
+const TABLE_ORDER: Record<string, number> = { available: 0, occupied: 1, reserved: 2, cleaning: 3 };
+function TablePicker({ title, subtitle, tables, onClose, onPick, onTakeaway }: { title: string; subtitle?: string; tables: TablesResp['tables']; onClose: () => void; onPick: (id: string) => void; onTakeaway?: () => void }) {
+  const sorted = [...tables].sort((a, b) => (TABLE_ORDER[a.status] ?? 9) - (TABLE_ORDER[b.status] ?? 9) || a.number.localeCompare(b.number, undefined, { numeric: true }));
   return (
-    <Modal open onClose={onClose} title={title}>
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-        {tables.map((t) => (
-          <button key={t._id} onClick={() => onPick(t._id)} className="rounded-xl border-2 border-line p-3 text-left hover:border-brand">
-            <p className="font-bold">T-{t.number}</p>
-            <StatusPill status={t.status} />
-          </button>
-        ))}
-      </div>
+    <Modal open onClose={onClose} title={title} size="lg" footer={onTakeaway && <Button variant="secondary" onClick={onTakeaway}>Make it takeaway instead</Button>}>
+      {subtitle && <p className="mb-4 text-sm text-ink-soft">{subtitle}</p>}
+      {sorted.length === 0 ? (
+        <Empty title="No tables set up" hint="Add tables in Settings → Tables, or make this a takeaway order." />
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+          {sorted.map((t) => {
+            const busy = t.orders.length > 0;
+            return (
+              <button
+                key={t._id}
+                autoFocus={t === sorted[0]}
+                onClick={() => onPick(t._id)}
+                className={cx(
+                  'group flex flex-col gap-2 rounded-2xl border-2 p-3 text-left transition hover:-translate-y-0.5 hover:border-brand hover:shadow-soft focus-visible:border-brand focus-visible:outline-none',
+                  t.status === 'available' ? 'border-brand/40 bg-brand-50' : 'border-line bg-card',
+                )}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-xl font-bold leading-none">{t.number}</span>
+                  <StatusPill status={t.status} />
+                </div>
+                <span className="flex items-center gap-1 text-xs text-ink-soft"><Users className="h-3.5 w-3.5" /> {t.capacity} seats</span>
+                {busy ? (
+                  <span className="text-xs font-medium text-ink-soft">{t.orders.length} open order{t.orders.length > 1 ? 's' : ''} · {money(t.orders.reduce((a, o) => a + o.total, 0))}</span>
+                ) : (
+                  <span className="text-xs font-medium text-brand">Free</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </Modal>
   );
 }
