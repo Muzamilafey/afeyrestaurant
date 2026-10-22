@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import mongoose from 'mongoose';
 import { setupDb, teardownDb, api, login, uuid, DEMO_PASSWORD } from './helpers';
 import { createTenant } from '../src/services/tenantSetup';
-import { Order, User } from '../src/models';
+import { Order, User, RefreshToken } from '../src/models';
 import { TenantGuardError } from '../src/db/tenantGuard';
 
 let seed: Awaited<ReturnType<typeof setupDb>>;
@@ -32,10 +32,18 @@ describe('authentication', () => {
     expect(noCsrf.status).toBe(403);
     const r1 = await api().post('/api/v1/auth/refresh').set('Cookie', cookie).set('X-Requested-With', 'chili-pos');
     expect(r1.status).toBe(200);
+    const newCookie = r1.headers['set-cookie'][0].split(';')[0];
+    // A concurrent refresh with the just-rotated token (two tabs) is rejected but does not end the session.
+    const race = await api().post('/api/v1/auth/refresh').set('Cookie', cookie).set('X-Requested-With', 'chili-pos');
+    expect(race.status).toBe(401);
+    const stillValid = await api().post('/api/v1/auth/refresh').set('Cookie', newCookie).set('X-Requested-With', 'chili-pos');
+    expect(stillValid.status).toBe(200);
+    const latest = stillValid.headers['set-cookie'][0].split(';')[0];
+    // Reuse after the grace window is treated as theft: the whole token family is revoked.
+    await RefreshToken.updateMany({ revokedAt: { $ne: null } }, { $set: { revokedAt: new Date(Date.now() - 120_000) } });
     const reuse = await api().post('/api/v1/auth/refresh').set('Cookie', cookie).set('X-Requested-With', 'chili-pos');
     expect(reuse.status).toBe(401);
-    const newCookie = r1.headers['set-cookie'][0].split(';')[0];
-    const afterRevoke = await api().post('/api/v1/auth/refresh').set('Cookie', newCookie).set('X-Requested-With', 'chili-pos');
+    const afterRevoke = await api().post('/api/v1/auth/refresh').set('Cookie', latest).set('X-Requested-With', 'chili-pos');
     expect(afterRevoke.status).toBe(401); // whole family revoked
   });
 

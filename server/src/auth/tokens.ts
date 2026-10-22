@@ -39,6 +39,8 @@ export async function issueRefreshToken(userId: Types.ObjectId, meta: { ip?: str
   return token;
 }
 
+const REUSE_GRACE_MS = 30_000;
+
 /**
  * Rotate a refresh token. Reuse of an already-rotated token revokes the whole token family
  * (a strong signal that the token was stolen).
@@ -47,6 +49,9 @@ export async function rotateRefreshToken(token: string, meta: { ip?: string; use
   const doc = await RefreshToken.findOne({ tokenHash: sha256(token) });
   if (!doc) throw unauthorized('Invalid refresh token');
   if (doc.revokedAt) {
+    // Grace window: two tabs (or a double-mounted app) refreshing at the same moment present the same token.
+    // A token rotated seconds ago is a benign race, not theft — reject without revoking the family.
+    if (doc.replacedBy && Date.now() - doc.revokedAt.getTime() < REUSE_GRACE_MS) throw unauthorized('Session refreshed in another tab');
     await RefreshToken.updateMany({ familyId: doc.familyId, revokedAt: null }, { $set: { revokedAt: new Date() } });
     logger.warn({ userId: doc.userId, familyId: doc.familyId }, 'Refresh token reuse detected — family revoked');
     throw unauthorized('Session expired, please sign in again');
