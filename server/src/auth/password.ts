@@ -25,3 +25,13 @@ export function passwordPolicy(pw: string): string | null {
   if (!/[a-z]/.test(pw) || !/[A-Z]/.test(pw) || !/\d/.test(pw)) return 'Password must contain upper and lower case letters and a number';
   return null;
 }
+
+/** PINs are 4–6 digits. Trivial PINs (all the same digit, or a straight run like 1234/9876) are refused. */
+export function pinPolicy(pin: string): string | null {
+  if (!/^\d{4,6}$/.test(pin)) return 'PIN must be 4 to 6 digits (numbers only)';
+  if (/^(\d)\1+$/.test(pin)) return 'PIN cannot be the same digit repeated';
+  const d = [...pin].map(Number);
+  const steps = d.slice(1).map((v, i) => v - d[i]);
+  if (steps.every((x) => x === 1) || steps.every((x) => x === -1)) return 'PIN cannot be a simple sequence like 1234';
+  return null;
+}

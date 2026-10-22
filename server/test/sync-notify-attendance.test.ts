@@ -119,21 +119,22 @@ describe('biometric attendance via bridge', () => {
   });
 });
 
-describe('platform', () => {
-  it('lets the platform admin create and suspend tenants; suspended tenants are locked out', async () => {
-    const admin = await login('platform@chilipos.local', { tenantSlug: null });
-    const c = await api().post('/api/v1/platform/tenants').set('Authorization', `Bearer ${admin.token}`).send({ name: 'Mama Oliech', slug: 'mama-oliech', planCode: 'starter', branch: { name: 'Marcus Garvey', code: 'MG' }, owner: { name: 'Mama', email: 'mama@oliech.co.ke', password: 'Oliech#2026xx' } });
-    expect(c.status).toBe(201);
-    const mama = await login('mama@oliech.co.ke', { tenantSlug: 'mama-oliech', password: 'Oliech#2026xx' });
-    expect((await mama.as(api().get('/api/v1/orders'))).status).toBe(200);
-    // Plan entitlements are enforced on the backend
-    const dev = await mama.as(api().post('/api/v1/staff/devices').send({ name: 'X', vendor: 'mock', deviceType: 'mock', connection: 'mock' }));
-    expect(dev.body.error.code).toBe('FEATURE_NOT_IN_PLAN');
-    const s = await api().post(`/api/v1/platform/tenants/${c.body.data.tenantId}/status`).set('Authorization', `Bearer ${admin.token}`).send({ status: 'suspended', reason: 'Non-payment' });
-    expect(s.status).toBe(200);
-    const blocked = await mama.as(api().get('/api/v1/orders'));
-    expect(blocked.body.error.code).toBe('TENANT_SUSPENDED');
-    const ov = await api().get('/api/v1/platform/overview').set('Authorization', `Bearer ${admin.token}`);
-    expect(ov.body.data.tenants.suspended).toBe(1);
+describe('business profile', () => {
+  it('lets the owner change the business name and logo, and shows them publicly and on receipts', async () => {
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000201a5f4d0e40000000049454e44ae426082', 'hex');
+    const up = await owner.as(api().post('/api/v1/menu/uploads/image').attach('file', png, { filename: 'logo.png', contentType: 'image/png' }));
+    expect(up.status).toBe(201);
+    const logoUrl = up.body.data.url;
+    const bad = await owner.as(api().post('/api/v1/menu/uploads/image').attach('file', Buffer.from('<svg/>'), { filename: 'x.png', contentType: 'image/png' }));
+    expect(bad.status).toBe(415);
+    const r = await owner.as(api().patch('/api/v1/admin/tenant').send({ name: 'Afey Restaurant', branding: { logoUrl } }));
+    expect(r.status).toBe(200);
+    const pub = await api().get('/api/v1/business');
+    expect(pub.body.data).toMatchObject({ name: 'Afey Restaurant', logoUrl });
+    const me = await owner.as(api().get('/api/v1/auth/me'));
+    expect(me.body.data.business.name).toBe('Afey Restaurant');
+    const cashier2 = await login('cashier@chili.demo');
+    expect((await cashier2.as(api().patch('/api/v1/admin/tenant').send({ name: 'Nope' }))).status).toBe(403);
+    expect((await owner.as(api().patch('/api/v1/admin/tenant').send({ branding: { logoUrl: 'javascript:alert(1)' } }))).status).toBe(400);
   });
 });

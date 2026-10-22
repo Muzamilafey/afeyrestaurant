@@ -11,8 +11,8 @@ const schema = z.object({
   MONGODB_URI: z.string().min(1).default('mongodb://127.0.0.1:27017/chili_pos?replicaSet=rs0'),
   /** Public base URL of the API, used to build provider callback URLs (e.g. https://api.chilipos.co.ke). */
   PUBLIC_API_URL: z.string().url().default('http://localhost:4000'),
-  /** Root domain used for tenant subdomains, e.g. chilipos.co.ke → mama-oliech.chilipos.co.ke */
-  ROOT_DOMAIN: z.string().default('localhost'),
+  /** Required in production to use the web first-run setup screen (alternatively run `npm run setup`). */
+  SETUP_TOKEN: z.string().default(''),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
   JWT_ACCESS_SECRET: z.string().min(32).default('dev-access-secret-change-me-dev-access-secret'),
   JWT_ACCESS_TTL: z.string().default('15m'),

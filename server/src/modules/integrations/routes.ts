@@ -12,6 +12,7 @@ import { badRequest, notFound, AppError } from '../../lib/errors';
 import { randomToken, sha256 } from '../../lib/crypto';
 import { env, mocksAllowed } from '../../config/env';
 import { normalizeKePhone } from '../../lib/phone';
+import { getBusiness } from '../../services/setup';
 
 const m = createModule('/integrations', 'Integrations');
 
@@ -160,8 +161,9 @@ m.route({ method: 'post', path: '/notifications/send', summary: 'Queue a one-off
 );
 
 /** Talk Sasa delivery reports. The payload shape is not documented publicly, so common field names are accepted and the raw body is stored. */
-m.route({ method: 'post', path: '/webhooks/sms/:tenantId/:key', summary: 'SMS delivery report webhook (public, key-authenticated)', auth: 'public', raw: true }, async ({ params, body, res }) => {
-  const integ = await IntegrationConfiguration.findOne({ tenantId: params.tenantId, kind: 'sms' }).lean().catch(() => null);
+m.route({ method: 'post', path: '/webhooks/sms/:key', summary: 'SMS delivery report webhook (public, key-authenticated)', auth: 'public', raw: true }, async ({ params, body, res }) => {
+  const business = await getBusiness();
+  const integ = business ? await IntegrationConfiguration.findOne({ tenantId: business._id, kind: 'sms', branchId: null }).lean() : null;
   const expected = (integ?.settings as Record<string, string> | undefined)?.webhookKeyHash;
   if (!integ || !expected || expected !== sha256(params.key)) throw notFound('Webhook');
   const b = body as Record<string, unknown>;
@@ -180,7 +182,7 @@ m.route({ method: 'post', path: '/sms/webhook-key', summary: 'Generate the SMS d
   integ.settings = { ...(integ.settings as object), webhookKeyHash: sha256(key) };
   integ.markModified('settings');
   await integ.save();
-  return { url: `${env.PUBLIC_API_URL}/api/v1/integrations/webhooks/sms/${ctx.tenantId}/${key}`, note: 'Shown once. Paste it into your Talk Sasa delivery-report settings.' };
+  return { url: `${env.PUBLIC_API_URL}/api/v1/integrations/webhooks/sms/${key}`, note: 'Shown once. Paste it into your Talk Sasa delivery-report settings.' };
 });
 m.route({ method: 'get', path: '/sms/balance', summary: 'SMS balance from the provider (if supported)', auth: 'tenant', permission: P.INTEGRATIONS_MANAGE }, async ({ ctx }) => {
   const { provider } = await getSmsProvider(ctx.tenantId);

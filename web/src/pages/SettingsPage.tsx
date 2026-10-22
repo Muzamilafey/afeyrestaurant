@@ -6,8 +6,9 @@ import { dateTime, fromCents, money, titleCase, toCents } from '@/lib/format';
 import { Button, Card, DataTable, Field, Input, Modal, PageHeader, Pill, Select, StatusPill, Tabs, Textarea, Toggle } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
+import { AccountMenu } from '@/layout/AccountMenu';
 
-type TabId = 'business' | 'branches' | 'users' | 'roles' | 'menu' | 'taxes' | 'tables' | 'subscription' | 'audit' | 'account';
+type TabId = 'business' | 'branches' | 'users' | 'roles' | 'menu' | 'taxes' | 'tables' | 'audit' | 'account';
 
 export default function SettingsPage() {
   const { can } = useAuth();
@@ -23,7 +24,6 @@ export default function SettingsPage() {
         { id: 'roles', label: 'Roles', hidden: !can('roles.manage') },
         { id: 'taxes', label: 'Taxes', hidden: !can('settings.manage') },
         { id: 'tables', label: 'Tables', hidden: !can('tables.manage') },
-        { id: 'subscription', label: 'Subscription', hidden: !can('subscription.view', 'settings.manage') },
         { id: 'audit', label: 'Audit log', hidden: !can('audit.view') },
         { id: 'account', label: 'My account' },
       ]} value={tab} onChange={setTab} />
@@ -34,7 +34,6 @@ export default function SettingsPage() {
       {tab === 'roles' && <Roles />}
       {tab === 'taxes' && <Taxes />}
       {tab === 'tables' && <TablesAdmin />}
-      {tab === 'subscription' && <Subscription />}
       {tab === 'audit' && <Audit />}
       {tab === 'account' && <Account />}
     </div>
@@ -139,22 +138,47 @@ function Menu() {
 
 function Business() {
   const { handleError, toast } = useFeedback();
-  const { data } = useQuery<{ name: string; kraPin?: string; contactEmail?: string; contactPhone?: string; customDomains: string[]; branding: Record<string, string>; settings: Record<string, any> }>({ queryKey: ['tenant'], queryFn: () => get('/admin/tenant') });
+  const { refreshSession } = useAuth();
+  const qc = useQueryClient();
+  const { data } = useQuery<{ name: string; kraPin?: string; contactEmail?: string; contactPhone?: string; branding: Record<string, string>; settings: Record<string, any> }>({ queryKey: ['tenant'], queryFn: () => get('/admin/tenant') });
+  const [uploading, setUploading] = useState(false);
   const [f, setF] = useState<any>(null);
   useEffect(() => { if (data) setF(JSON.parse(JSON.stringify(data))); }, [data]);
   if (!f) return null;
   const s = f.settings;
-  const save = () => patch('/admin/tenant', { name: f.name, kraPin: f.kraPin, contactEmail: f.contactEmail || undefined, contactPhone: f.contactPhone, customDomains: f.customDomains, branding: { primaryColor: f.branding.primaryColor, receiptHeader: f.branding.receiptHeader, receiptFooter: f.branding.receiptFooter, logoUrl: f.branding.logoUrl }, settings: { discountApprovalThresholdBps: Number(s.discountApprovalThresholdBps), loyaltyPointsPer100: Number(s.loyaltyPointsPer100), costingPolicy: s.costingPolicy, allowNegativeStock: s.allowNegativeStock, mpesaTimeoutSeconds: Number(s.mpesaTimeoutSeconds), offlineAllowedActions: s.offlineAllowedActions, alertEmails: s.alertEmails, dailySummary: s.dailySummary, lowStockAlerts: s.lowStockAlerts } }).then(() => toast('Settings saved')).catch(handleError);
+  const uploadLogo = async (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    setUploading(true);
+    try {
+      const r = await api<{ url: string }>('/menu/uploads/image', { method: 'POST', body: fd });
+      setF((x: any) => ({ ...x, branding: { ...x.branding, logoUrl: r.url } }));
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setUploading(false);
+    }
+  };
+  const save = () => patch('/admin/tenant', { name: f.name, kraPin: f.kraPin, contactEmail: f.contactEmail || undefined, contactPhone: f.contactPhone, branding: { primaryColor: f.branding.primaryColor, receiptHeader: f.branding.receiptHeader, receiptFooter: f.branding.receiptFooter, logoUrl: f.branding.logoUrl ?? '' }, settings: { discountApprovalThresholdBps: Number(s.discountApprovalThresholdBps), loyaltyPointsPer100: Number(s.loyaltyPointsPer100), costingPolicy: s.costingPolicy, allowNegativeStock: s.allowNegativeStock, mpesaTimeoutSeconds: Number(s.mpesaTimeoutSeconds), offlineAllowedActions: s.offlineAllowedActions, alertEmails: s.alertEmails, dailySummary: s.dailySummary, lowStockAlerts: s.lowStockAlerts } }).then(async () => { await refreshSession(); qc.invalidateQueries({ queryKey: ['public-business'] }); toast('Business settings saved'); }).catch(handleError);
   return (
     <Card title="Business settings" actions={<Button size="sm" onClick={save}>Save</Button>}>
+      <div className="mb-5 flex flex-wrap items-center gap-4 rounded-2xl bg-page p-4">
+        {f.branding.logoUrl ? <img src={f.branding.logoUrl} alt="Logo" className="h-16 w-16 rounded-2xl object-cover" /> : <span className="grid h-16 w-16 place-items-center rounded-2xl bg-brand text-2xl font-black text-white">{f.name?.[0]?.toUpperCase()}</span>}
+        <div className="min-w-[200px] flex-1">
+          <Field label="Business name" hint="Shown on the sign-in screen, sidebar, receipts and customer messages"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+        </div>
+        <div className="flex gap-2">
+          <label className="btn-secondary cursor-pointer"><Upload className="h-4 w-4" /> {uploading ? 'Uploading…' : f.branding.logoUrl ? 'Change logo' : 'Upload logo'}<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && uploadLogo(e.target.files[0])} /></label>
+          {f.branding.logoUrl && <Button variant="ghost" onClick={() => setF({ ...f, branding: { ...f.branding, logoUrl: '' } })}>Remove</Button>}
+        </div>
+        <p className="w-full text-xs text-ink-soft">Square PNG, JPG or WebP, up to 5 MB. Changes apply after you press Save.</p>
+      </div>
       <div className="grid gap-3 md:grid-cols-3">
-        <Field label="Business name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label="KRA PIN"><Input value={f.kraPin ?? ''} onChange={(e) => setF({ ...f, kraPin: e.target.value })} /></Field>
         <Field label="Contact email"><Input value={f.contactEmail ?? ''} onChange={(e) => setF({ ...f, contactEmail: e.target.value })} /></Field>
         <Field label="Receipt header"><Input value={f.branding.receiptHeader ?? ''} onChange={(e) => setF({ ...f, branding: { ...f.branding, receiptHeader: e.target.value } })} /></Field>
         <Field label="Receipt footer"><Input value={f.branding.receiptFooter ?? ''} onChange={(e) => setF({ ...f, branding: { ...f.branding, receiptFooter: e.target.value } })} /></Field>
         <Field label="Brand colour"><Input type="color" value={f.branding.primaryColor ?? '#07963C'} onChange={(e) => setF({ ...f, branding: { ...f.branding, primaryColor: e.target.value } })} /></Field>
-        <Field label="Custom domains (comma separated)"><Input value={f.customDomains.join(', ')} onChange={(e) => setF({ ...f, customDomains: e.target.value.split(',').map((x: string) => x.trim()).filter(Boolean) })} /></Field>
         <Field label="Discount approval threshold (%)"><Input inputMode="decimal" value={s.discountApprovalThresholdBps / 100} onChange={(e) => setF({ ...f, settings: { ...s, discountApprovalThresholdBps: Math.round(Number(e.target.value) * 100) } })} /></Field>
         <Field label="Loyalty points per KSh 100"><Input inputMode="decimal" value={s.loyaltyPointsPer100} onChange={(e) => setF({ ...f, settings: { ...s, loyaltyPointsPer100: e.target.value } })} /></Field>
         <Field label="Inventory costing"><Select value={s.costingPolicy} onChange={(e) => setF({ ...f, settings: { ...s, costingPolicy: e.target.value } })}><option value="fifo">FIFO</option><option value="weighted_average">Weighted average</option></Select></Field>
@@ -215,7 +239,7 @@ function Users() {
           <Field label="Email"><Input disabled={!!f.id} value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
           <Field label="Role"><Select value={f.roleId} onChange={(e) => setF({ ...f, roleId: e.target.value })}>{roles.data?.roles.map((r) => <option key={r._id} value={r._id}>{r.name}</option>)}</Select></Field>
           <Field label={f.id ? 'Reset password' : 'Password'} hint="10+ chars, upper/lower case and a number"><Input type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>
-          <Field label="Approval PIN (managers)"><Input type="password" inputMode="numeric" value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '') })} /></Field>
+          <Field label={f.id ? 'Reset PIN (4–6 digits)' : 'PIN (4–6 digits)'} hint="For PIN sign-in and approvals"><Input type="password" inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '').slice(0, 6) })} /></Field>
           <div><p className="label">Branches</p>{session?.branches.map((b) => <label key={b.id} className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-brand" checked={f.branchIds.includes(b.id)} onChange={(e) => setF({ ...f, branchIds: e.target.checked ? [...f.branchIds, b.id] : f.branchIds.filter((x: string) => x !== b.id) })} />{b.name}</label>)}</div>
           {f.id && <Toggle checked={f.active} onChange={(v) => setF({ ...f, active: v })} label="Active" />}
         </div>
@@ -274,24 +298,6 @@ function TablesAdmin() {
   );
 }
 
-function Subscription() {
-  const { data } = useQuery<{ subscription: { status: string; interval: string; currentPeriodEnd?: string; trialEndsAt?: string }; plan: { name: string; features: string[]; limits: Record<string, number>; priceMonthly: number }; usage: Record<string, number>; plans: Array<{ code: string; name: string; priceMonthly: number; priceAnnual: number; features: string[]; limits: Record<string, number> }> }>({ queryKey: ['subscription'], queryFn: () => get('/admin/subscription') });
-  if (!data) return null;
-  return (
-    <div className="grid gap-4 xl:grid-cols-3">
-      <Card title="Current plan">
-        <p className="text-2xl font-bold">{data.plan?.name}</p>
-        <p className="text-sm"><StatusPill status={data.subscription.status} /> {data.subscription.status === 'trialing' ? `Trial ends ${dateTime(data.subscription.trialEndsAt)}` : `Renews ${dateTime(data.subscription.currentPeriodEnd)}`}</p>
-        <div className="mt-3 space-y-1 text-sm">{Object.entries(data.usage).map(([k, v]) => <div key={k} className="flex justify-between"><span>{titleCase(k)}</span><span>{v} / {data.plan?.limits[k]}</span></div>)}</div>
-        <p className="mt-3 text-xs text-ink-soft">Contact Chili POS support to change plan or renew.</p>
-      </Card>
-      <Card title="Plans" className="xl:col-span-2">
-        <div className="grid gap-3 md:grid-cols-3">{data.plans.map((p) => <div key={p.code} className={`rounded-2xl border-2 p-4 ${p.name === data.plan?.name ? 'border-brand' : 'border-line'}`}><p className="font-bold">{p.name}</p><p className="text-lg font-bold text-brand-dark">{money(p.priceMonthly)}<span className="text-xs font-normal text-ink-soft">/month</span></p><p className="text-xs text-ink-soft">{p.limits.branches} branches · {p.limits.users} users</p><p className="mt-2 text-xs">{p.features.map(titleCase).join(' · ')}</p></div>)}</div>
-      </Card>
-    </div>
-  );
-}
-
 function Audit() {
   const [action, setAction] = useState('');
   const { data, isLoading } = useQuery<Array<{ _id: string; createdAt: string; actorName?: string; action: string; entity?: string; reason?: string; approvedBy?: string; meta?: unknown }>>({ queryKey: ['audit', action], queryFn: () => get('/admin/audit', { action: action || undefined }) });
@@ -306,13 +312,13 @@ function Account() {
   const { session } = useAuth();
   const { handleError, toast } = useFeedback();
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '' });
-  const [pin, setPin] = useState({ currentPassword: '', pin: '' });
+  const [pinOpen, setPinOpen] = useState(false);
   const [mfa, setMfa] = useState<null | { secret: string; otpauthUrl: string }>(null);
   const [code, setCode] = useState('');
   return (
     <div className="grid gap-4 xl:grid-cols-3">
       <Card title="Change password"><div className="space-y-3"><Field label="Current password"><Input type="password" value={pw.currentPassword} onChange={(e) => setPw({ ...pw, currentPassword: e.target.value })} /></Field><Field label="New password"><Input type="password" value={pw.newPassword} onChange={(e) => setPw({ ...pw, newPassword: e.target.value })} /></Field><Button onClick={() => post('/auth/change-password', pw).then(() => { toast('Password changed. Other sessions were signed out.'); setPw({ currentPassword: '', newPassword: '' }); }).catch(handleError)}>Update</Button></div></Card>
-      <Card title="Approval PIN"><div className="space-y-3"><p className="text-sm text-ink-soft">Managers use this PIN to approve voids, discounts and refunds on a cashier’s terminal.</p><Field label="Current password"><Input type="password" value={pin.currentPassword} onChange={(e) => setPin({ ...pin, currentPassword: e.target.value })} /></Field><Field label="New PIN (4–8 digits)"><Input type="password" inputMode="numeric" value={pin.pin} onChange={(e) => setPin({ ...pin, pin: e.target.value.replace(/\D/g, '') })} /></Field><Button onClick={() => post('/auth/pin', pin).then(() => { toast('PIN set'); setPin({ currentPassword: '', pin: '' }); }).catch(handleError)}>Save PIN</Button></div></Card>
+      <Card title="My PIN"><div className="space-y-3"><p className="text-sm text-ink-soft">Your PIN (4–6 digits) signs you in on POS terminals and approves voids, discounts and refunds.</p><Button onClick={() => setPinOpen(true)}>Change PIN</Button></div>{pinOpen && <AccountMenu onClose={() => setPinOpen(false)} />}</Card>
       <Card title="Two-factor authentication">
         {session?.user.mfaEnabled ? <p className="text-sm"><Pill color="green">Enabled</Pill> Your account requires an authenticator code at sign-in.</p> : mfa ? (
           <div className="space-y-3 text-sm"><p>Add this key to Google Authenticator, Authy or Microsoft Authenticator:</p><code className="block break-all rounded-xl bg-page p-3">{mfa.secret}</code><Field label="6-digit code"><Input inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} /></Field><Button onClick={() => post('/auth/mfa/enable', { code }).then(() => toast('MFA enabled')).catch(handleError)}>Verify & enable</Button></div>

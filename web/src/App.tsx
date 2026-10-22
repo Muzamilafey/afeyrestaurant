@@ -20,7 +20,6 @@ const ReportsPage = lazy(() => import('@/pages/ReportsPage'));
 const AccountingPage = lazy(() => import('@/pages/AccountingPage'));
 const IntegrationsPage = lazy(() => import('@/pages/IntegrationsPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
-const PlatformPage = lazy(() => import('@/pages/platform/PlatformPage'));
 const TrackOrder = lazy(() => import('@/pages/TrackOrder'));
 
 function Loading() {
@@ -38,7 +37,6 @@ function Guard({ perms, children }: { perms?: string[]; children: ReactNode }) {
 
 function Home() {
   const { session, can } = useAuth();
-  if (session?.user.isPlatformAdmin) return <Navigate to="/platform" replace />;
   if (can('orders.create')) return <Navigate to="/pos" replace />;
   if (can('kitchen.view')) return <Navigate to="/kitchen" replace />;
   if (can('bar.view')) return <Navigate to="/bar" replace />;
@@ -56,7 +54,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
-          <Route path="/track/:tenant/:code" element={<TrackOrder />} />
+          <Route path="/track/:code" element={<TrackOrder />} />
           <Route element={<Guard><AppShell /></Guard>}>
             <Route index element={<Home />} />
             <Route path="pos" element={<Guard perms={['orders.create']}><PosPage /></Guard>} />
@@ -74,7 +72,6 @@ export default function App() {
             <Route path="accounting" element={<Guard perms={['cash.session', 'accounting.view', 'expenses.manage']}><AccountingPage /></Guard>} />
             <Route path="integrations" element={<Guard perms={['integrations.manage']}><IntegrationsPage /></Guard>} />
             <Route path="settings" element={<Guard perms={['settings.manage', 'menu.manage', 'users.manage', 'tables.manage', 'audit.view']}><SettingsPage /></Guard>} />
-            <Route path="platform" element={<Guard perms={['platform.admin']}><PlatformPage /></Guard>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

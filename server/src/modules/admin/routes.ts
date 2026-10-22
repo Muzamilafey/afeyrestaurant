@@ -1,32 +1,24 @@
 import { z } from 'zod';
 import { Types } from 'mongoose';
 import { createModule, zId } from '../../http/route';
-import { Branch, User, Role, Tenant, TaxRate, Subscription, Plan, AuditLog, Terminal } from '../../models';
+import { Branch, User, Role, Tenant, TaxRate, AuditLog, Terminal } from '../../models';
 import { PERMISSIONS as P, ALL_PERMISSIONS } from '../../auth/permissions';
-import { hashPassword, passwordPolicy } from '../../auth/password';
+import { hashPassword, passwordPolicy, pinPolicy } from '../../auth/password';
 import { audit } from '../../services/audit';
 import { badRequest, conflict, forbidden, notFound, AppError } from '../../lib/errors';
-import { invalidateTenantCache } from '../../middleware/auth';
 import { revokeAllForUser } from '../../auth/tokens';
 import { randomToken } from '../../lib/crypto';
 
 const m = createModule('/admin', 'Administration');
 
-async function planLimits(tenantId: Types.ObjectId) {
-  const sub = await Subscription.findOne({ tenantId }).lean();
-  const plan = sub ? await Plan.findById(sub.planId).lean() : null;
-  return plan?.limits ?? { branches: 1, users: 5, terminals: 1, products: 100 };
-}
-
-// ── Tenant settings ──
-m.route({ method: 'get', path: '/tenant', summary: 'Tenant profile & settings', auth: 'tenant', permission: [P.SETTINGS_MANAGE, P.BRANCHES_MANAGE] }, async ({ ctx }) => Tenant.findById(ctx.tenantId).lean());
+// ── Business profile & settings ──
+m.route({ method: 'get', path: '/tenant', summary: 'Business profile & settings', auth: 'tenant', permission: [P.SETTINGS_MANAGE, P.BRANCHES_MANAGE] }, async ({ ctx }) => Tenant.findById(ctx.tenantId).lean());
 m.route(
   {
-    method: 'patch', path: '/tenant', summary: 'Update tenant profile, branding and settings', auth: 'tenant', permission: P.SETTINGS_MANAGE,
+    method: 'patch', path: '/tenant', summary: 'Update business name, logo, branding and settings', auth: 'tenant', permission: P.SETTINGS_MANAGE,
     body: z.object({
       name: z.string().min(2).max(120).optional(), contactEmail: z.email().optional(), contactPhone: z.string().optional(), kraPin: z.string().max(20).optional(),
-      customDomains: z.array(z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/)).max(5).optional(),
-      branding: z.object({ logoUrl: z.string().max(500).optional(), primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), receiptHeader: z.string().max(300).optional(), receiptFooter: z.string().max(300).optional() }).optional(),
+      branding: z.object({ logoUrl: z.string().max(500).regex(/^(\/uploads\/|https:\/\/)/, 'Upload the logo or use an https URL').or(z.literal('')).optional(), primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), receiptHeader: z.string().max(300).optional(), receiptFooter: z.string().max(300).optional() }).optional(),
       settings: z.object({
         timezone: z.string().optional(), discountApprovalThresholdBps: z.number().int().min(0).max(10000).optional(), loyaltyPointsPer100: z.number().min(0).max(100).optional(),
         loyaltyRedeemValue: z.number().int().min(0).optional(), costingPolicy: z.enum(['fifo', 'weighted_average']).optional(), allowNegativeStock: z.boolean().optional(),
@@ -43,12 +35,10 @@ m.route(
     if (body.contactEmail) t.contactEmail = body.contactEmail;
     if (body.contactPhone) t.contactPhone = body.contactPhone;
     if (body.kraPin !== undefined) t.kraPin = body.kraPin;
-    if (body.customDomains) t.customDomains = body.customDomains;
     if (body.branding) t.set('branding', { ...(before.branding ?? {}), ...body.branding });
     if (body.settings) t.set('settings', { ...(before.settings ?? {}), ...body.settings });
     await t.save();
-    invalidateTenantCache(String(ctx.tenantId));
-    await audit(ctx, { action: 'settings.tenant_updated', entity: 'Tenant', entityId: t._id, before: { settings: before.settings, branding: before.branding }, after: { settings: t.settings, branding: t.branding } }, req);
+    await audit(ctx, { action: 'settings.business_updated', entity: 'Business', entityId: t._id, before: { name: before.name, settings: before.settings, branding: before.branding }, after: { name: t.name, settings: t.settings, branding: t.branding } }, req);
     return t;
   },
 );
@@ -65,8 +55,6 @@ const zBranch = z.object({
 });
 m.route({ method: 'get', path: '/branches', summary: 'List branches you can access', auth: 'tenant' }, async ({ ctx }) => Branch.find({ tenantId: ctx.tenantId, _id: { $in: ctx.allowedBranchIds } }).sort({ name: 1 }).lean());
 m.route({ method: 'post', path: '/branches', summary: 'Create a branch', auth: 'tenant', permission: P.BRANCHES_MANAGE, body: zBranch, status: 201 }, async ({ ctx, body, req }) => {
-  const limits = await planLimits(ctx.tenantId);
-  if ((await Branch.countDocuments({ tenantId: ctx.tenantId })) >= limits.branches) throw new AppError(402, 'PLAN_LIMIT', `Your plan allows ${limits.branches} branch(es). Upgrade to add more.`);
   const b = await Branch.create({ ...body, code: body.code.toUpperCase(), tenantId: ctx.tenantId });
   await audit(ctx, { action: 'branch.created', entity: 'Branch', entityId: b._id, after: body }, req);
   return b;
@@ -85,8 +73,8 @@ m.route({ method: 'patch', path: '/branches/:id', summary: 'Update a branch', au
 });
 
 // ── Roles ──
-m.route({ method: 'get', path: '/roles', summary: 'List roles', auth: 'tenant', permission: [P.USERS_MANAGE, P.ROLES_MANAGE] }, async ({ ctx }) => ({ roles: await Role.find({ tenantId: ctx.tenantId }).sort({ system: -1, name: 1 }).lean(), permissions: ALL_PERMISSIONS.filter((p) => p !== P.PLATFORM_ADMIN) }));
-const zRole = z.object({ key: z.string().regex(/^[a-z0-9_]{2,40}$/), name: z.string().min(2).max(60), description: z.string().max(200).optional(), permissions: z.array(z.enum(ALL_PERMISSIONS.filter((p) => p !== P.PLATFORM_ADMIN) as [string, ...string[]])), branchScoped: z.boolean() });
+m.route({ method: 'get', path: '/roles', summary: 'List roles', auth: 'tenant', permission: [P.USERS_MANAGE, P.ROLES_MANAGE] }, async ({ ctx }) => ({ roles: await Role.find({ tenantId: ctx.tenantId }).sort({ system: -1, name: 1 }).lean(), permissions: ALL_PERMISSIONS }));
+const zRole = z.object({ key: z.string().regex(/^[a-z0-9_]{2,40}$/), name: z.string().min(2).max(60), description: z.string().max(200).optional(), permissions: z.array(z.enum(ALL_PERMISSIONS as unknown as [string, ...string[]])), branchScoped: z.boolean() });
 m.route({ method: 'put', path: '/roles/:key', summary: 'Create or update a custom role', auth: 'tenant', permission: P.ROLES_MANAGE, body: zRole }, async ({ ctx, body, params, req }) => {
   const existing = await Role.findOne({ tenantId: ctx.tenantId, key: params.key });
   if (existing?.key === 'owner') throw forbidden('The owner role cannot be modified');
@@ -105,7 +93,7 @@ m.route({ method: 'get', path: '/users', summary: 'List users', auth: 'tenant', 
   if (!ctx.allBranches) filter.branchIds = { $in: ctx.allowedBranchIds };
   return (await User.find(filter).sort({ name: 1 }).lean()).map(userView);
 });
-const zUser = z.object({ name: z.string().min(2).max(80), email: z.email(), phone: z.string().optional(), password: z.string().max(200).optional(), pin: z.string().regex(/^\d{4,8}$/).optional(), roleId: zId, branchIds: z.array(zId).min(1), defaultBranchId: zId.optional(), active: z.boolean().optional() });
+const zUser = z.object({ name: z.string().min(2).max(80), email: z.email(), phone: z.string().optional(), password: z.string().max(200).optional(), pin: z.string().regex(/^\d{4,6}$/, 'PIN must be 4–6 digits').optional(), roleId: zId, branchIds: z.array(zId).min(1), defaultBranchId: zId.optional(), active: z.boolean().optional() });
 
 async function checkAssignable(ctx: { tenantId: Types.ObjectId; permissions: Set<string>; allowedBranchIds: Types.ObjectId[] }, roleId: string, branchIds: string[]) {
   const role = await Role.findOne({ tenantId: ctx.tenantId, _id: roleId }).lean();
@@ -118,11 +106,10 @@ async function checkAssignable(ctx: { tenantId: Types.ObjectId; permissions: Set
 
 m.route({ method: 'post', path: '/users', summary: 'Create a user', auth: 'tenant', permission: P.USERS_MANAGE, body: zUser, status: 201 }, async ({ ctx, body, req }) => {
   await checkAssignable(ctx, body.roleId, body.branchIds);
-  const limits = await planLimits(ctx.tenantId);
-  if ((await User.countDocuments({ tenantId: ctx.tenantId, active: true })) >= limits.users) throw new AppError(402, 'PLAN_LIMIT', `Your plan allows ${limits.users} active users.`);
   if (!body.password) throw badRequest('Password is required');
   const policy = passwordPolicy(body.password);
   if (policy) throw badRequest(policy);
+  if (body.pin && pinPolicy(body.pin)) throw badRequest(pinPolicy(body.pin)!);
   if (await User.exists({ tenantId: ctx.tenantId, email: body.email.toLowerCase() })) throw conflict('A user with this email already exists');
   const u = await User.create({ tenantId: ctx.tenantId, name: body.name, email: body.email.toLowerCase(), phone: body.phone, passwordHash: await hashPassword(body.password), pinHash: body.pin ? await hashPassword(body.pin) : undefined, roleId: body.roleId, branchIds: body.branchIds, defaultBranchId: body.defaultBranchId ?? body.branchIds[0], active: body.active ?? true });
   await audit(ctx, { action: 'user.created', entity: 'User', entityId: u._id, after: { email: u.email, roleId: body.roleId, branchIds: body.branchIds } }, req);
@@ -142,7 +129,13 @@ m.route({ method: 'patch', path: '/users/:id', summary: 'Update a user (role, br
   if (body.branchIds) u.branchIds = body.branchIds.map((b) => new Types.ObjectId(b));
   if (body.defaultBranchId) u.defaultBranchId = new Types.ObjectId(body.defaultBranchId);
   if (body.active !== undefined) u.active = body.active;
-  if (body.pin) u.pinHash = await hashPassword(body.pin);
+  if (body.pin) {
+    const pp = pinPolicy(body.pin);
+    if (pp) throw badRequest(pp);
+    u.pinHash = await hashPassword(body.pin);
+    u.lockedUntil = undefined;
+    u.failedLogins = 0;
+  }
   let revoke = body.active === false || !!body.roleId;
   if (body.password) {
     const policy = passwordPolicy(body.password);
@@ -170,17 +163,7 @@ m.route({ method: 'put', path: '/taxes/:code', summary: 'Create/update a tax rat
 // ── Terminals ──
 m.route({ method: 'get', path: '/terminals', summary: 'List POS terminals', permission: P.SETTINGS_MANAGE }, async ({ ctx }) => Terminal.find({ tenantId: ctx.tenantId, branchId: ctx.branchId }).lean());
 m.route({ method: 'post', path: '/terminals', summary: 'Register a POS terminal', permission: P.SETTINGS_MANAGE, body: z.object({ name: z.string().min(1).max(40) }), status: 201 }, async ({ ctx, body }) => {
-  const limits = await planLimits(ctx.tenantId);
-  if ((await Terminal.countDocuments({ tenantId: ctx.tenantId, active: true })) >= limits.terminals) throw new AppError(402, 'PLAN_LIMIT', `Your plan allows ${limits.terminals} terminals.`);
   return Terminal.create({ tenantId: ctx.tenantId, branchId: ctx.branchId, name: body.name, deviceKey: randomToken(12) });
-});
-
-// ── Subscription (tenant view) ──
-m.route({ method: 'get', path: '/subscription', summary: 'Current subscription and plan', auth: 'tenant', permission: [P.SUBSCRIPTION_VIEW, P.SETTINGS_MANAGE] }, async ({ ctx }) => {
-  const sub = await Subscription.findOne({ tenantId: ctx.tenantId }).lean();
-  const plan = sub ? await Plan.findById(sub.planId).lean() : null;
-  const usage = { branches: await Branch.countDocuments({ tenantId: ctx.tenantId }), users: await User.countDocuments({ tenantId: ctx.tenantId, active: true }), terminals: await Terminal.countDocuments({ tenantId: ctx.tenantId, active: true }) };
-  return { subscription: sub, plan, usage, plans: await Plan.find({ active: true }).sort({ priceMonthly: 1 }).lean() };
 });
 
 // ── Audit ──

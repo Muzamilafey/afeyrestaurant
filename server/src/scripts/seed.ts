@@ -1,21 +1,19 @@
 /**
- * Seed a demo tenant for development and acceptance testing.
- *   npm run seed            → creates/refreshes the "chili-demo" tenant
+ * Seed demo data ("Chili Grill & Lounge") for development and acceptance testing.
+ *   npm run seed   → sets up the demo business on an empty database (or refreshes an existing demo)
  * Refuses to run in production.
  */
 import { Types } from 'mongoose';
 import { connectDb, disconnectDb, withTransaction } from '../db/connect';
 import { isProd } from '../config/env';
-import { Tenant, Branch, Role, User, Category, Product, ModifierGroup, TaxRate, Table, DiningArea, Ingredient, Customer, Employee, Shift, Subscription, Plan, Supplier, DeliveryZone, Rider, LoyaltyAccount, Coupon } from '../models';
-import { createTenant, ensurePlans } from '../services/tenantSetup';
+import { Business, Branch, Role, User, Category, Product, ModifierGroup, TaxRate, Table, DiningArea, Ingredient, Customer, Employee, Shift, Supplier, DeliveryZone, Rider, LoyaltyAccount, Coupon } from '../models';
+import { setupBusiness, getBusiness } from '../services/setup';
 import { hashPassword } from '../auth/password';
 import { saveIntegration } from '../services/integrations';
 import { postMovement, saveRecipe } from '../services/inventory';
-import { logger } from '../lib/logger';
 
 export const DEMO_PASSWORD = 'ChiliDemo#2026';
-export const DEMO_PIN = '1234';
-export const DEMO_SLUG = 'chili-demo';
+export const DEMO_PIN = '2580';
 
 const ROLE_USERS: Array<[string, string, string]> = [
   ['general_manager', 'Grace Wanjiku', 'gm'],
@@ -31,24 +29,20 @@ const ROLE_USERS: Array<[string, string, string]> = [
   ['auditor', 'Ian Odhiambo', 'auditor'],
 ];
 
-export async function seedDemo(opts: { reset?: boolean } = {}) {
-  await ensurePlans();
-  let tenant = await Tenant.findOne({ slug: DEMO_SLUG });
-  if (tenant && opts.reset) {
-    logger.warn('Demo tenant exists — reset requested is not supported destructively; reusing it');
-  }
-  if (!tenant) {
-    await createTenant({
-      name: 'Chili Grill & Lounge', slug: DEMO_SLUG, planCode: 'enterprise', contactPhone: '0700000000',
+export async function seedDemo() {
+  if (!(await getBusiness())) {
+    await setupBusiness({
+      name: 'Chili Grill & Lounge', contactPhone: '0700000000',
       branch: { name: 'Westlands', code: 'WST', address: 'Waiyaki Way, Westlands, Nairobi', phone: '0700000001' },
       owner: { name: 'Olivia Owner', email: 'owner@chili.demo', password: DEMO_PASSWORD },
     });
-    tenant = await Tenant.findOne({ slug: DEMO_SLUG });
   }
-  const tenantId = tenant!._id as Types.ObjectId;
-  await Tenant.updateOne({ _id: tenantId }, { $set: { status: 'active', kraPin: 'P051234567X', 'settings.alertEmails': ['owner@chili.demo'], 'branding.receiptHeader': 'Chili Grill & Lounge — Good food, cold drinks' } });
-  const plan = await Plan.findOne({ code: 'enterprise' });
-  await Subscription.updateOne({ tenantId }, { $set: { status: 'active', planId: plan!._id, currentPeriodEnd: new Date(Date.now() + 365 * 86400_000) } });
+  const business = (await getBusiness())!;
+  const tenantId = business._id as Types.ObjectId;
+  if (business.name !== 'Chili Grill & Lounge' || !(await User.exists({ tenantId, email: 'owner@chili.demo' }))) {
+    throw new Error(`This database already belongs to "${business.name}". The demo seed only runs on an empty database or an existing demo.`);
+  }
+  await Business.updateOne({ _id: tenantId }, { $set: { kraPin: 'P051234567X', 'settings.alertEmails': ['owner@chili.demo'], 'branding.receiptHeader': 'Chili Grill & Lounge — Good food, cold drinks' } });
 
   const main = (await Branch.findOne({ tenantId, code: 'WST' }))!;
   await Branch.updateOne({ tenantId, _id: main._id }, { $set: { 'settings.serviceChargeBps': 500, 'settings.enabledModes': ['dine_in', 'takeaway', 'delivery', 'bar_counter', 'online'], 'settings.deliveryFee': 15000, 'settings.happyHours': [{ days: [1, 2, 3, 4, 5], start: '17:00', end: '19:00', discountBps: 2000, categoryIds: [] }] } });
@@ -69,8 +63,6 @@ export async function seedDemo(opts: { reset?: boolean } = {}) {
     const email = `${local}@chili.demo`;
     await User.updateOne({ tenantId, email }, { $setOnInsert: { tenantId, email, name, passwordHash: pwHash, pinHash, roleId: role!._id, branchIds: [main._id], defaultBranchId: main._id } }, { upsert: true });
   }
-  // Platform super admin (tenantId null)
-  await User.updateOne({ tenantId: null, email: 'platform@chilipos.local' }, { $setOnInsert: { tenantId: null, email: 'platform@chilipos.local', name: 'Platform Admin', passwordHash: pwHash, isPlatformAdmin: true } }, { upsert: true });
 
   // Taxes: VAT inclusive active
   const vat = (await TaxRate.findOne({ tenantId, code: 'VAT' }))!;
@@ -207,9 +199,8 @@ if (require.main === module) {
   connectDb()
     .then(() => seedDemo())
     .then(async (r) => {
-      console.log('Demo tenant ready:', { slug: DEMO_SLUG, ...r });
-      console.log(`Sign in with tenant "${DEMO_SLUG}", e.g. owner@chili.demo / cashier@chili.demo / chef@chili.demo, password ${DEMO_PASSWORD}, approval PIN ${DEMO_PIN}`);
-      console.log(`Platform admin: platform@chilipos.local / ${DEMO_PASSWORD} (leave restaurant blank)`);
+      console.log('Demo business ready:', r);
+      console.log(`Sign in as owner@chili.demo / cashier@chili.demo / chef@chili.demo (see docs for all roles), password ${DEMO_PASSWORD}, approval PIN ${DEMO_PIN}`);
       await disconnectDb();
     })
     .catch(async (e) => {

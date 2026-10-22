@@ -49,7 +49,7 @@ const zDevice = z.object({
   connection: z.enum(['tcp', 'udp', 'usb_bridge', 'mock']), host: z.string().max(100).optional(), port: z.number().int().min(1).max(65535).optional(), bridgeId: zId.optional(), timezone: z.string().optional(), active: z.boolean().optional(),
 });
 m.route({ method: 'get', path: '/devices', summary: 'Biometric devices', permission: [P.DEVICES_MANAGE, P.ATTENDANCE_VIEW] }, async ({ ctx }) => BiometricDevice.find({ tenantId: ctx.tenantId, branchId: ctx.branchId }).lean());
-m.route({ method: 'post', path: '/devices', summary: 'Register a biometric device (unverified until physically tested)', permission: P.DEVICES_MANAGE, feature: 'biometrics', body: zDevice, status: 201 }, async ({ ctx, body, req }) => {
+m.route({ method: 'post', path: '/devices', summary: 'Register a biometric device (unverified until physically tested)', permission: P.DEVICES_MANAGE, body: zDevice, status: 201 }, async ({ ctx, body, req }) => {
   if (body.vendor === 'zkteco' && (body.deviceType !== 'zkteco_terminal' || !['tcp', 'udp'].includes(body.connection) || !body.host)) throw badRequest('ZKTeco terminals need a LAN IP and TCP/UDP connection');
   if (body.vendor === 'secugen' && (body.deviceType !== 'secugen_usb' || body.connection !== 'usb_bridge')) throw badRequest('SecuGen readers connect over USB through the local bridge');
   if (body.vendor !== 'mock' && !body.bridgeId) throw badRequest('Select the bridge that can reach this device');
@@ -73,7 +73,7 @@ m.route({ method: 'post', path: '/devices/:id/commands', summary: 'Queue a devic
 });
 m.route({ method: 'get', path: '/devices/:id/commands', summary: 'Recent device commands and results', permission: P.DEVICES_MANAGE }, async ({ ctx, params }) => BridgeCommand.find({ tenantId: ctx.tenantId, deviceId: params.id }).sort({ createdAt: -1 }).limit(50).lean());
 
-m.route({ method: 'post', path: '/devices/:id/enroll', summary: 'Start enrolment of an employee on a device (consent required)', permission: P.BIOMETRIC_ENROLL, feature: 'biometrics', body: z.object({ employeeId: zId, fingerIndex: z.number().int().min(0).max(9).default(0) }), status: 201 }, async ({ ctx, params, body, req }) => {
+m.route({ method: 'post', path: '/devices/:id/enroll', summary: 'Start enrolment of an employee on a device (consent required)', permission: P.BIOMETRIC_ENROLL, body: z.object({ employeeId: zId, fingerIndex: z.number().int().min(0).max(9).default(0) }), status: 201 }, async ({ ctx, params, body, req }) => {
   const [d, e] = await Promise.all([BiometricDevice.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: params.id }).lean(), Employee.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: body.employeeId }).lean()]);
   if (!d) throw notFound('Device');
   if (!e) throw notFound('Employee');

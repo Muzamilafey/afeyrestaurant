@@ -2,11 +2,11 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod';
 import type { Permission } from '../auth/permissions';
 import { registerOperation } from './openapi';
-import { authenticate, requirePermission, requireFeature, requirePlatformAdmin } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
 import type { RequestContext, TenantContext, BranchContext } from './context';
 import { badRequest } from '../lib/errors';
 
-type Auth = 'public' | 'user' | 'tenant' | 'branch' | 'platform';
+type Auth = 'public' | 'user' | 'tenant' | 'branch';
 type CtxFor<A extends Auth> = A extends 'branch' ? BranchContext : A extends 'tenant' ? TenantContext : A extends 'public' ? undefined : RequestContext;
 
 interface RouteSpec<B extends z.ZodType, Q extends z.ZodType, A extends Auth> {
@@ -15,7 +15,6 @@ interface RouteSpec<B extends z.ZodType, Q extends z.ZodType, A extends Auth> {
   summary: string;
   auth?: A;
   permission?: Permission | Permission[];
-  feature?: string;
   body?: B;
   query?: Q;
   /** Return raw response (e.g. CSV / redirects) instead of JSON { data }. */
@@ -39,10 +38,8 @@ export function createModule(basePath: string, tag: string) {
     const perms = spec.permission ? (Array.isArray(spec.permission) ? spec.permission : [spec.permission]) : [];
     registerOperation({ method: spec.method, path: `/api/v1${basePath}${spec.path}`, summary: spec.summary, tag, permission: perms, auth, body: spec.body, query: spec.query });
     const chain: Array<(req: Request, res: Response, next: NextFunction) => void> = [...(spec.middleware ?? [])];
-    if (auth !== 'public') chain.push(authenticate({ requireTenant: auth === 'tenant' || auth === 'branch', requireBranch: auth === 'branch' }));
-    if (auth === 'platform') chain.push(requirePlatformAdmin);
+    if (auth !== 'public') chain.push(authenticate({ requireBranch: auth === 'branch' }));
     if (perms.length) chain.push(requirePermission(...perms));
-    if (spec.feature) chain.push(requireFeature(spec.feature));
     router[spec.method](spec.path, ...chain, async (req: Request, res: Response, next: NextFunction) => {
       try {
         let body: unknown = req.body;

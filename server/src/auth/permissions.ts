@@ -74,17 +74,15 @@ export const PERMISSIONS = {
   ROLES_MANAGE: 'roles.manage',
   BRANCHES_MANAGE: 'branches.manage',
   SETTINGS_MANAGE: 'settings.manage',
+  TERMINALS_MANAGE: 'terminals.manage',
   INTEGRATIONS_MANAGE: 'integrations.manage',
   NOTIFICATIONS_MANAGE: 'notifications.manage',
   AUDIT_VIEW: 'audit.view',
-  SUBSCRIPTION_VIEW: 'subscription.view',
-  // Platform (cross-tenant, super admin only)
-  PLATFORM_ADMIN: 'platform.admin',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 export const ALL_PERMISSIONS = Object.values(PERMISSIONS) as Permission[];
-const TENANT_PERMISSIONS = ALL_PERMISSIONS.filter((p) => p !== PERMISSIONS.PLATFORM_ADMIN);
+const TENANT_PERMISSIONS = ALL_PERMISSIONS;
 
 const P = PERMISSIONS;
 
@@ -99,7 +97,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
   general_manager: {
     name: 'General Manager',
     description: 'Manages operations across all branches',
-    permissions: TENANT_PERMISSIONS.filter((p) => p !== P.ROLES_MANAGE && p !== P.SUBSCRIPTION_VIEW),
+    permissions: TENANT_PERMISSIONS.filter((p) => p !== P.ROLES_MANAGE),
     branchScoped: false,
   },
   branch_manager: {
@@ -115,7 +113,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
       P.RECIPES_MANAGE, P.PROCUREMENT_VIEW, P.PROCUREMENT_MANAGE, P.PROCUREMENT_APPROVE, P.CASH_SESSION,
       P.CASH_SESSION_VIEW_ALL, P.EXPENSES_MANAGE, P.CUSTOMERS_VIEW, P.CUSTOMERS_MANAGE, P.CUSTOMERS_NOTES,
       P.LOYALTY_MANAGE, P.STAFF_VIEW, P.ATTENDANCE_VIEW, P.ATTENDANCE_MANAGE, P.ATTENDANCE_APPROVE,
-      P.BIOMETRIC_ENROLL, P.REPORTS_SALES, P.REPORTS_INVENTORY, P.REPORTS_STAFF, P.AUDIT_VIEW,
+      P.BIOMETRIC_ENROLL, P.REPORTS_SALES, P.REPORTS_INVENTORY, P.REPORTS_STAFF, P.AUDIT_VIEW, P.TERMINALS_MANAGE,
     ],
     branchScoped: true,
   },

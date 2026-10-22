@@ -256,7 +256,7 @@ export default function PosPage() {
   /** Offline: record a provisional cash sale locally; it syncs when the connection returns. */
   async function payOffline() {
     if (order) return toast('This order lives on the server. Reconnect to take payment.', 'error');
-    if (!(session?.tenant?.settings?.offlineAllowedActions ?? ['create_order', 'cash_payment']).includes('cash_payment')) return toast('Offline payments are disabled', 'error');
+    if (!(session?.business?.settings?.offlineAllowedActions ?? ['create_order', 'cash_payment']).includes('cash_payment')) return toast('Offline payments are disabled', 'error');
     const total = draft.reduce((s, d) => s + d.unitPrice * d.qty, 0);
     const c = await confirm({ title: 'Offline cash sale', message: <>The connection is down. Record a <b>cash</b> sale of <b>{money(total)}</b> locally? It is marked <i>pending sync</i> until the server verifies it. M-Pesa and card are unavailable offline.</>, confirmLabel: 'Record cash sale' });
     if (!c.ok) return;
@@ -267,7 +267,7 @@ export default function PosPage() {
       items: draft.map((d) => ({ lineId: d.lineId, productId: d.productId, qty: d.qty, variant: d.variant, modifiers: d.modifiers.map(({ groupId, optionId }) => ({ groupId, optionId })), notes: d.notes, unitPrice: d.unitPrice, name: d.name })),
       payments: [{ clientPaymentId: uuid(), method: 'cash', amount: total, tendered: total }],
     });
-    const text = [session?.tenant?.name, branch?.name, '*** OFFLINE SALE — PENDING SYNC ***', `Ref: ${clientId.slice(0, 8).toUpperCase()}`, new Date().toLocaleString(), '-'.repeat(32), ...draft.map((d) => `${d.qty} x ${d.name}`.padEnd(22) + (d.unitPrice * d.qty / 100).toFixed(2).padStart(10)), '-'.repeat(32), 'TOTAL (CASH)'.padEnd(22) + (total / 100).toFixed(2).padStart(10)].join('\n');
+    const text = [session?.business?.name, branch?.name, '*** OFFLINE SALE — PENDING SYNC ***', `Ref: ${clientId.slice(0, 8).toUpperCase()}`, new Date().toLocaleString(), '-'.repeat(32), ...draft.map((d) => `${d.qty} x ${d.name}`.padEnd(22) + (d.unitPrice * d.qty / 100).toFixed(2).padStart(10)), '-'.repeat(32), 'TOTAL (CASH)'.padEnd(22) + (total / 100).toFixed(2).padStart(10)].join('\n');
     setOfflineReceipt({ _id: clientId, number: clientId.slice(0, 8), totals: { total } } as Order);
     resetDraft();
     try {

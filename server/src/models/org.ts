@@ -47,8 +47,7 @@ export const Role = model('Role', roleSchema);
 
 const userSchema = new Schema(
   {
-    /** Null only for platform super admins. */
-    tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', index: true, default: null },
+    tenantId: tenantRef,
     email: { type: String, required: true, lowercase: true, trim: true },
     phone: String,
     name: { type: String, required: true, trim: true },
@@ -56,7 +55,6 @@ const userSchema = new Schema(
     /** Quick POS PIN for manager approvals (argon2 hash). */
     pinHash: { type: String, select: false },
     roleId: { type: Schema.Types.ObjectId, ref: 'Role' },
-    isPlatformAdmin: { type: Boolean, default: false },
     branchIds: [{ type: Schema.Types.ObjectId, ref: 'Branch' }],
     defaultBranchId: { type: Schema.Types.ObjectId, ref: 'Branch' },
     active: { type: Boolean, default: true },
@@ -73,7 +71,6 @@ const userSchema = new Schema(
   },
   schemaOpts,
 );
-// Email is unique per tenant; platform admins (tenantId null) are unique globally via the same index.
 userSchema.index({ tenantId: 1, email: 1 }, { unique: true });
 userSchema.index({ email: 1 });
 export const User = model('User', userSchema);
@@ -101,12 +98,16 @@ const terminalSchema = new Schema(
     branchId: { type: Schema.Types.ObjectId, ref: 'Branch', required: true },
     name: { type: String, required: true },
     deviceKey: { type: String, required: true },
+    /** SHA-256 of the terminal token stored on the device; enables PIN sign-in on that device only. */
+    tokenHash: { type: String },
+    registeredBy: { type: Schema.Types.ObjectId, ref: 'User' },
     lastSeenAt: Date,
     active: { type: Boolean, default: true },
   },
   schemaOpts,
 );
 terminalSchema.index({ tenantId: 1, deviceKey: 1 }, { unique: true });
+terminalSchema.index({ tokenHash: 1 }, { unique: true, partialFilterExpression: { tokenHash: { $type: 'string' } } });
 export const Terminal = model('Terminal', terminalSchema);
 
 const employeeSchema = new Schema(

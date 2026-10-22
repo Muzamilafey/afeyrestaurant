@@ -8,7 +8,7 @@ import { useAuth } from '@/auth/AuthContext';
 interface O { _id: string; number: string; customerName?: string; customerPhone?: string; createdAt: string; totals: { total: number }; status: string; paymentStatus: string; items: Array<{ status: string; voided: boolean }>; delivery?: { address?: string; status?: string; riderId?: string; riderName?: string; trackingCode?: string } }
 
 export default function DeliveryPage() {
-  const { can, session } = useAuth();
+  const { can } = useAuth();
   const { handleError } = useFeedback();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery<O[]>({ queryKey: ['orders', 'delivery'], queryFn: () => get('/crm/delivery'), refetchInterval: 20_000 });
@@ -26,7 +26,7 @@ export default function DeliveryPage() {
           { key: 't', header: 'Total', render: (o) => <div>{money(o.totals.total)} <StatusPill status={o.paymentStatus} /></div> },
           { key: 'r', header: 'Rider', render: (o) => can('delivery.manage') ? <Select value={o.delivery?.riderId ?? ''} onChange={(e) => update(o, { riderId: e.target.value })} className="w-36"><option value="">Assign…</option>{riders?.map((r) => <option key={r._id} value={r._id}>{r.name}</option>)}</Select> : o.delivery?.riderName },
           { key: 's', header: 'Status', render: (o) => <StatusPill status={o.delivery?.status} /> },
-          { key: 'x', header: '', render: (o) => can('delivery.manage') && <div className="flex gap-1">{o.delivery?.status === 'assigned' && <Button size="sm" onClick={() => update(o, { status: 'picked_up' })}>Picked up</Button>}{o.delivery?.status === 'picked_up' && <Button size="sm" onClick={() => update(o, { status: 'delivered' })}>Delivered</Button>}{o.delivery?.trackingCode && <a className="btn-ghost !min-h-[32px] !text-xs" target="_blank" rel="noreferrer" href={`/track/${session?.tenant?.slug}/${o.delivery.trackingCode}`}>Track</a>}</div> },
+          { key: 'x', header: '', render: (o) => can('delivery.manage') && <div className="flex gap-1">{o.delivery?.status === 'assigned' && <Button size="sm" onClick={() => update(o, { status: 'picked_up' })}>Picked up</Button>}{o.delivery?.status === 'picked_up' && <Button size="sm" onClick={() => update(o, { status: 'delivered' })}>Delivered</Button>}{o.delivery?.trackingCode && <a className="btn-ghost !min-h-[32px] !text-xs" target="_blank" rel="noreferrer" href={`/track/${o.delivery.trackingCode}`}>Track</a>}</div> },
         ]} />
       </Card>
     </div>

@@ -9,11 +9,10 @@ import swaggerUi from 'swagger-ui-express';
 import { env, isTest } from './config/env';
 import { logger } from './lib/logger';
 import { requestId, sanitizeInput, errorHandler } from './middleware/common';
-import { resolveHostTenant } from './middleware/tenantHost';
 import { buildOpenApi } from './http/openapi';
 import { healthRouter } from './modules/health/routes';
 import auth from './modules/auth/routes';
-import platform from './modules/platform/routes';
+import setup from './modules/setup/routes';
 import admin from './modules/admin/routes';
 import menu from './modules/menu/routes';
 import tables from './modules/tables/routes';
@@ -41,14 +40,8 @@ export function createApp() {
     cors({
       credentials: true,
       origin: (origin, cb) => {
-        // Allow same-origin/non-browser requests, the configured origins and tenant subdomains of ROOT_DOMAIN.
-        if (!origin) return cb(null, true);
-        try {
-          const host = new URL(origin).hostname;
-          if (origins.includes(origin) || (env.ROOT_DOMAIN !== 'localhost' && host.endsWith(`.${env.ROOT_DOMAIN}`))) return cb(null, true);
-        } catch {
-          /* fallthrough */
-        }
+        // Allow same-origin/non-browser requests and the configured origins.
+        if (!origin || origins.includes(origin)) return cb(null, true);
         cb(new AppError(403, 'CORS', 'Origin not allowed'));
       },
     }),
@@ -57,10 +50,9 @@ export function createApp() {
   app.use(cookieParser());
   app.use(sanitizeInput);
   app.use('/api', rateLimit({ windowMs: 60_000, limit: isTest ? 100000 : 600, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: { code: 'RATE_LIMITED', message: 'Too many requests' } } }));
-  app.use(resolveHostTenant);
 
   app.use('/api/v1', healthRouter);
-  for (const mod of [auth, platform, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, integrations, staff, bridgeModule, crm, publicModule, reports, sync]) {
+  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, integrations, staff, bridgeModule, crm, publicModule, reports, sync]) {
     app.use(`/api/v1${mod.basePath}`, mod.router);
   }
   const spec = buildOpenApi();

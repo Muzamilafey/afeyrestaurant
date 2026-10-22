@@ -9,7 +9,7 @@ const m = createModule('/sync', 'Offline sync');
 
 m.route(
   {
-    method: 'post', path: '/orders', summary: 'Synchronise offline orders in creation order (idempotent)', permission: P.ORDERS_CREATE, feature: 'offline',
+    method: 'post', path: '/orders', summary: 'Synchronise offline orders in creation order (idempotent)', permission: P.ORDERS_CREATE,
     body: z.object({
       orders: z.array(z.object({
         clientId: z.uuid(), terminalId: z.string().max(60), createdAt: z.coerce.date(), type: z.enum(['dine_in', 'takeaway', 'bar_counter']), tableId: zId.optional(),

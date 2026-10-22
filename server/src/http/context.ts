@@ -5,7 +5,8 @@ export interface RequestContext {
   userId: Types.ObjectId;
   userName: string;
   email: string;
-  tenantId: Types.ObjectId | null;
+  /** The business id (single-tenant installation) — still used as the scoping key on every query. */
+  tenantId: Types.ObjectId;
   /** Active branch for this request (X-Branch-Id header, validated). */
   branchId: Types.ObjectId | null;
   /** Branches the user may act on. */
@@ -13,14 +14,9 @@ export interface RequestContext {
   allBranches: boolean;
   permissions: Set<Permission>;
   roleKey: string | null;
-  isPlatformAdmin: boolean;
-  features: Set<string>;
 }
 
-/** Tenant-scoped context guaranteed to have a tenant and branch. */
-export interface TenantContext extends RequestContext {
-  tenantId: Types.ObjectId;
-}
+export type TenantContext = RequestContext;
 export interface BranchContext extends TenantContext {
   branchId: Types.ObjectId;
 }
@@ -31,7 +27,6 @@ declare global {
     interface Request {
       id: string;
       ctx?: RequestContext;
-      hostTenantId?: Types.ObjectId | null;
       bridge?: { id: Types.ObjectId; tenantId: Types.ObjectId; branchId: Types.ObjectId };
     }
   }

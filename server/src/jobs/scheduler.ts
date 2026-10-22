@@ -1,11 +1,10 @@
 import type { Types } from 'mongoose';
-import { PaymentAttempt, Reservation, Tenant, Branch, Subscription, Plan, Order } from '../models';
+import { PaymentAttempt, Reservation, Tenant, Branch, Order } from '../models';
 import { processNotificationQueue, notify } from '../services/notify';
 import { queryAttempt } from '../services/payments';
 import { lowStockItems } from '../modules/inventory/routes';
 import { localParts } from '../services/pricing';
 import { logger } from '../lib/logger';
-import { invalidateTenantCache } from '../middleware/auth';
 
 const G = { skipTenantGuard: true };
 
@@ -39,7 +38,7 @@ export async function reservationReminders() {
 }
 
 export async function dailyTasks() {
-  const tenants = await Tenant.find({ status: { $in: ['active', 'trial'] } }).lean();
+  const tenants = await Tenant.find().lean(); // the single business
   for (const t of tenants) {
     const tz = t.settings?.timezone ?? 'Africa/Nairobi';
     const today = localParts(tz).date;
@@ -59,21 +58,6 @@ export async function dailyTasks() {
         const vars = { branch_name: b.name, date: today, total_sales: ((s?.total ?? 0) / 100).toFixed(2), order_count: s?.n ?? 0, avg_order: s?.n ? (s.total / s.n / 100).toFixed(2) : '0.00', details: '' };
         for (const to of t.settings?.alertEmails ?? []) await notify(t._id, { event: 'manager_sales_summary', channel: 'email', to, vars, dedupeKey: `summary:${b._id}:${today}:${to}` });
         for (const to of t.settings?.alertPhones ?? []) await notify(t._id, { event: 'manager_sales_summary', channel: 'sms', to, vars, dedupeKey: `summary:${b._id}:${today}:${to}` });
-      }
-    }
-    // Subscription expiry reminders at 7 and 1 day(s) before the period end.
-    const sub = await Subscription.findOne({ tenantId: t._id }).lean();
-    const end = sub?.status === 'trialing' ? sub.trialEndsAt : sub?.currentPeriodEnd;
-    if (sub && end) {
-      const daysLeft = Math.ceil((end.getTime() - Date.now()) / 86400_000);
-      if ([7, 1].includes(daysLeft) && t.contactEmail) {
-        const plan = await Plan.findById(sub.planId).lean();
-        await notify(t._id, { event: 'subscription_expiry', channel: 'email', to: t.contactEmail, vars: { plan_name: plan?.name, expiry_date: end.toISOString().slice(0, 10) }, dedupeKey: `subexp:${t._id}:${end.toISOString().slice(0, 10)}:${daysLeft}` });
-      }
-      if (sub.status === 'active' && sub.currentPeriodEnd && sub.currentPeriodEnd < new Date(Date.now() - 3 * 86400_000)) {
-        // 3-day grace period, then past_due (read-only access is not enforced; billing team follows up).
-        await Subscription.updateOne({ tenantId: t._id }, { $set: { status: 'past_due' } });
-        invalidateTenantCache(String(t._id));
       }
     }
   }

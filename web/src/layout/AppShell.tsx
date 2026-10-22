@@ -1,23 +1,25 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import {
-  LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X,
+  LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock,
 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { cx } from '@/components/ui';
 import { outbox, syncOutbox } from '@/lib/offline';
 import { useRealtime } from '@/lib/socket';
+import { BusinessMark } from '@/pages/Login';
+import { AccountMenu } from './AccountMenu';
 
 const NAV = [
   { to: '/pos', label: 'POS / Menu', icon: LayoutGrid, perms: ['orders.create'] },
   { to: '/tables', label: 'Table Services', icon: Armchair, perms: ['tables.view'] },
-  { to: '/kitchen', label: 'Kitchen Orders', icon: ChefHat, perms: ['kitchen.view'], feature: 'kds' },
-  { to: '/bar', label: 'Bar Orders', icon: Wine, perms: ['bar.view'], feature: 'bar' },
-  { to: '/reservations', label: 'Reservations', icon: CalendarDays, perms: ['reservations.view'], feature: 'reservations' },
-  { to: '/delivery', label: 'Delivery', icon: Bike, perms: ['delivery.view'], feature: 'delivery' },
-  { to: '/inventory', label: 'Inventory', icon: Boxes, perms: ['inventory.view'], feature: 'inventory' },
-  { to: '/recipes', label: 'Recipes & Stock', icon: BookOpenText, perms: ['recipes.manage', 'inventory.view'], feature: 'inventory' },
-  { to: '/purchasing', label: 'Purchasing', icon: Truck, perms: ['procurement.view'], feature: 'inventory' },
+  { to: '/kitchen', label: 'Kitchen Orders', icon: ChefHat, perms: ['kitchen.view'] },
+  { to: '/bar', label: 'Bar Orders', icon: Wine, perms: ['bar.view'] },
+  { to: '/reservations', label: 'Reservations', icon: CalendarDays, perms: ['reservations.view'] },
+  { to: '/delivery', label: 'Delivery', icon: Bike, perms: ['delivery.view'] },
+  { to: '/inventory', label: 'Inventory', icon: Boxes, perms: ['inventory.view'] },
+  { to: '/recipes', label: 'Recipes & Stock', icon: BookOpenText, perms: ['recipes.manage', 'inventory.view'] },
+  { to: '/purchasing', label: 'Purchasing', icon: Truck, perms: ['procurement.view'] },
   { to: '/customers', label: 'Customers', icon: Users, perms: ['customers.view'] },
   { to: '/staff', label: 'Staff & Attendance', icon: IdCard, perms: ['staff.view', 'attendance.view'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, perms: ['reports.sales', 'reports.inventory', 'reports.financial', 'reports.staff'] },
@@ -71,7 +73,9 @@ function SyncBadge({ branchId }: { branchId: string | null }) {
 }
 
 export function AppShell() {
-  const { session, branch, switchBranch, logout, can, hasFeature } = useAuth();
+  const { session, branch, switchBranch, logout, can, terminalToken } = useAuth();
+  const [account, setAccount] = useState(false);
+  useIdleLock(!!terminalToken && !!session, logout);
   const [open, setOpen] = useState(false);
   // Start collapsed on tablets so the POS gets the full width.
   const [collapsed, setCollapsed] = useState(() => window.innerWidth < 1280);
@@ -80,16 +84,16 @@ export function AppShell() {
   const stations = [can('kitchen.view') ? 'kitchen' : null, can('bar.view') ? 'bar' : null].filter(Boolean) as string[];
   useRealtime(branch?.id ?? null, stations);
   if (!session) return null;
-  const items = NAV.filter((n) => can(...n.perms) && (!n.feature || hasFeature(n.feature)));
+  const items = NAV.filter((n) => can(...n.perms));
   const isPos = loc.pathname.startsWith('/pos');
 
   const nav = (
     <nav className="flex h-full flex-col">
       <div className="flex items-center gap-3 px-4 pb-4 pt-5">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand text-lg font-black text-white">🌶</div>
+        <BusinessMark name={session.business?.name ?? 'Chili POS'} logoUrl={session.business?.branding?.logoUrl} />
         {!collapsed && (
           <div className="min-w-0">
-            <p className="truncate text-sm font-bold">{session.tenant?.name ?? 'Chili POS'}</p>
+            <p className="truncate text-sm font-bold">{session.business?.name ?? 'Chili POS'}</p>
             <p className="truncate text-xs text-ink-soft">{branch?.name ?? 'No branch'}</p>
           </div>
         )}
@@ -103,14 +107,17 @@ export function AppShell() {
         ))}
       </div>
       <div className="border-t border-line p-3">
-        {!collapsed && (
-          <div className="mb-2 rounded-xl bg-page px-3 py-2">
-            <p className="truncate text-sm font-semibold">{session.user.name}</p>
-            <p className="truncate text-xs text-ink-soft">{session.user.role?.name}</p>
-          </div>
-        )}
+        <button onClick={() => setAccount(true)} title="My account & PIN" className={cx('mb-2 flex w-full items-center gap-2 rounded-xl bg-page px-3 py-2 text-left hover:bg-brand-pale', collapsed && 'justify-center px-0')}>
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-pale text-sm font-bold text-brand-dark">{session.user.name[0]}</span>
+          {!collapsed && (
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold">{session.user.name}</span>
+              <span className="block truncate text-xs text-ink-soft">{session.user.role?.name} · My PIN</span>
+            </span>
+          )}
+        </button>
         <button onClick={logout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-ink-soft hover:bg-danger-pale hover:text-danger">
-          <LogOut className="h-[18px] w-[18px]" /> {!collapsed && 'Logout'}
+          {terminalToken ? <Lock className="h-[18px] w-[18px]" /> : <LogOut className="h-[18px] w-[18px]" />} {!collapsed && (terminalToken ? 'Switch user' : 'Logout')}
         </button>
       </div>
     </nav>
@@ -143,11 +150,35 @@ export function AppShell() {
           )}
           <div className="flex-1" />
           <SyncBadge branchId={branch?.id ?? null} />
+          {terminalToken && (
+            <button onClick={logout} className="hidden items-center gap-1.5 rounded-xl border border-line px-3 py-1.5 text-sm font-semibold sm:flex" title="Lock and switch user">
+              <Lock className="h-4 w-4" /> Switch user
+            </button>
+          )}
         </header>
         <main className={cx('min-h-0 flex-1', isPos ? 'overflow-hidden' : 'scroll-thin overflow-y-auto p-4 sm:p-6')}>
           <Outlet />
         </main>
       </div>
+      {account && <AccountMenu onClose={() => setAccount(false)} />}
     </div>
   );
+}
+
+/** Shared terminals lock back to the PIN screen after a period without interaction. */
+function useIdleLock(enabled: boolean, lock: () => void, minutes = 5) {
+  useEffect(() => {
+    if (!enabled) return;
+    let t = setTimeout(lock, minutes * 60_000);
+    const reset = () => {
+      clearTimeout(t);
+      t = setTimeout(lock, minutes * 60_000);
+    };
+    const events = ['pointerdown', 'keydown', 'touchstart'];
+    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    return () => {
+      clearTimeout(t);
+      events.forEach((e) => window.removeEventListener(e, reset));
+    };
+  }, [enabled, lock, minutes]);
 }

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import multer from 'multer';
 import { z } from 'zod';
 import { createModule, zId, zMoney } from '../../http/route';
-import { Category, Product, ModifierGroup, PriceHistory, Recipe, RecipeVersion, StockBalance, TaxRate, Branch, Tenant, Subscription, Plan } from '../../models';
+import { Category, Product, ModifierGroup, PriceHistory, Recipe, RecipeVersion, StockBalance, TaxRate, Branch, Tenant } from '../../models';
 import { PERMISSIONS as P } from '../../auth/permissions';
 import { audit } from '../../services/audit';
 import { AppError, badRequest, notFound } from '../../lib/errors';
@@ -99,14 +99,7 @@ m.route({ method: 'get', path: '/products', summary: 'List/search products (name
   return Product.find(f).sort({ sortOrder: 1, name: 1 }).limit(500).lean();
 });
 
-async function productLimit(tenantId: unknown) {
-  const sub = await Subscription.findOne({ tenantId }).lean();
-  const plan = sub ? await Plan.findById(sub.planId).lean() : null;
-  return plan?.limits?.products ?? 100;
-}
-
 m.route({ method: 'post', path: '/products', summary: 'Create product', permission: P.MENU_MANAGE, body: zProduct, status: 201 }, async ({ ctx, body, req }) => {
-  if ((await Product.countDocuments({ tenantId: ctx.tenantId, status: { $ne: 'archived' } })) >= (await productLimit(ctx.tenantId))) throw new AppError(402, 'PLAN_LIMIT', 'Product limit for your plan reached');
   if (!(await Category.exists({ tenantId: ctx.tenantId, _id: body.categoryId }))) throw badRequest('Unknown category');
   const p = await Product.create({ ...body, tenantId: ctx.tenantId });
   await audit(ctx, { action: 'menu.product_created', entity: 'Product', entityId: p._id, after: { name: p.name, price: p.price } }, req);
@@ -148,7 +141,7 @@ function sniff(buf: Buffer): string | null {
   if (buf.subarray(0, 4).toString() === 'RIFF' && buf.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
   return null;
 }
-m.route({ method: 'post', path: '/uploads/image', summary: 'Upload a product image (multipart field "file")', permission: P.MENU_MANAGE, middleware: [upload.single('file') as never], status: 201 }, async ({ ctx, req }) => {
+m.route({ method: 'post', path: '/uploads/image', summary: 'Upload a product image or business logo (multipart field "file")', permission: [P.MENU_MANAGE, P.SETTINGS_MANAGE], middleware: [upload.single('file') as never], status: 201 }, async ({ ctx, req }) => {
   const file = req.file;
   if (!file) throw badRequest('No file uploaded');
   const actual = sniff(file.buffer);

@@ -7,7 +7,7 @@ import type { TenantContext } from '../http/context';
 import { AppError } from '../lib/errors';
 
 /** A manager override: the approving manager enters their email and POS PIN on the cashier's terminal. */
-export const zApproval = z.object({ approverEmail: z.email(), pin: z.string().regex(/^\d{4,8}$/) }).optional();
+export const zApproval = z.object({ approverEmail: z.email(), pin: z.string().regex(/^\d{4,6}$/) }).optional();
 export type ApprovalInput = z.infer<typeof zApproval>;
 
 /**

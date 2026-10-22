@@ -4,8 +4,8 @@ import { CheckCircle2, ChefHat, Bike } from 'lucide-react';
 import { get } from '@/lib/api';
 
 export default function TrackOrder() {
-  const { tenant, code } = useParams();
-  const { data, error } = useQuery<{ restaurant: string; number: string; status: string; deliveryStatus?: string; ready: boolean }>({ queryKey: ['track', tenant, code], queryFn: () => get(`/public/${tenant}/track/${code}`), refetchInterval: 20_000 });
+  const { code } = useParams();
+  const { data, error } = useQuery<{ restaurant: string; number: string; status: string; deliveryStatus?: string; ready: boolean }>({ queryKey: ['track', code], queryFn: () => get(`/public/track/${code}`), refetchInterval: 20_000 });
   return (
     <div className="flex min-h-full items-center justify-center p-6">
       <div className="card w-full max-w-sm p-6 text-center">

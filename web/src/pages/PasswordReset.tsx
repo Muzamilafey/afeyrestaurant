@@ -5,13 +5,11 @@ import { post, errorMessage } from '@/lib/api';
 
 export function ForgotPassword() {
   const [email, setEmail] = useState('');
-  const [slug, setSlug] = useState(localStorage.getItem('chili.lastTenant') ?? '');
   const [msg, setMsg] = useState<string | null>(null);
   return (
     <div className="flex min-h-full items-center justify-center p-6">
-      <form className="card w-full max-w-sm space-y-4 p-6" onSubmit={async (e) => { e.preventDefault(); try { const r = await post<{ message: string }>('/auth/password-reset/request', { email, tenantSlug: slug }); setMsg(r.message); } catch (err) { setMsg(errorMessage(err)); } }}>
+      <form className="card w-full max-w-sm space-y-4 p-6" onSubmit={async (e) => { e.preventDefault(); try { const r = await post<{ message: string }>('/auth/password-reset/request', { email }); setMsg(r.message); } catch (err) { setMsg(errorMessage(err)); } }}>
         <h1 className="text-xl font-bold">Reset password</h1>
-        <Field label="Restaurant ID"><Input value={slug} onChange={(e) => setSlug(e.target.value)} /></Field>
         <Field label="Email"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
         {msg && <p className="rounded-xl bg-page px-3 py-2 text-sm">{msg}</p>}
         <Button type="submit" className="w-full">Send reset link</Button>
@@ -28,7 +26,7 @@ export function ResetPassword() {
   const [done, setDone] = useState(false);
   return (
     <div className="flex min-h-full items-center justify-center p-6">
-      <form className="card w-full max-w-sm space-y-4 p-6" onSubmit={async (e) => { e.preventDefault(); try { await post('/auth/password-reset/confirm', { token: params.get('token'), tenantSlug: params.get('tenant'), newPassword: pw }); setDone(true); } catch (err) { setMsg(errorMessage(err)); } }}>
+      <form className="card w-full max-w-sm space-y-4 p-6" onSubmit={async (e) => { e.preventDefault(); try { await post('/auth/password-reset/confirm', { token: params.get('token'), newPassword: pw }); setDone(true); } catch (err) { setMsg(errorMessage(err)); } }}>
         <h1 className="text-xl font-bold">Choose a new password</h1>
         {done ? <p className="text-sm">Password updated. <Link to="/login" className="font-semibold text-brand">Sign in</Link></p> : (
           <>

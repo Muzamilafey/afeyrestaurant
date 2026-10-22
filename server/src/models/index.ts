@@ -1,5 +1,5 @@
 export * from './common';
-export * from './platform';
+export * from './business';
 export * from './org';
 export * from './menu';
 export * from './tables';

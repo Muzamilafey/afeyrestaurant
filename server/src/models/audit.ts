@@ -1,6 +1,6 @@
 import { Schema, model } from 'mongoose';
 
-/** Append-only audit trail. tenantId is null for platform-level actions. */
+/** Append-only audit trail. */
 const auditLogSchema = new Schema(
   {
     tenantId: { type: Schema.Types.ObjectId, index: true, default: null },

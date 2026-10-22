@@ -103,7 +103,7 @@ m.route(
     return r;
   },
 );
-m.route({ method: 'post', path: '/:id/mpesa', summary: 'Send an M-Pesa STK Push prompt', permission: P.PAYMENTS_RECEIVE, feature: 'mpesa', body: z.object({ phone: z.string().min(9).max(16), amount: zMoney, idempotencyKey: z.string().min(8).max(80) }) }, async ({ ctx, params, body }) => pay.initiateMpesa(ctx, params.id, body));
+m.route({ method: 'post', path: '/:id/mpesa', summary: 'Send an M-Pesa STK Push prompt', permission: P.PAYMENTS_RECEIVE, body: z.object({ phone: z.string().min(9).max(16), amount: zMoney, idempotencyKey: z.string().min(8).max(80) }) }, async ({ ctx, params, body }) => pay.initiateMpesa(ctx, params.id, body));
 m.route({ method: 'get', path: '/:id/mpesa/:attemptId', summary: 'Check/refresh an M-Pesa attempt status', permission: P.PAYMENTS_RECEIVE }, async ({ ctx, params }) => {
   const a = await PaymentAttempt.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: params.id, _id: params.attemptId }).lean();
   if (!a) throw notFound('Payment attempt');

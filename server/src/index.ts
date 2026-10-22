@@ -4,12 +4,10 @@ import { connectDb, disconnectDb } from './db/connect';
 import { createApp } from './app';
 import { attachRealtime } from './realtime/socket';
 import { startScheduler } from './jobs/scheduler';
-import { ensurePlans } from './services/tenantSetup';
 import { logger } from './lib/logger';
 
 async function main() {
   await connectDb();
-  await ensurePlans();
   const app = createApp();
   const server = http.createServer(app);
   const io = attachRealtime(server);

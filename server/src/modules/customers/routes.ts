@@ -10,6 +10,7 @@ import { badRequest, conflict, forbidden, notFound } from '../../lib/errors';
 import { localParts } from '../../services/pricing';
 import { emitBranch } from '../../realtime/bus';
 import { mutateOrder } from '../../services/orders';
+import { getBusiness } from '../../services/setup';
 
 const m = createModule('/crm', 'Customers, Reservations & Delivery');
 
@@ -197,16 +198,16 @@ m.route({ method: 'post', path: '/riders', summary: 'Add rider', permission: P.D
 
 // ── Public: online menu & order tracking (no auth, minimal data) ──
 const pub = createModule('/public', 'Public');
-pub.route({ method: 'get', path: '/:tenantSlug/track/:code', summary: 'Customer order tracking by code', auth: 'public' }, async ({ params }) => {
-  const t = await Tenant.findOne({ slug: params.tenantSlug.toLowerCase() }, { _id: 1, name: 1 }).lean();
+pub.route({ method: 'get', path: '/track/:code', summary: 'Customer order tracking by code', auth: 'public' }, async ({ params }) => {
+  const t = await getBusiness();
   if (!t) throw notFound('Order');
   const o = await Order.findOne({ tenantId: t._id, 'delivery.trackingCode': params.code.toUpperCase() }, { number: 1, status: 1, 'delivery.status': 1, 'delivery.estimatedReadyAt': 1, items: 1, createdAt: 1 }).lean();
   if (!o) throw notFound('Order');
   const items = o.items.filter((i) => !i.voided);
   return { restaurant: t.name, number: o.number, status: o.status, deliveryStatus: o.delivery?.status, estimatedReadyAt: o.delivery?.estimatedReadyAt, ready: items.length > 0 && items.every((i) => ['ready', 'served'].includes(i.status)) };
 });
-pub.route({ method: 'get', path: '/:tenantSlug/menu/:branchCode', summary: 'Public online menu for a branch', auth: 'public' }, async ({ params }) => {
-  const t = await Tenant.findOne({ slug: params.tenantSlug.toLowerCase(), status: { $in: ['active', 'trial'] } }, { _id: 1, name: 1, branding: 1 }).lean();
+pub.route({ method: 'get', path: '/menu/:branchCode', summary: 'Public online menu for a branch', auth: 'public' }, async ({ params }) => {
+  const t = await getBusiness();
   if (!t) throw notFound('Menu');
   const b = await Branch.findOne({ tenantId: t._id, code: params.branchCode.toUpperCase(), active: true }).lean();
   if (!b || !(b.settings?.enabledModes ?? []).includes('online')) throw notFound('Menu');
