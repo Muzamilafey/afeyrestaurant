@@ -9,3 +9,4 @@ uploads/
 backups/
 .DS_Store
 web/dev-dist/
+*.tsbuildinfo
