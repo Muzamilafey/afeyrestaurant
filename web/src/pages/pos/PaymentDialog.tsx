@@ -7,6 +7,7 @@ import { api, get, post } from '@/lib/api';
 import { money, toCents, uuid, fromCents } from '@/lib/format';
 import { printReceipt, type ReceiptDoc } from '@/lib/printing';
 import { ReceiptPaper } from '@/components/ReceiptPaper';
+import { pickReceiptPrinter } from '@/lib/till';
 import { useAuth } from '@/auth/AuthContext';
 import type { Order } from './types';
 
@@ -196,9 +197,9 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
         if (!c.ok) return;
         reason = c.reason;
       }
-      // Use the branch's network receipt printer (via the local bridge) when one is set up; otherwise the browser.
+      // This till's receipt printer (account menu → This till), else the branch's receipt printer, else the browser.
       const printers = await get<Array<{ _id: string; role: string; connection: string; active: boolean; name: string }>>('/integrations/printers').catch(() => []);
-      const receiptPrinter = printers.find((p) => p.active && p.role === 'receipt' && p.connection !== 'browser');
+      const receiptPrinter = pickReceiptPrinter(printers);
       const r = await post<{ text: string; doc: ReceiptDoc; copy: 'original' | 'duplicate' }>(`/orders/${order._id}/receipt/print`, { reason, printer: receiptPrinter?.name ?? 'browser' });
       if (receiptPrinter) {
         await post(`/integrations/printers/${receiptPrinter._id}/jobs`, { kind: 'receipt', refId: order._id, copy: r.copy, payload: { text: r.text, doc: r.doc }, dedupeKey: `receipt:${order._id}:${r.copy}:${Date.now()}` });

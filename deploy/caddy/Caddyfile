@@ -1,0 +1,37 @@
+# Chili POS on a restaurant server PC (on-premise, several tills on the same network).
+# Caddy serves the web app, forwards /api and /uploads to the Chili POS API on this PC, and gives the tills HTTPS
+# with its own local certificate authority (no internet or domain needed). See docs/MULTI-TILL.md.
+#
+# Change 192.168.1.10 to this PC's fixed IP address, and pos.afey.lan to the name the tills will use
+# (or delete the name and use only the IP). Change the root path if Chili POS is installed elsewhere.
+{
+	# Issue certificates from Caddy's local CA. Install its root certificate on every till (docs/MULTI-TILL.md, step 7).
+	local_certs
+}
+
+https://192.168.1.10, https://pos.afey.lan {
+	tls internal
+	encode gzip
+
+	# API, realtime (websockets) and uploaded images go to the Chili POS API.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:4000
+	}
+	handle /uploads/* {
+		reverse_proxy 127.0.0.1:4000
+	}
+
+	# The web app (built with `npm run build`). Unknown paths return index.html so deep links work.
+	handle {
+		root * C:/chili-pos/web/dist
+		@app path /index.html /sw.js /registerSW.js /manifest.webmanifest
+		header @app Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Anyone typing http:// is sent to https://
+http://192.168.1.10, http://pos.afey.lan {
+	redir https://{host}{uri} permanent
+}

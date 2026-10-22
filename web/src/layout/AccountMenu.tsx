@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { KeyRound, MonitorSmartphone, Lock, Download } from 'lucide-react';
-import { Button, Field, Input, Modal, Pill } from '@/components/ui';
+import { KeyRound, MonitorSmartphone, Lock, Download, Printer } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Button, Field, Input, Modal, Pill, Select } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
-import { post } from '@/lib/api';
+import { get, post } from '@/lib/api';
+import { getTillReceiptPrinter, setTillReceiptPrinter } from '@/lib/till';
 import { useInstallPrompt } from '@/components/pwa';
 
 /** Available to every signed-in user: change own PIN; managers can also register the device as a PIN terminal. */
@@ -14,6 +16,9 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
   const [usePassword, setUsePassword] = useState(false);
   const [terminalName, setTerminalName] = useState('Till 1');
   const app = useInstallPrompt();
+  const canSetupTill = can('terminals.manage') || can('integrations.manage');
+  const printers = useQuery<Array<{ _id: string; name: string; role: string; connection: string; active: boolean }>>({ queryKey: ['printers'], queryFn: () => get('/integrations/printers'), enabled: can('orders.view') });
+  const [tillPrinter, setTillPrinter] = useState(getTillReceiptPrinter);
   const digits = (v: string) => v.replace(/\D/g, '').slice(0, 6);
 
   const changePin = async () => {
@@ -69,6 +74,25 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
             ) : (
               <p className="text-xs text-ink-soft">On iPhone or iPad: tap <b>Share</b> in Safari, then <b>Add to Home Screen</b>.</p>
             )}
+          </section>
+        )}
+        {canSetupTill && (
+          <section className="space-y-3 border-t border-line pt-4">
+            <p className="flex items-center gap-2 font-semibold"><Printer className="h-4 w-4 text-brand" /> Receipt printer for this till</p>
+            <p className="text-xs text-ink-soft">With several tills, point each one at the printer beside it. Saved on this device only.</p>
+            <Select
+              aria-label="Receipt printer for this till"
+              value={tillPrinter}
+              onChange={(e) => {
+                setTillReceiptPrinter(e.target.value);
+                setTillPrinter(e.target.value);
+                toast('Receipt printer for this till saved');
+              }}
+            >
+              <option value="">Automatic — the branch receipt printer</option>
+              <option value="browser">This computer’s print dialog</option>
+              {(printers.data ?? []).filter((p) => p.active && p.connection !== 'browser').map((p) => <option key={p._id} value={p._id}>{p.name} · {p.role}</option>)}
+            </Select>
           </section>
         )}
         {can('terminals.manage') && (

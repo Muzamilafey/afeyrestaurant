@@ -1,5 +1,7 @@
 # Setup & configuration
 
+> Installing for a restaurant with several tills on one server PC? Follow **[MULTI-TILL.md](MULTI-TILL.md)** step by step.
+
 ## 1. MongoDB (replica set required)
 
 First-run setup, payments, stock deductions, transfers and refunds run in MongoDB transactions, which need a replica

@@ -27,6 +27,9 @@ Windows with PM2 + `pm2-windows-startup`, or NSSM (`nssm install ChiliBridge "C:
 3. Add printers (Integrations → Printers, choose this bridge) and devices (Staff & Attendance → Devices), then use
    **Test print** / **Test**.
 
+Several tills / a bridge on a PC other than the server: see [docs/MULTI-TILL.md](../docs/MULTI-TILL.md#8-printers-and-the-bridge).
+Fingerprint devices step by step: [docs/FINGERPRINT-DEVICES.md](../docs/FINGERPRINT-DEVICES.md).
+
 ## SecuGen
 
 Install the **SecuGen WebAPI** (SGIBioSrv) on the PC, set `SECUGEN_LICENSE` if your deployment requires one, and set

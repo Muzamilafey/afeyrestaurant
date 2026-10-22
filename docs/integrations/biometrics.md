@@ -1,5 +1,7 @@
 # Biometric devices & attendance
 
+> Step-by-step installation of ZKTeco terminals and SecuGen readers: **[FINGERPRINT-DEVICES.md](../FINGERPRINT-DEVICES.md)**.
+
 ## Supported device families
 
 | Family | Connection | Implementation | Status |

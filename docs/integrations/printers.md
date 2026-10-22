@@ -4,7 +4,7 @@
 |---|---|
 | **Network ESC/POS printers** (Epson TM-T20/T82, Xprinter, etc., port 9100) | Driven by the [Chili Bridge](../../bridge/README.md) on the LAN. Add under Integrations → Printers with role *Receipts*, *Bills*, *Kitchen tickets* or *Bar tickets*. |
 | **Kitchen / bar ticket printers** | When items are sent, each station's tickets are queued automatically to printers with that role (food → kitchen, drinks → bar). |
-| **Receipt printer** | *Print receipt* sends to the branch's network receipt printer when one exists; otherwise the browser print dialog (80 mm layout). |
+| **Receipt printer** | *Print receipt* sends to the printer chosen for that till (account menu → *Receipt printer for this till*), otherwise the branch's first receipt printer, otherwise the browser print dialog (80 mm layout). With several tills, set it on each till — see [MULTI-TILL.md](../MULTI-TILL.md). |
 | **Cash drawer** | Connected to the receipt printer's DK port; opened with an ESC/POS pulse (print job kind `cash_drawer`). |
 | **Barcode scanners** | USB/Bluetooth scanners in keyboard mode: scan into the POS search box — an exact barcode/SKU/PLU match adds the item. |
 | USB / Bluetooth printers | Not driven by the bridge yet — use the browser print dialog with the OS printer driver. |
