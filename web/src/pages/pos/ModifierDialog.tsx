@@ -35,9 +35,9 @@ export function ModifierDialog({ product, groups, station, onClose, onConfirm }:
       footer={
         <div className="flex w-full items-center justify-between gap-3">
           <div className="flex items-center gap-2 rounded-xl bg-page p-1">
-            <button className="grid h-10 w-10 place-items-center rounded-lg bg-white" onClick={() => setQty(Math.max(1, qty - 1))} aria-label="Decrease"><Minus className="h-4 w-4" /></button>
+            <button className="grid h-10 w-10 place-items-center rounded-lg bg-card" onClick={() => setQty(Math.max(1, qty - 1))} aria-label="Decrease"><Minus className="h-4 w-4" /></button>
             <span className="w-8 text-center font-bold">{qty}</span>
-            <button className="grid h-10 w-10 place-items-center rounded-lg bg-white" onClick={() => setQty(qty + 1)} aria-label="Increase"><Plus className="h-4 w-4" /></button>
+            <button className="grid h-10 w-10 place-items-center rounded-lg bg-card" onClick={() => setQty(qty + 1)} aria-label="Increase"><Plus className="h-4 w-4" /></button>
           </div>
           <Button size="lg" disabled={!!invalid || (product.ageRestricted && !age)} onClick={() => onConfirm({ lineId: uuid(), productId: product._id, name: variant ? `${product.name} (${variant})` : product.name, qty, unitPrice: unit, variant, station, notes: notes || undefined, ageCheckConfirmed: product.ageRestricted ? age : undefined, modifiers: chosen.map((c) => ({ groupId: c.g._id, optionId: c.o._id, name: c.o.name, priceDelta: c.o.priceDelta })) })}>
             Add · {money(unit * qty)}
@@ -47,7 +47,7 @@ export function ModifierDialog({ product, groups, station, onClose, onConfirm }:
     >
       <div className="space-y-5">
         {product.description && <p className="text-sm text-ink-soft">{product.description}</p>}
-        {(product.allergens?.length ?? 0) > 0 && <p className="rounded-xl bg-warn-pale px-3 py-2 text-xs text-[#8a5a00]">Allergens: {product.allergens!.join(', ')}</p>}
+        {(product.allergens?.length ?? 0) > 0 && <p className="rounded-xl bg-warn-pale px-3 py-2 text-xs text-warn-ink">Allergens: {product.allergens!.join(', ')}</p>}
         {product.variants.length > 0 && (
           <div>
             <p className="label">Size</p>

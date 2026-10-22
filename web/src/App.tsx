@@ -8,6 +8,7 @@ import { Skeleton, Empty } from '@/components/ui';
 
 const PosPage = lazy(() => import('@/pages/pos/PosPage'));
 const TablesPage = lazy(() => import('@/pages/TablesPage'));
+const OrdersBoard = lazy(() => import('@/pages/OrdersBoard'));
 const StationPage = lazy(() => import('@/pages/StationPage'));
 const ReservationsPage = lazy(() => import('@/pages/ReservationsPage'));
 const DeliveryPage = lazy(() => import('@/pages/DeliveryPage'));
@@ -58,6 +59,7 @@ export default function App() {
           <Route element={<Guard><AppShell /></Guard>}>
             <Route index element={<Home />} />
             <Route path="pos" element={<Guard perms={['orders.create']}><PosPage /></Guard>} />
+            <Route path="orders" element={<Guard perms={['orders.view']}><OrdersBoard /></Guard>} />
             <Route path="tables" element={<Guard perms={['tables.view']}><TablesPage /></Guard>} />
             <Route path="kitchen" element={<Guard perms={['kitchen.view']}><StationPage station="kitchen" /></Guard>} />
             <Route path="bar" element={<Guard perms={['bar.view']}><StationPage station="bar" /></Guard>} />

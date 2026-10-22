@@ -168,7 +168,7 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
           )}
           {method === 'mpesa_manual' && (
             <>
-              <p className="rounded-xl bg-warn-pale px-3 py-2 text-xs text-[#8a5a00]">Use only when a payment was made outside the STK prompt and verified on the M-Pesa statement. Requires manager approval and is audited.</p>
+              <p className="rounded-xl bg-warn-pale px-3 py-2 text-xs text-warn-ink">Use only when a payment was made outside the STK prompt and verified on the M-Pesa statement. Requires manager approval and is audited.</p>
               <Field label="M-Pesa transaction code"><Input value={reference} onChange={(e) => setReference(e.target.value.toUpperCase())} maxLength={10} /></Field>
               <Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
             </>

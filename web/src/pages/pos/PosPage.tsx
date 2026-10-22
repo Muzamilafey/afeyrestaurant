@@ -92,6 +92,15 @@ export default function PosPage() {
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (params.get('pay') === '1' && order && ['open', 'held'].includes(order.status)) {
+      setPaying(true);
+      const next = new URLSearchParams(params);
+      next.delete('pay');
+      setParams(next, { replace: true });
+    }
+  }, [params, order]);
+
+  useEffect(() => {
     const t = params.get('table');
     if (t && !orderId) {
       setTableId(t);
@@ -334,7 +343,7 @@ export default function PosPage() {
       <div className="flex min-h-0 flex-1">
         {/* ── Product workspace ── */}
         <section className="flex min-w-0 flex-1 flex-col">
-          <div className="flex flex-wrap items-center gap-2 border-b border-line bg-white px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2 border-b border-line bg-card px-4 py-3">
             <div className="relative min-w-[220px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-soft" />
               <Input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onSearchEnter()} placeholder="Search menu, SKU, PLU or scan barcode…" className="pl-9 pr-10" aria-label="Search products" />
@@ -342,12 +351,12 @@ export default function PosPage() {
             </div>
             <div className="scroll-thin flex gap-1 overflow-x-auto">
               {KIND_FILTERS.map((k) => (
-                <button key={k.id} onClick={() => setKind(k.id)} className={cx('whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold', kind === k.id ? 'bg-ink text-white' : 'bg-page text-ink-soft hover:text-ink')}>{k.label}</button>
+                <button key={k.id} onClick={() => setKind(k.id)} className={cx('whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold', kind === k.id ? 'bg-ink text-card' : 'bg-page text-ink-soft hover:text-ink')}>{k.label}</button>
               ))}
             </div>
           </div>
           {usingCache && (
-            <div className="flex items-center gap-2 bg-warn-pale px-4 py-2 text-xs text-[#8a5a00]"><CloudOff className="h-4 w-4" /> Showing the menu cached at {new Date(offlineCatalog!.savedAt).toLocaleString()}. Prices and stock may have changed.</div>
+            <div className="flex items-center gap-2 bg-warn-pale px-4 py-2 text-xs text-warn-ink"><CloudOff className="h-4 w-4" /> Showing the menu cached at {new Date(offlineCatalog!.savedAt).toLocaleString()}. Prices and stock may have changed.</div>
           )}
           <div className="scroll-thin flex gap-3 overflow-x-auto px-4 py-3">
             <CategoryCard active={category === 'all'} onClick={() => setCategory('all')} icon="layout-grid" name="All items" count={catalog?.products.length ?? 0} />
@@ -369,7 +378,7 @@ export default function PosPage() {
         </section>
 
         {/* ── Order & checkout panel ── */}
-        <aside className={cx('flex-col border-l border-line bg-white md:flex md:w-[330px] md:shrink-0 xl:w-[400px]', showCart ? 'fixed inset-0 z-30 flex' : 'hidden')}>
+        <aside className={cx('flex-col border-l border-line bg-card md:flex md:w-[330px] md:shrink-0 xl:w-[400px]', showCart ? 'fixed inset-0 z-30 flex' : 'hidden')}>
           <button className="flex items-center justify-between border-b border-line px-4 py-3 text-sm font-semibold md:hidden" onClick={() => setShowCart(false)}>← Back to menu</button>
           <div className="border-b border-line p-4">
             <div className="flex items-center justify-between">
@@ -387,7 +396,7 @@ export default function PosPage() {
               <div className="mt-3 space-y-2">
                 <div className="grid grid-cols-4 gap-1 rounded-xl bg-page p-1">
                   {MODES.filter((m) => (branch?.settings?.enabledModes as string[] | undefined ?? ['dine_in', 'takeaway', 'delivery', 'bar_counter']).includes(m.id)).map((m) => (
-                    <button key={m.id} onClick={() => setMode(m.id)} className={cx('flex flex-col items-center gap-0.5 rounded-lg py-1.5 text-[11px] font-semibold', mode === m.id ? 'bg-white text-brand-dark shadow-soft' : 'text-ink-soft')}>
+                    <button key={m.id} onClick={() => setMode(m.id)} className={cx('flex flex-col items-center gap-0.5 rounded-lg py-1.5 text-[11px] font-semibold', mode === m.id ? 'bg-card text-brand-dark shadow-soft' : 'text-ink-soft')}>
                       <m.icon className="h-4 w-4" /> {m.label}
                     </button>
                   ))}
@@ -432,7 +441,7 @@ export default function PosPage() {
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold leading-tight">{l.name}</p>
                           {l.modifiers.length > 0 && <p className="text-xs text-ink-soft">{l.modifiers.map((m) => m.name).join(', ')}</p>}
-                          {l.notes && <p className="text-xs italic text-[#8a5a00]">“{l.notes}”</p>}
+                          {l.notes && <p className="text-xs italic text-warn-ink">“{l.notes}”</p>}
                           <div className="mt-1 flex items-center gap-1.5">
                             {order && status && status !== 'new' && <StatusPill status={status} />}
                             {(l as { complimentary?: boolean }).complimentary && <Pill color="blue">complimentary</Pill>}
@@ -444,9 +453,9 @@ export default function PosPage() {
                       <div className="mt-2 flex items-center justify-between">
                         {isNew && !locked ? (
                           <div className="flex items-center gap-1 rounded-xl bg-page p-1">
-                            <button className="grid h-8 w-8 place-items-center rounded-lg bg-white" onClick={() => changeQty(l.lineId, l.qty - 1)} aria-label="Decrease"><Minus className="h-4 w-4" /></button>
+                            <button className="grid h-8 w-8 place-items-center rounded-lg bg-card" onClick={() => changeQty(l.lineId, l.qty - 1)} aria-label="Decrease"><Minus className="h-4 w-4" /></button>
                             <span className="w-7 text-center text-sm font-bold">{l.qty}</span>
-                            <button className="grid h-8 w-8 place-items-center rounded-lg bg-white" onClick={() => changeQty(l.lineId, l.qty + 1)} aria-label="Increase"><Plus className="h-4 w-4" /></button>
+                            <button className="grid h-8 w-8 place-items-center rounded-lg bg-card" onClick={() => changeQty(l.lineId, l.qty + 1)} aria-label="Increase"><Plus className="h-4 w-4" /></button>
                           </div>
                         ) : (
                           <span className="text-xs text-ink-soft">Qty {l.qty} × {money(l.unitPrice)}</span>
@@ -518,7 +527,7 @@ export default function PosPage() {
         </button>
       )}
       {/* ── Bottom service bar: active tables & orders ── */}
-      <div className="scroll-thin flex shrink-0 gap-2 overflow-x-auto border-t border-line bg-white px-4 py-2.5">
+      <div className="scroll-thin flex shrink-0 gap-2 overflow-x-auto border-t border-line bg-card px-4 py-2.5">
         {activeChips.length === 0 ? (
           <p className="py-1.5 text-sm text-ink-soft">{online ? 'No active tables or orders.' : 'Offline — active orders unavailable.'}</p>
         ) : (
@@ -559,7 +568,7 @@ function IconBtn({ icon: I, label, onClick, disabled }: { icon: LucideIcon; labe
 }
 function CategoryCard({ active, onClick, icon, name, count }: { active: boolean; onClick: () => void; icon: string; name: string; count: number }) {
   return (
-    <button onClick={onClick} className={cx('flex min-w-[118px] flex-col items-start gap-2 rounded-2xl border-2 bg-white p-3 text-left shadow-soft transition', active ? 'border-brand' : 'border-transparent hover:border-brand/30')}>
+    <button onClick={onClick} className={cx('flex min-w-[118px] flex-col items-start gap-2 rounded-2xl border-2 bg-card p-3 text-left shadow-soft transition', active ? 'border-brand' : 'border-transparent hover:border-brand/30')}>
       <span className={cx('grid h-9 w-9 place-items-center rounded-xl', active ? 'bg-brand text-white' : 'bg-brand-pale text-brand-dark')}><CategoryIcon name={icon} className="h-5 w-5" /></span>
       <span className="text-sm font-semibold leading-tight">{name}</span>
       <span className="text-xs text-ink-soft">{count} items</span>

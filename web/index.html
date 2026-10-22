@@ -8,6 +8,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <title>Chili POS</title>
+    <script>
+      // Apply the saved theme before first paint to avoid a flash.
+      try { if (localStorage.getItem('chili.theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

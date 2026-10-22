@@ -161,7 +161,10 @@ export async function seedDemo() {
       const area = await DiningArea.findOneAndUpdate({ tenantId, branchId: b._id, name: an }, { $set: { sortOrder: ai } }, { upsert: true, new: true });
       for (let t = 1; t <= 4; t++) {
         const number = `${an[0]}${t}`;
-        await Table.updateOne({ tenantId, branchId: b._id, number }, { $setOnInsert: { areaId: area!._id, capacity: an === 'Bar Lounge' ? 2 : 4 + (t % 2) * 2, shape: t % 2 ? 'square' : 'round', layout: { x: (t - 1) * 2, y: ai * 2, w: 1, h: 1 } } }, { upsert: true });
+        const capacity = an === 'Bar Lounge' ? 2 : t % 2 ? 6 : 4;
+        // Two rows per area; six-seaters are drawn twice as wide.
+        const layout = { x: ((t - 1) % 2) * 3, y: Math.floor((t - 1) / 2) * 2, w: capacity >= 6 ? 2 : 1, h: 1 };
+        await Table.updateOne({ tenantId, branchId: b._id, number }, { $setOnInsert: { areaId: area!._id, capacity, shape: capacity >= 6 ? 'rect' : t % 2 ? 'square' : 'round' }, $set: { layout } }, { upsert: true });
       }
     }
   }

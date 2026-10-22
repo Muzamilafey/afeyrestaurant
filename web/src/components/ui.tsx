@@ -61,10 +61,10 @@ export function Card({ className, children, title, actions, padded = true }: { c
 const PILL: Record<string, string> = {
   green: 'bg-brand-pale text-brand-dark',
   gray: 'bg-page text-ink-soft border border-line',
-  yellow: 'bg-warn-pale text-[#8a5a00]',
+  yellow: 'bg-warn-pale text-warn-ink',
   red: 'bg-danger-pale text-danger',
-  blue: 'bg-[#E3EEFB] text-[#2B5FA8]',
-  dark: 'bg-ink text-white',
+  blue: 'bg-info-pale text-info',
+  dark: 'bg-ink text-card',
 };
 export function Pill({ color = 'gray', children, className }: { color?: keyof typeof PILL; children: ReactNode; className?: string }) {
   return <span className={cx('pill', PILL[color], className)}>{children}</span>;
@@ -92,8 +92,8 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }: {
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-0 backdrop-blur-[2px] sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
-      <div className={cx('flex max-h-[92vh] w-full flex-col rounded-t-2xl bg-white shadow-lift sm:rounded-2xl', { sm: 'sm:max-w-sm', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl' }[size])}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-[2px] sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+      <div className={cx('flex max-h-[92vh] w-full flex-col rounded-t-2xl bg-card shadow-lift sm:rounded-2xl', { sm: 'sm:max-w-sm', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl' }[size])}>
         <header className="flex items-center justify-between border-b border-line px-5 py-4">
           <h2 className="text-base font-semibold">{title}</h2>
           <button className="rounded-lg p-1.5 text-ink-soft hover:bg-page" onClick={onClose} aria-label="Close">
@@ -149,7 +149,7 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 
 export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: Array<{ id: T; label: string; hidden?: boolean }>; value: T; onChange: (v: T) => void }) {
   return (
-    <div className="scroll-thin mb-4 flex gap-1 overflow-x-auto rounded-xl border border-line bg-white p-1">
+    <div className="scroll-thin mb-4 flex gap-1 overflow-x-auto rounded-xl border border-line bg-card p-1">
       {tabs.filter((t) => !t.hidden).map((t) => (
         <button key={t.id} onClick={() => onChange(t.id)} className={cx('whitespace-nowrap rounded-lg px-3.5 py-2 text-sm font-semibold transition', value === t.id ? 'bg-brand text-white' : 'text-ink-soft hover:bg-page')}>
           {t.label}
@@ -184,7 +184,7 @@ export function DataTable<T>({ rows, columns, loading, empty, rowKey, onRowClick
 export function Stat({ label, value, hint, icon, tone = 'default' }: { label: string; value: ReactNode; hint?: ReactNode; icon?: ReactNode; tone?: 'default' | 'green' | 'red' | 'yellow' }) {
   return (
     <div className="card flex items-start gap-3 p-4">
-      {icon && <div className={cx('rounded-xl p-2.5', tone === 'red' ? 'bg-danger-pale text-danger' : tone === 'yellow' ? 'bg-warn-pale text-[#8a5a00]' : 'bg-brand-pale text-brand-dark')}>{icon}</div>}
+      {icon && <div className={cx('rounded-xl p-2.5', tone === 'red' ? 'bg-danger-pale text-danger' : tone === 'yellow' ? 'bg-warn-pale text-warn-ink' : 'bg-brand-pale text-brand-dark')}>{icon}</div>}
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">{label}</p>
         <p className="truncate text-xl font-bold">{value}</p>
@@ -198,7 +198,7 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
   return (
     <label className={cx('inline-flex cursor-pointer items-center gap-2 text-sm', disabled && 'opacity-50')}>
       <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} className={cx('relative h-6 w-11 rounded-full transition', checked ? 'bg-brand' : 'bg-line')}>
-        <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition', checked ? 'left-[22px]' : 'left-0.5')} />
+        <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-card shadow transition', checked ? 'left-[22px]' : 'left-0.5')} />
       </button>
       {label}
     </label>

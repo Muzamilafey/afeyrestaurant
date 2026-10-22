@@ -69,7 +69,7 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
             const late = a > delay && !['ready', 'completed', 'cancelled'].includes(t.status);
             const next = NEXT[t.status];
             return (
-              <article key={t._id} className={cx('flex flex-col rounded-2xl border-2 bg-white shadow-soft', late ? 'border-danger' : t.priority ? 'border-warn' : t.status === 'ready' ? 'border-brand' : 'border-line')}>
+              <article key={t._id} className={cx('flex flex-col rounded-2xl border-2 bg-card shadow-soft', late ? 'border-danger' : t.priority ? 'border-warn' : t.status === 'ready' ? 'border-brand' : 'border-line')}>
                 <header className={cx('flex items-center justify-between rounded-t-2xl px-4 py-3', late ? 'bg-danger-pale' : 'bg-page')}>
                   <div>
                     <p className="text-lg font-bold">{t.tableNumber ? `Table ${t.tableNumber}` : t.orderType.replace('_', ' ')}</p>
@@ -87,9 +87,9 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
                 <ul className="flex-1 space-y-2 px-4 py-3">
                   {t.items.map((i) => (
                     <li key={i.lineId} className={cx(i.status === 'cancelled' && 'text-ink-soft line-through')}>
-                      <p className="font-semibold"><span className="mr-2 inline-block min-w-[28px] rounded-lg bg-ink px-1.5 text-center text-white">{i.qty}</span>{i.name}{i.ageRestricted && <span className="ml-1 text-xs text-ink-soft">(18+)</span>}</p>
+                      <p className="font-semibold"><span className="mr-2 inline-block min-w-[28px] rounded-lg bg-ink px-1.5 text-center text-card">{i.qty}</span>{i.name}{i.ageRestricted && <span className="ml-1 text-xs text-ink-soft">(18+)</span>}</p>
                       {i.modifiers.length > 0 && <p className="ml-9 text-sm text-ink-soft">{i.modifiers.join(' · ')}</p>}
-                      {i.notes && <p className="ml-9 text-sm font-semibold text-[#8a5a00]">⚠ {i.notes}</p>}
+                      {i.notes && <p className="ml-9 text-sm font-semibold text-warn-ink">⚠ {i.notes}</p>}
                     </li>
                   ))}
                 </ul>

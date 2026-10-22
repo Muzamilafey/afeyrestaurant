@@ -49,7 +49,9 @@ function useClock() {
 function PinLogin({ business, onUseEmail }: { business: PublicBusiness; onUseEmail: () => void }) {
   const { pinLogin, terminalToken, setTerminalToken } = useAuth();
   const now = useClock();
-  const [selected, setSelected] = useState<string | null>(null);
+  // Arriving from a "Shift" chip preselects that person so they only need to type their PIN.
+  const preselect = (useLocation().state as { preselect?: string } | null)?.preselect ?? null;
+  const [selected, setSelected] = useState<string | null>(preselect);
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [shake, setShake] = useState(false);

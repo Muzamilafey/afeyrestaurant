@@ -63,7 +63,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[min(92vw,380px)] flex-col gap-2">
         {toasts.map((t) => (
-          <div key={t.id} className={cx('pointer-events-auto flex items-start gap-2 rounded-xl border bg-white px-4 py-3 text-sm shadow-lift', t.kind === 'error' ? 'border-danger/30' : 'border-line')}>
+          <div key={t.id} className={cx('pointer-events-auto flex items-start gap-2 rounded-xl border bg-card px-4 py-3 text-sm shadow-lift', t.kind === 'error' ? 'border-danger/30' : 'border-line')}>
             {t.kind === 'success' ? <CheckCircle2 className="h-5 w-5 shrink-0 text-brand" /> : t.kind === 'error' ? <AlertTriangle className="h-5 w-5 shrink-0 text-danger" /> : <Info className="h-5 w-5 shrink-0 text-ink-soft" />}
             <span>{t.text}</span>
           </div>

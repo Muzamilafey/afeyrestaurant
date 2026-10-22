@@ -22,12 +22,12 @@ export function ProductCard({ product, kind, qtyInCart, onAdd, onDec }: { produc
   const selected = qtyInCart > 0;
   const disabled = !product.available;
   return (
-    <div className={cx('group relative flex flex-col overflow-hidden rounded-2xl border-2 bg-white shadow-soft transition', selected ? 'border-brand' : 'border-transparent', disabled && 'opacity-60')}>
+    <div className={cx('group relative flex flex-col overflow-hidden rounded-2xl border-2 bg-card shadow-soft transition', selected ? 'border-brand' : 'border-transparent', disabled && 'opacity-60')}>
       <button type="button" disabled={disabled} onClick={onAdd} className="relative aspect-[4/3] w-full overflow-hidden" aria-label={`Add ${product.name}`}>
         <ProductImage product={product} kind={kind} className="transition group-hover:scale-[1.03]" />
         <div className="absolute left-2 top-2 flex flex-wrap gap-1">
           {product.happyHour && <span className="pill bg-warn text-ink"><Clock3 className="h-3 w-3" /> Happy hour</span>}
-          {product.lowStock && <span className="pill bg-white/95 text-[#8a5a00]"><AlertTriangle className="h-3 w-3" /> {product.servingsLeft} left</span>}
+          {product.lowStock && <span className="pill bg-white/95 text-warn-ink"><AlertTriangle className="h-3 w-3" /> {product.servingsLeft} left</span>}
           {product.ageRestricted && <span className="pill bg-ink/80 text-white">18+</span>}
         </div>
         {disabled && (
@@ -50,7 +50,7 @@ export function ProductCard({ product, kind, qtyInCart, onAdd, onDec }: { produc
           </div>
           {selected ? (
             <div className="flex items-center gap-1 rounded-xl bg-brand-pale p-1">
-              <button className="grid h-8 w-8 place-items-center rounded-lg bg-white text-brand-dark" onClick={onDec} aria-label="Decrease"><Minus className="h-4 w-4" /></button>
+              <button className="grid h-8 w-8 place-items-center rounded-lg bg-card text-brand-dark" onClick={onDec} aria-label="Decrease"><Minus className="h-4 w-4" /></button>
               <span className="w-6 text-center text-sm font-bold">{qtyInCart}</span>
               <button className="grid h-8 w-8 place-items-center rounded-lg bg-brand text-white" onClick={onAdd} disabled={disabled} aria-label="Increase"><Plus className="h-4 w-4" /></button>
             </div>

@@ -30,6 +30,21 @@ const BRANCH_KEY = 'chili.branch';
 const SESSION_CACHE = 'chili.session';
 /** Token that marks this device as a registered POS terminal (enables PIN sign-in). */
 export const TERMINAL_KEY = 'chili.terminalToken';
+const SHIFT_KEY = 'chili.shift';
+
+/** Staff who signed in on this terminal today — shown as quick-switch chips. Names only; no credentials. */
+export function shiftStaff(): Array<{ id: string; name: string }> {
+  try {
+    const s = JSON.parse(localStorage.getItem(SHIFT_KEY) ?? 'null') as { date: string; staff: Array<{ id: string; name: string }> } | null;
+    return s && s.date === new Date().toDateString() ? s.staff : [];
+  } catch {
+    return [];
+  }
+}
+function rememberShift(id: string, name: string) {
+  const staff = [{ id, name }, ...shiftStaff().filter((x) => x.id !== id)].slice(0, 8);
+  localStorage.setItem(SHIFT_KEY, JSON.stringify({ date: new Date().toDateString(), staff }));
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -85,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new ApiError(res.status, body?.error?.code ?? 'ERROR', body?.error?.message ?? 'Sign-in failed');
     localStorage.setItem(BRANCH_KEY, body.data.activeBranchId);
+    rememberShift(body.data.user.id, body.data.user.name);
     apply(body.data);
   }, [apply]);
 

@@ -3,15 +3,47 @@
 @tailwind utilities;
 
 :root {
-  --brand: #07963c;
-  --brand-dark: #087b35;
-  --brand-pale: #d8f0df;
-  --page: #f3f5f4;
-  --ink: #171a18;
-  --ink-soft: #737a75;
-  --line: #e4e8e5;
-  --warn: #f4b942;
-  --danger: #dc4545;
+  /* Light theme (default) — design tokens from the brief. Values are RGB channels. */
+  --c-brand: 7 150 60; /* #07963C */
+  --c-brand-dark: 8 123 53; /* #087B35 */
+  --c-brand-pale: 216 240 223; /* #D8F0DF */
+  --c-brand-50: 238 248 241;
+  --c-page: 243 245 244; /* #F3F5F4 */
+  --c-card: 255 255 255;
+  --c-raised: 255 255 255;
+  --c-ink: 23 26 24; /* #171A18 */
+  --c-ink-soft: 115 122 117; /* #737A75 */
+  --c-line: 228 232 229; /* #E4E8E5 */
+  --c-warn: 244 185 66; /* #F4B942 */
+  --c-warn-pale: 253 243 220;
+  --c-warn-ink: 138 90 0;
+  --c-danger: 220 69 69; /* #DC4545 */
+  --c-danger-pale: 251 228 228;
+  --c-info: 43 95 168;
+  --c-info-pale: 227 238 251;
+  color-scheme: light;
+}
+
+/* Dark theme — charcoal surfaces in the style of the CosyPOS references, keeping the green accent. */
+:root[data-theme='dark'] {
+  --c-brand: 34 177 88;
+  --c-brand-dark: 7 150 60;
+  --c-brand-pale: 22 58 36;
+  --c-brand-50: 19 40 27;
+  --c-page: 14 16 15;
+  --c-card: 24 27 25;
+  --c-raised: 36 40 38;
+  --c-ink: 236 240 237;
+  --c-ink-soft: 150 158 153;
+  --c-line: 46 51 48;
+  --c-warn: 244 185 66;
+  --c-warn-pale: 58 46 18;
+  --c-warn-ink: 246 205 120;
+  --c-danger: 239 99 99;
+  --c-danger-pale: 64 26 26;
+  --c-info: 125 170 235;
+  --c-info-pale: 27 40 62;
+  color-scheme: dark;
 }
 
 html,
@@ -35,7 +67,7 @@ body {
     @apply btn bg-brand text-white hover:bg-brand-dark;
   }
   .btn-secondary {
-    @apply btn border border-line bg-white text-ink hover:bg-page;
+    @apply btn border border-line bg-card text-ink hover:bg-page;
   }
   .btn-ghost {
     @apply btn text-ink-soft hover:bg-page hover:text-ink;
@@ -44,7 +76,7 @@ body {
     @apply btn bg-danger text-white hover:brightness-95;
   }
   .input {
-    @apply h-10 w-full rounded-xl border border-line bg-white px-3 text-sm outline-none transition placeholder:text-ink-soft/70 focus:border-brand focus:ring-2 focus:ring-brand/15;
+    @apply h-10 w-full rounded-xl border border-line bg-card px-3 text-sm outline-none transition placeholder:text-ink-soft/70 focus:border-brand focus:ring-2 focus:ring-brand/15;
   }
   .label {
     @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-soft;

@@ -163,7 +163,7 @@ function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: Integra
           </Select>
           {provider !== 'mock' && i.kind === 'mpesa' && <Select value={environment} onChange={(e) => setEnv(e.target.value)} className="w-40"><option value="sandbox">Sandbox</option><option value="production">Production</option></Select>}
         </div>
-        {provider === 'mock' && <p className="rounded-xl bg-warn-pale p-3 text-xs text-[#8a5a00]"><FlaskConical className="mr-1 inline h-3 w-3" />Simulated provider: nothing is sent to Safaricom, Talk Sasa or any mail server. Results are labelled SIMULATED and it cannot be enabled in production.</p>}
+        {provider === 'mock' && <p className="rounded-xl bg-warn-pale p-3 text-xs text-warn-ink"><FlaskConical className="mr-1 inline h-3 w-3" />Simulated provider: nothing is sent to Safaricom, Talk Sasa or any mail server. Results are labelled SIMULATED and it cannot be enabled in production.</p>}
         {provider !== 'mock' && (
           <div className="grid gap-3 sm:grid-cols-2">
             {fields.map((f) => (
@@ -187,7 +187,7 @@ function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: Integra
             {i.kind === 'mpesa' && provider === 'daraja' && <Button variant="secondary" onClick={() => post('/mpesa/c2b/register', {}).then(() => toast('C2B URLs registered with Daraja')).catch(handleError)}>Register C2B URLs</Button>}
             {i.kind === 'sms' && provider === 'talksasa' && <Button variant="secondary" icon={<KeyRound className="h-4 w-4" />} onClick={() => post<{ url: string }>('/integrations/sms/webhook-key').then((r) => { navigator.clipboard?.writeText(r.url); toast('Delivery-report URL copied (shown once)'); window.prompt('Delivery report URL — paste into Talk Sasa:', r.url); }).catch(handleError)}>Delivery-report URL</Button>}
           </div>
-          {result && <p className={`mt-3 rounded-xl px-3 py-2 text-sm ${result.simulated ? 'bg-warn-pale text-[#8a5a00]' : result.ok ? 'bg-brand-pale text-brand-dark' : 'bg-danger-pale text-danger'}`}>{result.simulated ? 'SIMULATED — ' : ''}{result.message}</p>}
+          {result && <p className={`mt-3 rounded-xl px-3 py-2 text-sm ${result.simulated ? 'bg-warn-pale text-warn-ink' : result.ok ? 'bg-brand-pale text-brand-dark' : 'bg-danger-pale text-danger'}`}>{result.simulated ? 'SIMULATED — ' : ''}{result.message}</p>}
         </div>
         {i.recentLogs.length > 0 && (
           <div>
