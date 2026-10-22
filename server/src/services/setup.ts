@@ -29,6 +29,8 @@ export const getBusiness = () => Business.findOne({ singleton: 'business' }).lea
 /**
  * First-run setup: creates the business, its first branch, the system roles, the owner account and default taxes.
  * Refuses to run once a business exists — there is exactly one business per installation.
+ * All writes happen in one transaction: either everything is created or nothing is (no orphaned branch, roles or
+ * owner). Repeating the request after success is answered with 409 ALREADY_SET_UP and changes nothing.
  */
 export async function setupBusiness(input: SetupInput) {
   const policy = passwordPolicy(input.owner.password);
@@ -37,7 +39,9 @@ export async function setupBusiness(input: SetupInput) {
   const passwordHash = await hashPassword(input.owner.password);
   try {
     return await withTransaction(async (session) => {
-      const [business] = await Business.create([{ name: input.name, contactEmail: input.contactEmail ?? input.owner.email, contactPhone: input.contactPhone }], { session });
+      // Inserting the business first claims the `singleton` unique key, so a concurrent setup fails here (E11000 or a
+      // write conflict that is retried and then hits E11000) before it writes anything else.
+      const [business] = await Business.create([{ name: input.name, setupCompletedAt: new Date(), contactEmail: input.contactEmail ?? input.owner.email, contactPhone: input.contactPhone }], { session });
       const [branch] = await Branch.create([{ tenantId: business._id, ...input.branch, code: input.branch.code.toUpperCase() }], { session });
       await ensureSystemRoles(business._id, session);
       const ownerRole = await Role.findOne({ tenantId: business._id, key: 'owner' }).session(session);
@@ -56,8 +60,9 @@ export async function setupBusiness(input: SetupInput) {
       return { business, branch, owner };
     });
   } catch (e) {
-    // The singleton unique index makes concurrent setup attempts fail safely.
-    if ((e as { code?: number }).code === 11000) throw conflict('This installation is already set up', 'ALREADY_SET_UP');
+    // The singleton unique index makes concurrent setup attempts fail safely; the loser's transaction is rolled back.
+    const dup = e as { code?: number; keyPattern?: Record<string, unknown> };
+    if (dup.code === 11000 && dup.keyPattern?.singleton) throw conflict('This installation is already set up', 'ALREADY_SET_UP');
     throw e;
   }
 }

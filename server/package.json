@@ -13,7 +13,9 @@
     "test": "vitest run",
     "seed": "tsx src/scripts/seed.ts",
     "setup": "tsx src/scripts/setup.ts",
-    "setup:prod": "node dist/scripts/setup.js"
+    "setup:prod": "node dist/scripts/setup.js",
+    "db:check": "tsx src/scripts/db-check.ts",
+    "db:check:prod": "node dist/scripts/db-check.js"
   },
   "dependencies": {
     "argon2": "^0.45.1",

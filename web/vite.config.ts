@@ -7,28 +7,23 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
-      manifest: {
-        name: 'Chili POS',
-        short_name: 'Chili POS',
-        description: 'Restaurant & bar point of sale',
-        theme_color: '#07963C',
-        background_color: '#F3F5F4',
-        display: 'standalone',
-        orientation: 'landscape',
-        start_url: '/',
-        icons: [
-          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml' },
-        ],
-      },
+      // 'prompt', not 'autoUpdate': a new version must never reload a till in the middle of an order.
+      registerType: 'prompt',
+      injectRegister: false,
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'],
+      // The manifest is served by the API (/api/v1/manifest.webmanifest) so the installed app shows the business name.
+      manifest: false,
       workbox: {
         // App shell is cached for offline start; API data is cached in IndexedDB by the app itself.
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//, /^\/uploads\//],
-        runtimeCaching: [{ urlPattern: /\/uploads\/.*\.(png|jpg|webp)$/, handler: 'CacheFirst', options: { cacheName: 'product-images', expiration: { maxEntries: 500, maxAgeSeconds: 30 * 86400 } } }],
+        cleanupOutdatedCaches: true,
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        runtimeCaching: [
+          { urlPattern: /\/uploads\/.*\.(png|jpg|jpeg|webp)$/, handler: 'CacheFirst', options: { cacheName: 'product-images', expiration: { maxEntries: 500, maxAgeSeconds: 30 * 86400 } } },
+          { urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/, handler: 'StaleWhileRevalidate', options: { cacheName: 'google-fonts-css' } },
+          { urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/, handler: 'CacheFirst', options: { cacheName: 'google-fonts', expiration: { maxEntries: 20, maxAgeSeconds: 365 * 86400 }, cacheableResponse: { statuses: [0, 200] } } },
+        ],
       },
     }),
   ],

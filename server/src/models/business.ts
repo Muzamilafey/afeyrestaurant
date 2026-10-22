@@ -11,6 +11,8 @@ const tenantSchema = new Schema(
     name: { type: String, required: true, trim: true, maxlength: 120 },
     /** Guarantees a single business document per installation. */
     singleton: { type: String, default: 'business', unique: true, immutable: true },
+    /** Set in the same transaction that creates the branch, roles, owner and taxes — first-run setup is complete. */
+    setupCompletedAt: Date,
     contactEmail: String,
     contactPhone: String,
     kraPin: String,

@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import { AppError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { TenantGuardError } from '../db/tenantGuard';
-import { isProd } from '../config/env';
+import { transactionsUnavailable } from '../db/connect';
 
 export function requestId(req: Request, res: Response, next: NextFunction) {
   const incoming = req.header('x-request-id');
@@ -35,6 +35,13 @@ export function sanitizeInput(req: Request, _res: Response, next: NextFunction) 
   next();
 }
 
+/** Driver errors meaning the database cannot be reached right now (as opposed to a bad request or a bug). */
+const DB_UNAVAILABLE = new Set(['MongoServerSelectionError', 'MongooseServerSelectionError', 'MongoNetworkError', 'MongoNetworkTimeoutError', 'MongoNotConnectedError', 'MongoTopologyClosedError', 'MongoPoolClearedError']);
+const isDbUnavailable = (err: { name?: string; message?: string }) =>
+  DB_UNAVAILABLE.has(err?.name ?? '') || (err?.name === 'MongooseError' && /buffering timed out/.test(err.message ?? ''));
+/** Code 20 / IllegalOperation: a session or transaction was used against a standalone mongod. */
+const isTxnUnsupported = (err: { code?: number; message?: string }) => err?.code === 20 && /replica set member or mongos/.test(err.message ?? '');
+
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   if (err instanceof AppError) {
     if (err.status >= 500) logger.error({ err, reqId: req.id }, err.message);
@@ -61,7 +68,18 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     res.status(400).json({ error: { code: 'BAD_JSON', message: 'Malformed JSON body', requestId: req.id } });
     return;
   }
+  if (isTxnUnsupported(err)) {
+    logger.error({ err, reqId: req.id }, 'MongoDB rejected a transaction: the server is not a replica set member');
+    const e = transactionsUnavailable();
+    res.status(e.status).json({ error: { code: e.code, message: e.message, requestId: req.id } });
+    return;
+  }
+  if (isDbUnavailable(err)) {
+    logger.error({ err, reqId: req.id }, 'Database unavailable');
+    res.status(503).json({ error: { code: 'DATABASE_UNAVAILABLE', message: 'The database is temporarily unavailable. Please try again shortly.', requestId: req.id } });
+    return;
+  }
   if (err instanceof TenantGuardError) logger.fatal({ err, reqId: req.id }, 'Tenant guard violation');
   else logger.error({ err, reqId: req.id }, 'Unhandled error');
-  res.status(500).json({ error: { code: 'INTERNAL', message: isProd ? 'Something went wrong. Please try again.' : String(err?.message ?? err), requestId: req.id } });
+  res.status(500).json({ error: { code: 'INTERNAL', message: 'Something went wrong. Please try again.', requestId: req.id } });
 };

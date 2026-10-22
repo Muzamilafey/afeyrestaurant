@@ -13,6 +13,7 @@ import { buildOpenApi } from './http/openapi';
 import { healthRouter } from './modules/health/routes';
 import auth from './modules/auth/routes';
 import setup from './modules/setup/routes';
+import { manifestRouter } from './modules/setup/manifest';
 import admin from './modules/admin/routes';
 import menu from './modules/menu/routes';
 import tables from './modules/tables/routes';
@@ -52,6 +53,7 @@ export function createApp() {
   app.use('/api', rateLimit({ windowMs: 60_000, limit: isTest ? 100000 : 600, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: { code: 'RATE_LIMITED', message: 'Too many requests' } } }));
 
   app.use('/api/v1', healthRouter);
+  app.use('/api/v1', manifestRouter);
   for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, integrations, staff, bridgeModule, crm, publicModule, reports, sync]) {
     app.use(`/api/v1${mod.basePath}`, mod.router);
   }

@@ -2,8 +2,9 @@
 
 ## 1. MongoDB (replica set required)
 
-Payments, stock deductions, transfers and refunds run in MongoDB transactions, which need a replica set.
-A single-node replica set is enough:
+First-run setup, payments, stock deductions, transfers and refunds run in MongoDB transactions, which need a replica
+set. A single-node replica set is enough. **Windows:** see [MONGODB-WINDOWS.md](MONGODB-WINDOWS.md) (includes a helper
+script). Check any deployment with `npm run db:check`. Linux:
 
 ```bash
 # /etc/mongod.conf

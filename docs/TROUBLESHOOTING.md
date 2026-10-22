@@ -3,7 +3,9 @@
 | Symptom | Fix |
 |---|---|
 | API exits with *Refusing to start in production* | Set `JWT_ACCESS_SECRET`, `SECRETS_ENCRYPTION_KEY` and `COOKIE_SECURE=true`. |
-| `Transaction numbers are only allowed on a replica set member` | MongoDB is not a replica set — see SETUP.md §1. |
+| `Transaction numbers are only allowed on a replica set member` / setup returns 503 `DATABASE_TRANSACTIONS_UNAVAILABLE` | MongoDB is standalone — convert it to a single-node replica set: [MONGODB-WINDOWS.md](MONGODB-WINDOWS.md) (Windows) or SETUP.md §1. Run `npm run db:check`. |
+| `ReplicaSetNoPrimary` at start-up | `MONGODB_URI` has `?replicaSet=rs0` but the server is standalone, not initiated, or the member host is unreachable — `npm run db:check` and MONGODB-WINDOWS.md. |
+| App does not offer **Install** | Must be served over HTTPS (or localhost) and `/api/v1/manifest.webmanifest` must reach the API. Chrome/Edge: ⋮ → Install. iPhone/iPad: Safari → Share → Add to Home Screen. |
 | Signed out on every refresh | Serve the app and API from the same site over HTTPS with `COOKIE_SECURE=true`, and include the web origin in `CORS_ORIGINS`. |
 | *This device is not registered for PIN sign-in* | A manager must sign in on that device and choose **Use this device** (account menu). |
 | PIN locked | Wait `LOGIN_LOCK_MINUTES` or a manager resets the PIN in Settings → Users. |

@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { KeyRound, MonitorSmartphone, Lock } from 'lucide-react';
+import { KeyRound, MonitorSmartphone, Lock, Download } from 'lucide-react';
 import { Button, Field, Input, Modal, Pill } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
 import { post } from '@/lib/api';
+import { useInstallPrompt } from '@/components/pwa';
 
 /** Available to every signed-in user: change own PIN; managers can also register the device as a PIN terminal. */
 export function AccountMenu({ onClose }: { onClose: () => void }) {
@@ -12,6 +13,7 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
   const [pin, setPin] = useState({ current: '', next: '', confirm: '', password: '' });
   const [usePassword, setUsePassword] = useState(false);
   const [terminalName, setTerminalName] = useState('Till 1');
+  const app = useInstallPrompt();
   const digits = (v: string) => v.replace(/\D/g, '').slice(0, 6);
 
   const changePin = async () => {
@@ -54,6 +56,21 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
             <Button size="sm" disabled={pin.next.length < 4 || (usePassword ? !pin.password : pin.current.length < 4)} onClick={changePin}>Save PIN</Button>
           </div>
         </section>
+        {(app.installed || app.canInstall || app.ios) && (
+          <section className="space-y-3 border-t border-line pt-4">
+            <p className="flex items-center gap-2 font-semibold"><Download className="h-4 w-4 text-brand" /> App on this device</p>
+            {app.installed ? (
+              <Pill color="green">Running as an installed app</Pill>
+            ) : app.canInstall ? (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-ink-soft">Install for a full-screen till with its own icon that starts even when the internet is down.</p>
+                <Button size="sm" onClick={async () => { if (await app.install()) toast('Installed — open it from your home screen or desktop'); }}>Install</Button>
+              </div>
+            ) : (
+              <p className="text-xs text-ink-soft">On iPhone or iPad: tap <b>Share</b> in Safari, then <b>Add to Home Screen</b>.</p>
+            )}
+          </section>
+        )}
         {can('terminals.manage') && (
           <section className="space-y-3 border-t border-line pt-4">
             <p className="flex items-center gap-2 font-semibold"><MonitorSmartphone className="h-4 w-4 text-brand" /> PIN sign-in on this device</p>

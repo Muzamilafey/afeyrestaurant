@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Navigate, Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Delete, Check, Lock, Mail, Loader2 } from 'lucide-react';
+import { ArrowLeft, Delete, Check, Lock, Mail, Loader2, WifiOff } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { Button, Field, Input, cx } from '@/components/ui';
 import { ApiError, errorMessage, get, post } from '@/lib/api';
@@ -23,9 +23,21 @@ export default function Login() {
   const { session, terminalToken } = useAuth();
   const from = (useLocation().state as { from?: string } | null)?.from;
   const [mode, setMode] = useState<'pin' | 'email'>(terminalToken ? 'pin' : 'email');
-  const { data: business, isLoading, refetch } = useQuery<PublicBusiness>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000 });
+  const { data: business, isLoading, isError, isFetching, refetch } = useQuery<PublicBusiness>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000 });
   useEffect(() => setMode(terminalToken ? 'pin' : 'email'), [terminalToken]);
   if (session) return <Navigate to={from && from !== '/login' ? from : '/'} replace />;
+  // Signing in needs the server; say so instead of spinning forever (refetches automatically when back online).
+  if (isError && !business)
+    return (
+      <div className="grid min-h-full place-items-center bg-[#111412] p-6 text-center text-white">
+        <div className="max-w-sm space-y-3">
+          <WifiOff className="mx-auto h-8 w-8 text-white/60" />
+          <p className="text-lg font-semibold">Can’t reach the Chili POS server</p>
+          <p className="text-sm text-white/60">{navigator.onLine ? 'The server is not responding. Check that it is running, then retry.' : 'This device is offline. Sign-in needs a connection — a till that was already signed in keeps working offline.'}</p>
+          <Button onClick={() => refetch()} loading={isFetching}>Retry</Button>
+        </div>
+      </div>
+    );
   if (isLoading || !business) return <div className="grid min-h-full place-items-center bg-[#111412]"><Loader2 className="h-6 w-6 animate-spin text-white/60" /></div>;
   if (!business.configured) return <FirstRunSetup business={business} onDone={() => refetch()} />;
   return mode === 'pin' && terminalToken ? <PinLogin business={business} onUseEmail={() => setMode('email')} /> : <EmailLogin business={business} onUsePin={terminalToken ? () => setMode('pin') : undefined} />;
@@ -245,12 +257,15 @@ function FirstRunSetup({ business, onDone }: { business: PublicBusiness; onDone:
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy) return; // no double submissions
     setBusy(true);
     setError(null);
     try {
       await post('/setup', { setupToken: f.setupToken || undefined, name: f.name, branch: { name: f.branchName, code: f.branchCode }, owner: { name: f.ownerName, email: f.email, password: f.password } });
       onDone();
     } catch (err) {
+      // Another tab or a retried request already finished setup — continue to sign-in instead of showing an error.
+      if (err instanceof ApiError && err.code === 'ALREADY_SET_UP') return onDone();
       setError(errorMessage(err));
     } finally {
       setBusy(false);
