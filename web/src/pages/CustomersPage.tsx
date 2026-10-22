@@ -64,7 +64,7 @@ function CustomerForm({ onClose }: { onClose: () => void }) {
 
 function CustomerDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const { can } = useAuth();
-  const { handleError, toast, confirm } = useFeedback();
+  const { handleError, toast, confirm , prompt } = useFeedback();
   const qc = useQueryClient();
   const { data } = useQuery<{ customer: C; orders: Array<{ _id: string; number: string; totals: { total: number }; createdAt: string; status: string }>; loyalty?: { points: number; lifetimePoints: number }; notes: Array<{ _id: string; note: string; createdAt: string }> | null; reservations: Array<{ _id: string; startsAt: string; partySize: number; status: string }> }>({ queryKey: ['customer', id], queryFn: () => get(`/crm/customers/${id}`) });
   const [note, setNote] = useState('');
@@ -86,7 +86,7 @@ function CustomerDetail({ id, onClose }: { id: string; onClose: () => void }) {
             <p className="text-xs text-ink-soft">Transactional messages (receipts, reservations) are always sent.</p>
           </div>
           {can('payments.credit_sale') && (
-            <Button size="sm" variant="secondary" onClick={() => { const l = window.prompt('Credit limit (KSh). 0 disables the account.', String((c.credit?.limit ?? 0) / 100)); if (l !== null) post(`/crm/customers/${id}/credit`, { approved: Number(l) > 0, limit: toCents(l) }).then(() => { qc.invalidateQueries({ queryKey: ['customer', id] }); toast('Credit updated'); }).catch(handleError); }}>
+            <Button size="sm" variant="secondary" onClick={async () => { const l = await prompt({ title: 'Credit account', label: 'Credit limit (KSh)', hint: 'Enter 0 to disable the credit account.', inputMode: 'decimal', defaultValue: String((c.credit?.limit ?? 0) / 100), confirmLabel: 'Save limit' }); if (l !== null && !Number.isNaN(Number(l))) post(`/crm/customers/${id}/credit`, { approved: Number(l) > 0, limit: toCents(l) }).then(() => { qc.invalidateQueries({ queryKey: ['customer', id] }); toast('Credit updated'); }).catch(handleError); }}>
               Credit account: {c.credit?.approved ? `${money(c.credit.balance)} owed of ${money(c.credit.limit)}` : 'not approved'}
             </Button>
           )}

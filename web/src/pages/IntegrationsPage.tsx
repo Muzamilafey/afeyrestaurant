@@ -110,7 +110,7 @@ const FIELDS: Record<string, Array<{ key: string; label: string; secret?: boolea
 };
 
 function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: IntegrationView; mocksAllowed: boolean; publicApiUrl: string; onClose: () => void }) {
-  const { handleError, toast } = useFeedback();
+  const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
   const fields = FIELDS[i.kind];
   const realProvider = { mpesa: 'daraja', sms: 'talksasa', email: 'smtp' }[i.kind] ?? 'none';
@@ -185,7 +185,7 @@ function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: Integra
             {i.kind !== 'mpesa' && <Input className="max-w-xs" placeholder={i.kind === 'sms' ? 'Phone to receive test SMS' : 'Email to receive test'} value={testTo} onChange={(e) => setTestTo(e.target.value)} />}
             <Button onClick={test} loading={busy}>{i.kind === 'mpesa' ? 'Test Daraja authentication' : 'Send test'}</Button>
             {i.kind === 'mpesa' && provider === 'daraja' && <Button variant="secondary" onClick={() => post('/mpesa/c2b/register', {}).then(() => toast('C2B URLs registered with Daraja')).catch(handleError)}>Register C2B URLs</Button>}
-            {i.kind === 'sms' && provider === 'talksasa' && <Button variant="secondary" icon={<KeyRound className="h-4 w-4" />} onClick={() => post<{ url: string }>('/integrations/sms/webhook-key').then((r) => { navigator.clipboard?.writeText(r.url); toast('Delivery-report URL copied (shown once)'); window.prompt('Delivery report URL — paste into Talk Sasa:', r.url); }).catch(handleError)}>Delivery-report URL</Button>}
+            {i.kind === 'sms' && provider === 'talksasa' && <Button variant="secondary" icon={<KeyRound className="h-4 w-4" />} onClick={() => post<{ url: string }>('/integrations/sms/webhook-key').then((r) => { navigator.clipboard?.writeText(r.url); toast('Delivery-report URL copied (shown once)'); prompt({ title: 'Delivery-report URL', label: 'Paste this into Talk Sasa', defaultValue: r.url, readOnly: true, hint: 'Shown once — copy it now.' }); }).catch(handleError)}>Delivery-report URL</Button>}
           </div>
           {result && <p className={`mt-3 rounded-xl px-3 py-2 text-sm ${result.simulated ? 'bg-warn-pale text-warn-ink' : result.ok ? 'bg-brand-pale text-brand-dark' : 'bg-danger-pale text-danger'}`}>{result.simulated ? 'SIMULATED — ' : ''}{result.message}</p>}
         </div>
@@ -233,11 +233,11 @@ function Printers({ bridges }: { bridges: Overview['bridges'] }) {
 }
 
 function Bridges({ bridges }: { bridges: Overview['bridges'] }) {
-  const { handleError, toast } = useFeedback();
+  const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
   const [created, setCreated] = useState<null | { token: string; apiUrl: string }>(null);
   return (
-    <Card title="Local bridges" actions={<Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => { const name = window.prompt('Bridge name (e.g. Front till PC)'); if (name) post<{ token: string; apiUrl: string }>('/integrations/bridges', { name }).then((r) => { setCreated(r); qc.invalidateQueries({ queryKey: ['integrations'] }); }).catch(handleError); }}>Register bridge</Button>}>
+    <Card title="Local bridges" actions={<Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={async () => { const name = await prompt({ title: 'Register bridge', label: 'Bridge name', placeholder: 'e.g. Front till PC', confirmLabel: 'Register', minLength: 2 }); if (name) post<{ token: string; apiUrl: string }>('/integrations/bridges', { name }).then((r) => { setCreated(r); qc.invalidateQueries({ queryKey: ['integrations'] }); }).catch(handleError); }}>Register bridge</Button>}>
       <p className="mb-3 text-sm text-ink-soft">The Chili Bridge runs on a PC on the restaurant LAN. It drives ESC/POS printers and cash drawers, talks to ZKTeco terminals and SecuGen readers, and pushes results to the cloud. See <code>bridge/README.md</code>.</p>
       <DataTable rows={bridges} rowKey={(r) => r._id} columns={[{ key: 'n', header: 'Bridge', render: (r) => <b>{r.name}</b> }, { key: 't', header: 'Token', render: (r) => `cbr_…${r.tokenHint ?? ''}` }, { key: 'v', header: 'Version', render: (r) => r.version ?? '—' }, { key: 's', header: 'Last seen', render: (r) => (r.lastSeenAt ? <span>{dateTime(r.lastSeenAt)} {Date.now() - new Date(r.lastSeenAt).getTime() < 120_000 ? <Pill color="green">online</Pill> : <Pill color="red">offline</Pill>}</span> : <Pill>never</Pill>) }, { key: 'a', header: '', render: (r) => (r.active ? <Button size="sm" variant="ghost" onClick={() => post(`/integrations/bridges/${r._id}/revoke`).then(() => { qc.invalidateQueries({ queryKey: ['integrations'] }); toast('Bridge revoked'); }).catch(handleError)}>Revoke</Button> : <Pill color="red">revoked</Pill>) }]} />
       {created && <Modal open onClose={() => setCreated(null)} title="Bridge token (shown once)"><div className="space-y-3 text-sm"><p>Put these into the bridge’s <code>.env</code>:</p><pre className="overflow-x-auto rounded-xl bg-page p-3 text-xs">CHILI_API_URL={created.apiUrl}{'\n'}CHILI_BRIDGE_TOKEN={created.token}</pre><Button size="sm" variant="secondary" icon={<Copy className="h-4 w-4" />} onClick={() => navigator.clipboard?.writeText(created.token)}>Copy token</Button></div></Modal>}

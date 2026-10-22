@@ -44,7 +44,7 @@ interface Product { _id: string; name: string; categoryId: string; price: number
 interface Cat { _id: string; name: string; icon: string; kind: string; station: string; sortOrder: number }
 
 function Menu() {
-  const { handleError, toast } = useFeedback();
+  const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
   const products = useQuery<Product[]>({ queryKey: ['products'], queryFn: () => get('/menu/products') });
   const cats = useQuery<Cat[]>({ queryKey: ['categories'], queryFn: () => get('/menu/categories') });
@@ -61,7 +61,12 @@ function Menu() {
     const body = { categoryId: edit.categoryId, name: edit.name, description: edit.description || undefined, imageUrl: edit.imageUrl || undefined, sku: edit.sku || undefined, barcode: edit.barcode || undefined, plu: edit.plu || undefined, price: edit.price, happyHourPrice: edit.happyHourPrice ?? null, status: edit.status, dietary: edit.dietary, allergens: edit.allergens, ageRestricted: edit.ageRestricted, modifierGroupIds: edit.modifierGroupIds, taxRateIds: edit.taxRateIds, station: edit.station, variants: edit.variants };
     try {
       if (edit._id) {
-        const reason = products.data?.find((p) => p._id === edit._id)?.price !== edit.price ? window.prompt('Reason for price change') ?? undefined : undefined;
+        let reason: string | undefined;
+        if (products.data?.find((p) => p._id === edit._id)?.price !== edit.price) {
+          const r = await prompt({ title: 'Price change', label: 'Reason for the price change', placeholder: 'e.g. Supplier price increase', hint: 'Kept in the audit log.', confirmLabel: 'Save product', minLength: 3 });
+          if (r === null) return;
+          reason = r;
+        }
         await patch(`/menu/products/${edit._id}`, { ...body, priceChangeReason: reason });
       } else await post('/menu/products', body);
       invalidate();
@@ -214,10 +219,10 @@ function Branches() {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery<Array<{ _id: string; name: string; code: string; address?: string; active: boolean; settings: Record<string, any> }>>({ queryKey: ['branches'], queryFn: () => get('/admin/branches') });
   const [f, setF] = useState<any>(null);
-  const save = () => (f._id ? patch(`/admin/branches/${f._id}`, { name: f.name, address: f.address, settings: { serviceChargeBps: Math.round(Number(f.sc) * 100), kitchenDelayMinutes: Number(f.settings?.kitchenDelayMinutes ?? 15), enabledModes: f.settings?.enabledModes, deliveryFee: toCents(f.deliveryFee || 0) } }) : post('/admin/branches', { name: f.name, code: f.code, address: f.address })).then(() => { qc.invalidateQueries({ queryKey: ['branches'] }); setF(null); toast('Branch saved — sign out and in again to see new branches'); }).catch(handleError);
+  const save = () => (f._id ? patch(`/admin/branches/${f._id}`, { name: f.name, address: f.address, settings: { serviceChargeBps: Math.round(Number(f.sc) * 100), kitchenDelayMinutes: Number(f.settings?.kitchenDelayMinutes ?? 15), enabledModes: f.settings?.enabledModes, deliveryFee: toCents(f.deliveryFee || 0), cashDrawerMode: f.settings?.cashDrawerMode ?? 'per_user' } }) : post('/admin/branches', { name: f.name, code: f.code, address: f.address })).then(() => { qc.invalidateQueries({ queryKey: ['branches'] }); qc.invalidateQueries({ queryKey: ['cash-mode'] }); setF(null); toast('Branch saved — sign out and in again to see new branches'); }).catch(handleError);
   return (
     <Card title="Branches" actions={<Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setF({ name: '', code: '', address: '' })}>Branch</Button>}>
-      <DataTable rows={data} loading={isLoading} rowKey={(r) => r._id} onRowClick={(r) => setF({ ...r, sc: (r.settings?.serviceChargeBps ?? 0) / 100, deliveryFee: fromCents(r.settings?.deliveryFee ?? 0) })} columns={[{ key: 'n', header: 'Branch', render: (r) => <b>{r.name}</b> }, { key: 'c', header: 'Code', render: (r) => r.code }, { key: 'a', header: 'Address', render: (r) => r.address }, { key: 's', header: 'Service charge', render: (r) => `${(r.settings?.serviceChargeBps ?? 0) / 100}%` }, { key: 'm', header: 'Modes', render: (r) => <span className="text-xs">{(r.settings?.enabledModes ?? []).join(', ')}</span> }]} />
+      <DataTable rows={data} loading={isLoading} rowKey={(r) => r._id} onRowClick={(r) => setF({ ...r, sc: (r.settings?.serviceChargeBps ?? 0) / 100, deliveryFee: fromCents(r.settings?.deliveryFee ?? 0) })} columns={[{ key: 'n', header: 'Branch', render: (r) => <b>{r.name}</b> }, { key: 'c', header: 'Code', render: (r) => r.code }, { key: 'a', header: 'Address', render: (r) => r.address }, { key: 's', header: 'Service charge', render: (r) => `${(r.settings?.serviceChargeBps ?? 0) / 100}%` }, { key: 'm', header: 'Modes', render: (r) => <span className="text-xs">{(r.settings?.enabledModes ?? []).join(', ')}</span> }, { key: 'd', header: 'Cash drawer', render: (r) => (r.settings?.cashDrawerMode === 'shared' ? <Pill color="blue">Shared</Pill> : <Pill>Per user</Pill>) }]} />
       {f && <Modal open onClose={() => setF(null)} title={f._id ? 'Edit branch' : 'New branch'} footer={<Button onClick={save}>Save</Button>}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Name"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
@@ -226,6 +231,12 @@ function Branches() {
           {f._id && <>
             <Field label="Service charge %"><Input inputMode="decimal" value={f.sc} onChange={(e) => setF({ ...f, sc: e.target.value })} /></Field>
             <Field label="Delivery fee (KSh)"><Input inputMode="decimal" value={f.deliveryFee} onChange={(e) => setF({ ...f, deliveryFee: e.target.value })} /></Field>
+            <Field label="Cash drawer" className="sm:col-span-2" hint={f.settings?.cashDrawerMode === 'shared' ? 'One drawer for the branch: one person opens it, every cash payment from any waiter or cashier goes into it, and it is counted and closed once.' : 'Each cashier or waiter opens, counts and closes their own drawer, so shortages are traced to one person.'}>
+              <Select value={f.settings?.cashDrawerMode ?? 'per_user'} onChange={(e) => setF({ ...f, settings: { ...f.settings, cashDrawerMode: e.target.value } })}>
+                <option value="per_user">Separate drawer for each user</option>
+                <option value="shared">One shared drawer for everyone</option>
+              </Select>
+            </Field>
             <div className="sm:col-span-2"><p className="label">Dining modes</p><div className="flex flex-wrap gap-3">{['dine_in', 'takeaway', 'delivery', 'bar_counter', 'room_service', 'online'].map((m) => <Toggle key={m} checked={f.settings?.enabledModes?.includes(m)} onChange={(v) => setF({ ...f, settings: { ...f.settings, enabledModes: v ? [...(f.settings?.enabledModes ?? []), m] : f.settings.enabledModes.filter((x: string) => x !== m) } })} label={titleCase(m)} />)}</div></div>
           </>}
         </div>
@@ -297,12 +308,12 @@ function Taxes() {
 }
 
 function TablesAdmin() {
-  const { handleError, toast } = useFeedback();
+  const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
   const { data } = useQuery<{ areas: Array<{ _id: string; name: string }>; tables: Array<{ _id: string; number: string; capacity: number; areaId?: string; shape: string; status: string }> }>({ queryKey: ['tables'], queryFn: () => get('/tables') });
   const [t, setT] = useState<any>(null);
   return (
-    <Card title="Tables & dining areas" actions={<><Button size="sm" variant="secondary" onClick={() => { const name = window.prompt('Area name'); if (name) post('/tables/areas', { name }).then(() => qc.invalidateQueries({ queryKey: ['tables'] })).catch(handleError); }}>Area</Button><Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setT({ number: '', capacity: 4, areaId: data?.areas[0]?._id, shape: 'square' })}>Table</Button></>}>
+    <Card title="Tables & dining areas" actions={<><Button size="sm" variant="secondary" icon={<Plus className="h-4 w-4" />} onClick={async () => { const name = await prompt({ title: 'New dining area', label: 'Area name', placeholder: 'e.g. Terrace, VIP lounge', confirmLabel: 'Add area', minLength: 2 }); if (name) post('/tables/areas', { name }).then(() => { qc.invalidateQueries({ queryKey: ['tables'] }); toast(`Area “${name}” added`); }).catch(handleError); }}>Area</Button><Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setT({ number: '', capacity: 4, areaId: data?.areas[0]?._id, shape: 'square' })}>Table</Button></>}>
       <DataTable rows={data?.tables} rowKey={(r) => r._id} onRowClick={(r) => setT(r)} columns={[{ key: 'n', header: 'Table', render: (r) => <b>T-{r.number}</b> }, { key: 'a', header: 'Area', render: (r) => data?.areas.find((a) => a._id === r.areaId)?.name ?? '—' }, { key: 'c', header: 'Seats', render: (r) => r.capacity }, { key: 's', header: 'Shape', render: (r) => r.shape }, { key: 'st', header: 'Status', render: (r) => <StatusPill status={r.status} /> }]} />
       {t && <Modal open onClose={() => setT(null)} title={t._id ? `Table ${t.number}` : 'New table'} footer={<Button onClick={() => (t._id ? patch(`/tables/${t._id}`, { number: t.number, capacity: Number(t.capacity), areaId: t.areaId, shape: t.shape }) : post('/tables', { number: t.number, capacity: Number(t.capacity), areaId: t.areaId, shape: t.shape })).then(() => { qc.invalidateQueries({ queryKey: ['tables'] }); setT(null); toast('Saved'); }).catch(handleError)}>Save</Button>}>
         <div className="grid gap-3 sm:grid-cols-2"><Field label="Number"><Input value={t.number} onChange={(e) => setT({ ...t, number: e.target.value })} /></Field><Field label="Seats"><Input type="number" value={t.capacity} onChange={(e) => setT({ ...t, capacity: e.target.value })} /></Field><Field label="Area"><Select value={t.areaId} onChange={(e) => setT({ ...t, areaId: e.target.value })}>{data?.areas.map((a) => <option key={a._id} value={a._id}>{a.name}</option>)}</Select></Field><Field label="Shape"><Select value={t.shape} onChange={(e) => setT({ ...t, shape: e.target.value })}><option value="square">Square</option><option value="round">Round</option><option value="rect">Rectangle</option></Select></Field></div>

@@ -1,8 +1,9 @@
 import type { Types } from 'mongoose';
-import { Order, Payment, CashSession, Branch, Table } from '../models';
+import { Order, Payment, Branch, Table } from '../models';
 import type { BranchContext } from '../http/context';
 import { buildLines, recalc, type ItemInput } from './orders';
 import { finalizePaidOrder, emitTicketsClosed } from './payments';
+import { findOpenDrawer } from './cash';
 import { withTransaction } from '../db/connect';
 import { nextNumber } from './counters';
 import { audit } from './audit';
@@ -50,7 +51,7 @@ export async function syncOfflineOrder(ctx: BranchContext, o: OfflineOrder): Pro
         offline: { createdAt: o.createdAt, terminalId: o.terminalId, syncedAt: new Date(), priceConflicts: conflicts },
       });
       await recalc(order, session);
-      const cs = await CashSession.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, status: 'open' }).session(session).lean();
+      const { drawer: cs } = await findOpenDrawer(ctx, session);
       let paid = 0;
       for (const p of o.payments) {
         const amount = Math.min(p.amount, order.totals!.total - paid);

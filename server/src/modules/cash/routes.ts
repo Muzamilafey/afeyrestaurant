@@ -5,14 +5,19 @@ import { PERMISSIONS as P } from '../../auth/permissions';
 import { withTransaction } from '../../db/connect';
 import { audit } from '../../services/audit';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../../lib/errors';
+import { drawerMode, findOpenDrawer, noDrawerMessage } from '../../services/cash';
 
 const m = createModule('/cash', 'Cash & Expenses');
 
 /** Compute expected drawer cash from the immutable payment/refund/movement records. */
-async function sessionTotals(tenantId: unknown, s: { _id: unknown; openingFloat: number; userId: unknown; branchId: unknown; openedAt: Date; closedAt?: Date | null }) {
+async function sessionTotals(tenantId: unknown, s: { _id: unknown; openingFloat: number; userId: unknown; branchId: unknown; openedAt: Date; closedAt?: Date | null; shared?: boolean | null }) {
+  // A personal drawer holds what that cashier took; the shared drawer holds what everyone in the branch took while it
+  // was open (personal and shared drawers never overlap — the mode can only change when every drawer is closed).
+  const who = s.shared ? {} : { receivedBy: s.userId };
+  const whoRefund = s.shared ? {} : { requestedBy: s.userId };
   const [pays, refunds, moves] = await Promise.all([
-    Payment.aggregate([{ $match: { tenantId, branchId: s.branchId, receivedBy: s.userId, receivedAt: { $gte: s.openedAt, ...(s.closedAt ? { $lte: s.closedAt } : {}) } } }, { $group: { _id: '$method', amount: { $sum: '$amount' }, count: { $sum: 1 } } }]),
-    Refund.aggregate([{ $match: { tenantId, branchId: s.branchId, requestedBy: s.userId, method: 'cash', createdAt: { $gte: s.openedAt, ...(s.closedAt ? { $lte: s.closedAt } : {}) } } }, { $group: { _id: null, amount: { $sum: '$amount' } } }]),
+    Payment.aggregate([{ $match: { tenantId, branchId: s.branchId, ...who, receivedAt: { $gte: s.openedAt, ...(s.closedAt ? { $lte: s.closedAt } : {}) } } }, { $group: { _id: '$method', amount: { $sum: '$amount' }, count: { $sum: 1 } } }]),
+    Refund.aggregate([{ $match: { tenantId, branchId: s.branchId, ...whoRefund, method: 'cash', createdAt: { $gte: s.openedAt, ...(s.closedAt ? { $lte: s.closedAt } : {}) } } }, { $group: { _id: null, amount: { $sum: '$amount' } } }]),
     CashMovement.aggregate([{ $match: { tenantId, sessionId: s._id } }, { $group: { _id: '$type', amount: { $sum: '$amount' } } }]),
   ]);
   const by = (k: string) => pays.find((p) => p._id === k)?.amount ?? 0;
@@ -27,8 +32,11 @@ async function sessionTotals(tenantId: unknown, s: { _id: unknown; openingFloat:
   };
 }
 
-m.route({ method: 'get', path: '/session', summary: 'My open cash drawer session', permission: P.CASH_SESSION }, async ({ ctx }) => {
-  const s = await CashSession.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, status: 'open' }).lean();
+m.route({ method: 'get', path: '/mode', summary: "This branch's cash drawer mode (per user or one shared drawer)", permission: [P.CASH_SESSION, P.PAYMENTS_RECEIVE] }, async ({ ctx }) => ({ mode: await drawerMode(ctx) }));
+
+m.route({ method: 'get', path: '/session', summary: 'The open cash drawer I use: my own, or the shared branch drawer', permission: P.CASH_SESSION }, async ({ ctx }) => {
+  const { drawer } = await findOpenDrawer(ctx);
+  const s = drawer?.toObject();
   if (!s) return null;
   const t = await sessionTotals(ctx.tenantId, s);
   const movements = await CashMovement.find({ tenantId: ctx.tenantId, sessionId: s._id }).sort({ createdAt: -1 }).lean();
@@ -36,19 +44,21 @@ m.route({ method: 'get', path: '/session', summary: 'My open cash drawer session
 });
 
 m.route({ method: 'post', path: '/session/open', summary: 'Open cash drawer with an opening float', permission: P.CASH_SESSION, body: z.object({ openingFloat: zMoney, terminal: z.string().max(40).optional() }), status: 201 }, async ({ ctx, body, req }) => {
+  const mode = await drawerMode(ctx);
+  const shared = mode === 'shared';
   try {
-    const s = await CashSession.create({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, userName: ctx.userName, openingFloat: body.openingFloat, terminal: body.terminal });
-    await audit(ctx, { action: 'cash.session_opened', entity: 'CashSession', entityId: s._id, meta: { openingFloat: body.openingFloat } }, req);
+    const s = await CashSession.create({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, userName: ctx.userName, openingFloat: body.openingFloat, terminal: body.terminal, shared });
+    await audit(ctx, { action: 'cash.session_opened', entity: 'CashSession', entityId: s._id, meta: { openingFloat: body.openingFloat, shared } }, req);
     return s;
   } catch (e) {
-    if ((e as { code?: number }).code === 11000) throw conflict('You already have an open cash drawer', 'SESSION_OPEN');
+    if ((e as { code?: number }).code === 11000) throw conflict(shared ? 'The shared cash drawer is already open' : 'You already have an open cash drawer', 'SESSION_OPEN');
     throw e;
   }
 });
 
 m.route({ method: 'post', path: '/session/movement', summary: 'Cash drop, pay-in, payout or petty-cash expense', permission: P.CASH_SESSION, body: z.object({ type: z.enum(['drop', 'pay_in', 'payout', 'expense']), amount: zMoney, reason: z.string().min(3).max(200), expenseCategory: z.string().max(40).optional() }), status: 201 }, async ({ ctx, body, req }) => {
-  const s = await CashSession.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, status: 'open' });
-  if (!s) throw new AppError(409, 'NO_CASH_SESSION', 'Open your cash drawer first');
+  const { drawer: s, mode } = await findOpenDrawer(ctx);
+  if (!s) throw new AppError(409, 'NO_CASH_SESSION', noDrawerMessage(mode, 'first'));
   if (body.amount <= 0) throw badRequest('Amount must be positive');
   const mv = await withTransaction(async (session) => {
     let expenseId;
@@ -65,7 +75,7 @@ m.route({ method: 'post', path: '/session/movement', summary: 'Cash drop, pay-in
 });
 
 m.route({ method: 'post', path: '/session/close', summary: 'Close drawer: counted vs expected cash', permission: P.CASH_SESSION, body: z.object({ countedCash: zMoney, denominations: z.array(z.object({ value: z.number().int().positive(), count: z.number().int().min(0) })).optional(), notes: z.string().max(500).optional() }) }, async ({ ctx, body, req }) => {
-  const s = await CashSession.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, status: 'open' });
+  const { drawer: s } = await findOpenDrawer(ctx);
   if (!s) throw notFound('Open cash session');
   const closedAt = new Date();
   const t = await sessionTotals(ctx.tenantId, { ...s.toObject(), closedAt });
@@ -81,7 +91,7 @@ m.route({ method: 'post', path: '/session/close', summary: 'Close drawer: counte
 
 m.route({ method: 'get', path: '/sessions', summary: 'Cash sessions (own, or all with cash.session_view_all)', permission: [P.CASH_SESSION, P.CASH_SESSION_VIEW_ALL], query: z.object({ from: z.coerce.date().optional(), status: z.string().optional() }) }, async ({ ctx, query }) => {
   const f: Record<string, unknown> = { tenantId: ctx.tenantId, branchId: ctx.branchId };
-  if (!ctx.permissions.has(P.CASH_SESSION_VIEW_ALL)) f.userId = ctx.userId;
+  if (!ctx.permissions.has(P.CASH_SESSION_VIEW_ALL)) f.$or = [{ userId: ctx.userId }, { shared: true }];
   if (query.from) f.openedAt = { $gte: query.from };
   if (query.status) f.status = query.status;
   return CashSession.find(f).sort({ openedAt: -1 }).limit(200).lean();

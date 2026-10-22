@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
-import { CheckCircle2, AlertTriangle, Info, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Info, ShieldCheck, Copy } from 'lucide-react';
 import { Button, Field, Input, Modal, Textarea, cx } from './ui';
 import { ApiError, errorMessage } from '@/lib/api';
 
@@ -10,6 +10,22 @@ interface FeedbackCtx {
   /** Run an action; if the server answers APPROVAL_REQUIRED, ask for a manager's email + PIN and retry. */
   withApproval: <T>(fn: (approval?: { approverEmail: string; pin: string }) => Promise<T>) => Promise<T>;
   handleError: (e: unknown) => void;
+  /** In-app replacement for window.prompt: resolves with the entered text, or null when cancelled. */
+  prompt: (opts: PromptOpts) => Promise<string | null>;
+}
+export interface PromptOpts {
+  title: string;
+  label: string;
+  defaultValue?: string;
+  placeholder?: string;
+  hint?: ReactNode;
+  confirmLabel?: string;
+  inputMode?: 'text' | 'decimal' | 'numeric';
+  multiline?: boolean;
+  /** Shows the value read-only with a Copy button (e.g. a URL to paste elsewhere). */
+  readOnly?: boolean;
+  /** Minimum length before the confirm button enables (default 1; 0 allows empty). */
+  minLength?: number;
 }
 const Ctx = createContext<FeedbackCtx | null>(null);
 
@@ -19,6 +35,8 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   const [reason, setReason] = useState('');
   const [approvalState, setApproval] = useState<null | { message: string; resolve: (v: { approverEmail: string; pin: string } | null) => void }>(null);
   const [appr, setAppr] = useState({ approverEmail: '', pin: '' });
+  const [promptState, setPrompt] = useState<null | (PromptOpts & { resolve: (v: string | null) => void })>(null);
+  const [promptValue, setPromptValue] = useState('');
   const id = useRef(0);
 
   const toast = useCallback((text: string, kind: Toast['kind'] = 'success') => {
@@ -31,6 +49,15 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     setReason('');
     setConfirm({ ...opts, resolve });
   }), []);
+  const prompt = useCallback<FeedbackCtx['prompt']>((opts) => new Promise((resolve) => {
+    setPromptValue(opts.defaultValue ?? '');
+    setPrompt({ ...opts, resolve });
+  }), []);
+  const closePrompt = (v: string | null) => {
+    promptState?.resolve(v);
+    setPrompt(null);
+  };
+  const promptOk = !!promptState && (promptState.readOnly || promptValue.trim().length >= (promptState.minLength ?? 1));
   const askApproval = (message: string) => new Promise<{ approverEmail: string; pin: string } | null>((resolve) => {
     setAppr((a) => ({ ...a, pin: '' }));
     setApproval({ message, resolve });
@@ -59,7 +86,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ toast, confirm, withApproval, handleError }}>
+    <Ctx.Provider value={{ toast, confirm, withApproval, handleError, prompt }}>
       {children}
       <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex w-[min(92vw,380px)] flex-col gap-2">
         {toasts.map((t) => (
@@ -91,6 +118,37 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
             </Field>
           )}
         </div>
+      </Modal>
+      <Modal
+        open={!!promptState}
+        onClose={() => closePrompt(null)}
+        title={promptState?.title}
+        size="sm"
+        footer={
+          promptState?.readOnly ? (
+            <>
+              <Button variant="secondary" onClick={() => closePrompt(null)}>Close</Button>
+              <Button icon={<Copy className="h-4 w-4" />} onClick={() => { navigator.clipboard?.writeText(promptValue).catch(() => undefined); toast('Copied'); closePrompt(promptValue); }}>Copy</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="secondary" onClick={() => closePrompt(null)}>Cancel</Button>
+              <Button disabled={!promptOk} onClick={() => closePrompt(promptValue.trim())}>{promptState?.confirmLabel ?? 'OK'}</Button>
+            </>
+          )
+        }
+      >
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (promptOk) closePrompt(promptState?.readOnly ? promptValue : promptValue.trim()); }}>
+          <Field label={promptState?.label ?? ''} hint={typeof promptState?.hint === 'string' ? promptState.hint : undefined}>
+            {promptState?.multiline ? (
+              <Textarea autoFocus value={promptValue} placeholder={promptState?.placeholder} onChange={(e) => setPromptValue(e.target.value)} />
+            ) : (
+              <Input autoFocus readOnly={promptState?.readOnly} onFocus={(e) => promptState?.readOnly && e.currentTarget.select()} inputMode={promptState?.inputMode} value={promptValue} placeholder={promptState?.placeholder} onChange={(e) => setPromptValue(e.target.value)} />
+            )}
+          </Field>
+          {promptState?.hint && typeof promptState.hint !== 'string' && <div className="text-xs text-ink-soft">{promptState.hint}</div>}
+          <button type="submit" hidden />
+        </form>
       </Modal>
       <Modal
         open={!!approvalState}

@@ -10,13 +10,14 @@ import { useAuth } from '@/auth/AuthContext';
 type TabId = 'drawer' | 'sessions' | 'expenses' | 'pnl' | 'reconciliation' | 'tax';
 
 export default function AccountingPage() {
+  const drawerMode = useQuery<{ mode: 'per_user' | 'shared' }>({ queryKey: ['cash-mode'], queryFn: () => get('/cash/mode') });
   const { can } = useAuth();
   const [tab, setTab] = useState<TabId>(can('cash.session') ? 'drawer' : 'pnl');
   return (
     <div>
       <PageHeader title="Accounting" subtitle="Cash drawers, expenses, reconciliation and profit & loss" />
       <Tabs<TabId> tabs={[
-        { id: 'drawer', label: 'My cash drawer', hidden: !can('cash.session') },
+        { id: 'drawer', label: drawerMode.data?.mode === 'shared' ? 'Shared cash drawer' : 'My cash drawer', hidden: !can('cash.session') },
         { id: 'sessions', label: 'Cash sessions', hidden: !can('cash.session_view_all') },
         { id: 'expenses', label: 'Expenses', hidden: !can('expenses.manage', 'accounting.view') },
         { id: 'reconciliation', label: 'Reconciliation', hidden: !can('reports.financial', 'accounting.view') },
@@ -38,7 +39,9 @@ const monthStart = () => new Date(new Date().getFullYear(), new Date().getMonth(
 function Drawer() {
   const { handleError, toast } = useFeedback();
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery<null | { _id: string; openedAt: string; openingFloat: number; expected: number; totals: Record<string, number>; movements: Array<{ _id: string; type: string; amount: number; reason: string; createdAt: string }> }>({ queryKey: ['cash-session'], queryFn: () => get('/cash/session'), refetchInterval: 30_000 });
+  const mode = useQuery<{ mode: 'per_user' | 'shared' }>({ queryKey: ['cash-mode'], queryFn: () => get('/cash/mode') });
+  const shared = mode.data?.mode === 'shared';
+  const { data, isLoading } = useQuery<null | { _id: string; shared?: boolean; userName?: string; openedAt: string; openingFloat: number; expected: number; totals: Record<string, number>; movements: Array<{ _id: string; type: string; amount: number; reason: string; createdAt: string }> }>({ queryKey: ['cash-session'], queryFn: () => get('/cash/session'), refetchInterval: 30_000 });
   const [float, setFloat] = useState('');
   const [move, setMove] = useState<null | { type: string; amount: string; reason: string }>(null);
   const [counted, setCounted] = useState('');
@@ -47,17 +50,18 @@ function Drawer() {
   if (isLoading) return <Skeleton className="h-48" />;
   if (!data)
     return (
-      <Card title="Open cash drawer">
+      <Card title={shared ? 'Open the shared cash drawer' : 'Open cash drawer'}>
+        <p className="mb-3 max-w-xl text-sm text-ink-soft">{shared ? 'This branch uses one drawer for everyone. Once it is open, every waiter and cashier takes cash into it until it is counted and closed.' : 'Each cashier or waiter opens their own drawer; cash you take is counted against it.'}</p>
         <div className="flex max-w-md items-end gap-2">
           <Field label="Opening float (KSh)" className="flex-1"><Input inputMode="decimal" value={float} onChange={(e) => setFloat(e.target.value)} /></Field>
-          <Button icon={<Unlock className="h-4 w-4" />} onClick={() => post('/cash/session/open', { openingFloat: toCents(float || 0) }).then(() => { refresh(); toast('Drawer opened'); }).catch(handleError)}>Open drawer</Button>
+          <Button icon={<Unlock className="h-4 w-4" />} onClick={() => post('/cash/session/open', { openingFloat: toCents(float || 0) }).then(() => { refresh(); toast(shared ? 'Shared drawer opened for everyone' : 'Drawer opened'); }).catch(handleError)}>Open drawer</Button>
         </div>
       </Card>
     );
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Expected cash in drawer" value={money(data.expected)} hint={`Opened ${dateTime(data.openedAt)}`} />
+        <Stat label={data.shared ? 'Expected cash · shared drawer' : 'Expected cash in drawer'} value={money(data.expected)} hint={`Opened ${dateTime(data.openedAt)}${data.shared && data.userName ? ` by ${data.userName}` : ''}`} />
         <Stat label="Cash sales" value={money(data.totals.cashSales)} hint={`Float ${money(data.openingFloat)}`} />
         <Stat label="M-Pesa" value={money(data.totals.mpesa)} />
         <Stat label="Card / QR" value={money(data.totals.card)} />
@@ -87,13 +91,13 @@ function Sessions() {
 
 function Expenses() {
   const { can } = useAuth();
-  const { handleError, toast } = useFeedback();
+  const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery<Array<{ _id: string; date: string; category: string; description?: string; amount: number; paidFrom: string; reversedBy?: string; reversalOf?: string }>>({ queryKey: ['expenses'], queryFn: () => get('/cash/expenses', { from: monthStart() }) });
   const [f, setF] = useState<null | { category: string; description: string; amount: string; paidFrom: string; reference: string }>(null);
   return (
     <Card title="Expenses this month" actions={can('expenses.manage') && <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setF({ category: '', description: '', amount: '', paidFrom: 'mpesa', reference: '' })}>Expense</Button>}>
-      <DataTable rows={data} loading={isLoading} rowKey={(r) => r._id} columns={[{ key: 'd', header: 'Date', render: (r) => date(r.date) }, { key: 'c', header: 'Category', render: (r) => r.category }, { key: 'x', header: 'Description', render: (r) => r.description }, { key: 'p', header: 'Paid from', render: (r) => titleCase(r.paidFrom) }, { key: 'a', header: 'Amount', render: (r) => <span className={r.amount < 0 ? 'text-danger' : ''}>{money(r.amount)}</span> }, { key: 'r', header: '', render: (r) => (r.reversedBy ? <Pill>Reversed</Pill> : !r.reversalOf && can('expenses.manage') ? <Button size="sm" variant="ghost" onClick={() => { const reason = window.prompt('Reason for reversal'); if (reason) post(`/cash/expenses/${r._id}/reverse`, { reason }).then(() => qc.invalidateQueries({ queryKey: ['expenses'] })).catch(handleError); }}>Reverse</Button> : null) }]} />
+      <DataTable rows={data} loading={isLoading} rowKey={(r) => r._id} columns={[{ key: 'd', header: 'Date', render: (r) => date(r.date) }, { key: 'c', header: 'Category', render: (r) => r.category }, { key: 'x', header: 'Description', render: (r) => r.description }, { key: 'p', header: 'Paid from', render: (r) => titleCase(r.paidFrom) }, { key: 'a', header: 'Amount', render: (r) => <span className={r.amount < 0 ? 'text-danger' : ''}>{money(r.amount)}</span> }, { key: 'r', header: '', render: (r) => (r.reversedBy ? <Pill>Reversed</Pill> : !r.reversalOf && can('expenses.manage') ? <Button size="sm" variant="ghost" onClick={async () => { const reason = await prompt({ title: 'Reverse expense', label: 'Reason for reversal', placeholder: 'e.g. Entered twice', confirmLabel: 'Reverse', minLength: 3 }); if (reason) post(`/cash/expenses/${r._id}/reverse`, { reason }).then(() => qc.invalidateQueries({ queryKey: ['expenses'] })).catch(handleError); }}>Reverse</Button> : null) }]} />
       {f && <Modal open onClose={() => setF(null)} title="Record expense" footer={<Button onClick={() => post('/cash/expenses', { category: f.category, description: f.description || undefined, amount: toCents(f.amount), paidFrom: f.paidFrom, reference: f.reference || undefined }).then(() => { setF(null); qc.invalidateQueries({ queryKey: ['expenses'] }); toast('Expense recorded'); }).catch(handleError)}>Save</Button>}>
         <div className="grid gap-3 sm:grid-cols-2"><Field label="Category"><Input list="exp-cats" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} /><datalist id="exp-cats">{['Rent', 'Utilities', 'Salaries', 'Gas', 'Repairs', 'Marketing', 'Transport', 'Licences', 'Other'].map((c) => <option key={c} value={c} />)}</datalist></Field><Field label="Amount (KSh)"><Input inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field><Field label="Paid from"><Select value={f.paidFrom} onChange={(e) => setF({ ...f, paidFrom: e.target.value })}><option value="mpesa">M-Pesa</option><option value="bank">Bank</option><option value="petty_cash">Petty cash</option><option value="other">Other</option></Select></Field><Field label="Reference"><Input value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} /></Field><Field label="Description" className="sm:col-span-2"><Input value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field></div>
       </Modal>}

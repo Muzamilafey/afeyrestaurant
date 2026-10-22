@@ -14,7 +14,7 @@ type Line = { ingredientId: string; qty: string; unit: string; unitPrice: string
 
 export default function PurchasingPage() {
   const { can } = useAuth();
-  const { handleError, toast } = useFeedback();
+  const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
   const [tab, setTab] = useState<'pos' | 'grn' | 'suppliers' | 'invoices'>('pos');
   const suppliers = useQuery<Supplier[]>({ queryKey: ['suppliers'], queryFn: () => get('/inventory/suppliers') });
@@ -52,7 +52,7 @@ export default function PurchasingPage() {
         {tab === 'invoices' && <DataTable rows={invoices.data} loading={invoices.isLoading} rowKey={(r) => r._id} columns={[
           { key: 'i', header: 'Invoice', render: (r) => r.invoiceNo }, { key: 's', header: 'Supplier', render: (r) => sname(r.supplierId) }, { key: 'd', header: 'Due', render: (r) => date(r.dueDate) },
           { key: 'a', header: 'Amount', render: (r) => money(r.amount) }, { key: 'p', header: 'Paid', render: (r) => money(r.paid) }, { key: 'st', header: 'Status', render: (r) => <StatusPill status={r.status === 'unpaid' ? 'pending' : r.status === 'paid' ? 'paid' : 'partial'} /> },
-          { key: 'x', header: '', render: (r) => r.status !== 'paid' && can('expenses.manage') && <Button size="sm" onClick={async () => { const amt = window.prompt('Amount to pay (KSh)', String((r.amount - r.paid) / 100)); if (!amt) return; const ref = window.prompt('Payment reference') ?? undefined; post(`/inventory/supplier-invoices/${r._id}/pay`, { amount: toCents(amt), method: 'bank', reference: ref, notify: true }).then(() => { qc.invalidateQueries({ queryKey: ['invoices'] }); qc.invalidateQueries({ queryKey: ['suppliers'] }); toast('Payment recorded'); }).catch(handleError); }}>Pay</Button> },
+          { key: 'x', header: '', render: (r) => r.status !== 'paid' && can('expenses.manage') && <Button size="sm" onClick={async () => { const amt = await prompt({ title: 'Pay supplier invoice', label: 'Amount to pay (KSh)', inputMode: 'decimal', defaultValue: String((r.amount - r.paid) / 100), confirmLabel: 'Next' }); if (!amt || Number.isNaN(Number(amt))) return; const ref = await prompt({ title: 'Pay supplier invoice', label: 'Payment reference (optional)', placeholder: 'Bank or M-Pesa reference', confirmLabel: 'Record payment', minLength: 0 }); if (ref === null) return; post(`/inventory/supplier-invoices/${r._id}/pay`, { amount: toCents(amt), method: 'bank', reference: ref || undefined, notify: true }).then(() => { qc.invalidateQueries({ queryKey: ['invoices'] }); qc.invalidateQueries({ queryKey: ['suppliers'] }); toast('Payment recorded'); }).catch(handleError); }}>Pay</Button> },
         ]} />}
       </Card>
       {modal?.kind === 'supplier' && <SupplierModal onClose={() => setModal(null)} />}

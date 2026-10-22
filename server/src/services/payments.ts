@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Types, ClientSession } from 'mongoose';
-import { Order, type OrderDoc, Payment, PaymentAttempt, Refund, CashSession, Customer, LoyaltyAccount, LoyaltyTransaction, Tenant, Branch, Receipt, KitchenTicket } from '../models';
+import { Order, type OrderDoc, Payment, PaymentAttempt, Refund, Customer, LoyaltyAccount, LoyaltyTransaction, Tenant, Branch, Receipt, KitchenTicket } from '../models';
 import type { BranchContext } from '../http/context';
 import { AppError, badRequest, conflict, notFound, unprocessable } from '../lib/errors';
 import { PERMISSIONS as P } from '../auth/permissions';
@@ -20,6 +20,7 @@ import { normalizeKePhone } from '../lib/phone';
 import { randomToken, sha256 } from '../lib/crypto';
 import { env } from '../config/env';
 import { recordIntegrationResult } from './integrations';
+import { findOpenDrawer, noDrawerMessage } from './cash';
 import { logger } from '../lib/logger';
 import { toMajor } from '../lib/money';
 
@@ -36,9 +37,6 @@ export interface PaymentInput {
   approval?: ApprovalInput;
 }
 
-async function openCashSession(ctx: BranchContext, session?: ClientSession) {
-  return CashSession.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, status: 'open' }).session(session ?? null);
-}
 
 /**
  * Record a confirmed non-M-Pesa-STK payment (cash, card, QR, credit account, or a manager-confirmed M-Pesa
@@ -79,8 +77,8 @@ export async function recordPayment(ctx: BranchContext, orderId: string, input: 
     let change = 0;
     let cashSessionId: Types.ObjectId | undefined;
     if (method === 'cash') {
-      const cs = await openCashSession(ctx, session);
-      if (!cs) throw new AppError(409, 'NO_CASH_SESSION', 'Open your cash drawer before accepting cash');
+      const { drawer: cs, mode } = await findOpenDrawer(ctx, session);
+      if (!cs) throw new AppError(409, 'NO_CASH_SESSION', noDrawerMessage(mode, 'before accepting cash'));
       cashSessionId = cs._id;
       tendered = input.tendered ?? input.amount;
       if (tendered < input.amount) throw badRequest('Cash tendered is less than the amount');
@@ -454,8 +452,8 @@ export async function refundPayment(ctx: BranchContext, paymentId: string, input
       throw badRequest('Reverse the M-Pesa transaction on the M-Pesa org portal first, then enter the reversal reference. Automated Daraja reversals require initiator credentials and are not enabled.');
     }
     if (payment.method === 'cash') {
-      const cs = await openCashSession(ctx, session);
-      if (!cs) throw new AppError(409, 'NO_CASH_SESSION', 'Open your cash drawer to pay out a cash refund');
+      const { drawer: cs, mode } = await findOpenDrawer(ctx, session);
+      if (!cs) throw new AppError(409, 'NO_CASH_SESSION', noDrawerMessage(mode, 'to pay out a cash refund'));
     }
     const [refund] = await Refund.create(
       [{ tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: payment.orderId, paymentId: payment._id, method: payment.method, amount: input.amount, reason: input.reason, status: 'completed', reference: input.reference, requestedBy: ctx.userId, approvedBy, restock: input.restock, idempotencyKey: input.idempotencyKey }],

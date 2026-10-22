@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Types } from 'mongoose';
 import { createModule, zId } from '../../http/route';
-import { Branch, User, Role, Tenant, TaxRate, AuditLog, Terminal } from '../../models';
+import { Branch, User, Role, Tenant, TaxRate, AuditLog, Terminal, CashSession } from '../../models';
 import { PERMISSIONS as P, ALL_PERMISSIONS } from '../../auth/permissions';
 import { hashPassword, passwordPolicy, pinPolicy } from '../../auth/password';
 import { audit } from '../../services/audit';
@@ -49,7 +49,7 @@ const zBranch = z.object({
   settings: z.object({
     serviceChargeBps: z.number().int().min(0).max(3000).optional(), serviceChargeModes: z.array(z.string()).optional(), receiptPrefix: z.string().max(6).optional(), orderPrefix: z.string().max(6).optional(),
     enabledModes: z.array(z.enum(['dine_in', 'takeaway', 'delivery', 'room_service', 'bar_counter', 'online'])).optional(), roomServiceEnabled: z.boolean().optional(), deliveryFee: z.number().int().min(0).optional(),
-    openingTime: z.string().optional(), closingTime: z.string().optional(), kitchenDelayMinutes: z.number().int().min(1).max(240).optional(),
+    openingTime: z.string().optional(), closingTime: z.string().optional(), kitchenDelayMinutes: z.number().int().min(1).max(240).optional(), cashDrawerMode: z.enum(['per_user', 'shared']).optional(),
     happyHours: z.array(z.object({ days: z.array(z.number().int().min(0).max(6)), start: z.string().regex(/^\d{2}:\d{2}$/), end: z.string().regex(/^\d{2}:\d{2}$/), discountBps: z.number().int().min(0).max(10000).optional(), categoryIds: z.array(zId).optional() })).max(10).optional(),
   }).optional(),
 });
@@ -65,6 +65,11 @@ m.route({ method: 'patch', path: '/branches/:id', summary: 'Update a branch', au
   if (!b) throw notFound('Branch');
   const before = b.toObject();
   const { settings, ...rest } = body;
+  // Switching between personal and shared drawers mid-shift would split one drawer's cash across two counts.
+  if (settings?.cashDrawerMode && settings.cashDrawerMode !== (before.settings?.cashDrawerMode ?? 'per_user')) {
+    const open = await CashSession.countDocuments({ tenantId: ctx.tenantId, branchId: b._id, status: 'open' });
+    if (open) throw conflict(`Close the ${open} open cash drawer${open > 1 ? 's' : ''} in this branch before changing the drawer mode`, 'DRAWERS_OPEN');
+  }
   b.set(rest);
   if (settings) b.set('settings', { ...(before.settings ?? {}), ...settings });
   await b.save();

@@ -149,7 +149,7 @@ function Shifts() {
 }
 
 function Devices() {
-  const { handleError, toast } = useFeedback();
+  const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery<Device[]>({ queryKey: ['devices'], queryFn: () => get('/staff/devices'), refetchInterval: 30_000 });
   const bridges = useQuery<{ bridges: Array<{ _id: string; name: string; lastSeenAt?: string; active: boolean }> }>({ queryKey: ['integrations'], queryFn: () => get('/integrations') });
@@ -163,7 +163,7 @@ function Devices() {
         { key: 's', header: 'Status', render: (r) => <div className="flex flex-col gap-1"><StatusPill status={r.status} />{r.lastError && <span className="text-xs text-danger">{r.lastError}</span>}</div> },
         { key: 'v', header: 'Verified', render: (r) => (r.verified ? <Pill color="green">Verified</Pill> : <Pill color="yellow">Unverified</Pill>) },
         { key: 'l', header: 'Last sync', render: (r) => dateTime(r.lastSyncAt) },
-        { key: 'a', header: '', render: (r) => <div className="flex flex-wrap gap-1"><Button size="sm" variant="secondary" onClick={() => cmd(r, 'device_test')}>Test</Button><Button size="sm" variant="ghost" onClick={() => cmd(r, 'sync_time')}>Sync clock</Button><Button size="sm" variant="ghost" onClick={() => cmd(r, 'pull_attendance')}>Pull logs</Button>{!r.verified && <Button size="sm" variant="ghost" onClick={() => { const notes = window.prompt('Describe the physical test you performed (model, firmware, enrol + punch verified):'); if (notes) patch(`/staff/devices/${r._id}`, { verified: true, verificationNotes: notes }).then(() => qc.invalidateQueries({ queryKey: ['devices'] })).catch(handleError); }}>Mark verified</Button>}</div> },
+        { key: 'a', header: '', render: (r) => <div className="flex flex-wrap gap-1"><Button size="sm" variant="secondary" onClick={() => cmd(r, 'device_test')}>Test</Button><Button size="sm" variant="ghost" onClick={() => cmd(r, 'sync_time')}>Sync clock</Button><Button size="sm" variant="ghost" onClick={() => cmd(r, 'pull_attendance')}>Pull logs</Button>{!r.verified && <Button size="sm" variant="ghost" onClick={async () => { const notes = await prompt({ title: 'Mark device verified', label: 'Physical test performed', multiline: true, placeholder: 'Model, firmware, enrol + punch verified…', confirmLabel: 'Mark verified', minLength: 5 }); if (notes) patch(`/staff/devices/${r._id}`, { verified: true, verificationNotes: notes }).then(() => qc.invalidateQueries({ queryKey: ['devices'] })).catch(handleError); }}>Mark verified</Button>}</div> },
       ]} />
       {f && (
         <Modal open onClose={() => setF(null)} title="Register biometric device" footer={<Button onClick={() => post('/staff/devices', f.vendor === 'zkteco' ? { name: f.name, vendor: 'zkteco', deviceType: 'zkteco_terminal', model: f.model, connection: 'udp', host: f.host, port: Number(f.port), bridgeId: f.bridgeId } : f.vendor === 'secugen' ? { name: f.name, vendor: 'secugen', deviceType: 'secugen_usb', model: f.model, connection: 'usb_bridge', bridgeId: f.bridgeId } : { name: f.name, vendor: 'mock', deviceType: 'mock', connection: 'mock' }).then(() => { qc.invalidateQueries({ queryKey: ['devices'] }); setF(null); toast('Device registered (unverified)'); }).catch(handleError)}>Register</Button>}>

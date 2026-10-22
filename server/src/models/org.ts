@@ -21,6 +21,8 @@ const branchSchema = new Schema(
       openingTime: String,
       closingTime: String,
       kitchenDelayMinutes: { type: Number, default: 15 },
+      /** 'per_user': each cashier has their own drawer. 'shared': one drawer for everyone in the branch. */
+      cashDrawerMode: { type: String, enum: ['per_user', 'shared'], default: 'per_user' },
       happyHours: [{ days: [Number], start: String, end: String, discountBps: Number, categoryIds: [Schema.Types.ObjectId] }],
     },
   },

@@ -42,7 +42,7 @@ interface TablesResp { tables: Array<{ _id: string; number: string; status: stri
 
 export default function PosPage() {
   const { branch, session, can } = useAuth();
-  const { toast, handleError, withApproval, confirm } = useFeedback();
+  const { toast, handleError, withApproval, confirm , prompt } = useFeedback();
   const qc = useQueryClient();
   const online = useOnline();
   const [params, setParams] = useSearchParams();
@@ -303,7 +303,7 @@ export default function PosPage() {
 
   async function discount() {
     if (!order) return toast('Place the order first, then apply a discount', 'info');
-    const pct = window.prompt('Discount % (0 to remove) — or enter a coupon code', '10');
+    const pct = await prompt({ title: 'Discount', label: 'Discount % or coupon code', defaultValue: '10', hint: 'Enter 0 to remove the discount.', confirmLabel: 'Apply' });
     if (pct === null) return;
     const isCoupon = /[a-z]/i.test(pct);
     const c = isCoupon ? { ok: true, reason: undefined } : Number(pct) === 0 ? { ok: true, reason: undefined } : await confirm({ title: `Apply ${pct}% discount`, message: 'Discounts above the threshold need manager approval.', reason: true });

@@ -108,6 +108,8 @@ const cashSessionSchema = new Schema(
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     userName: String,
     terminal: String,
+    /** Branch-wide drawer used by everyone (cashDrawerMode 'shared'); userId/userName is who opened it. */
+    shared: { type: Boolean, default: false },
     status: { type: String, enum: ['open', 'closed'], default: 'open', index: true },
     openingFloat: money,
     openedAt: { type: Date, default: Date.now },
@@ -124,6 +126,8 @@ const cashSessionSchema = new Schema(
 );
 // One open drawer per cashier per branch.
 cashSessionSchema.index({ tenantId: 1, branchId: 1, userId: 1 }, { unique: true, partialFilterExpression: { status: 'open' } });
+// At most one open shared drawer per branch.
+cashSessionSchema.index({ tenantId: 1, branchId: 1, shared: 1 }, { unique: true, partialFilterExpression: { status: 'open', shared: true } });
 export const CashSession = model('CashSession', cashSessionSchema);
 
 const cashMovementSchema = new Schema(
