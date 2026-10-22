@@ -11,7 +11,9 @@
     "worker": "node dist/worker.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "seed": "tsx src/scripts/seed.ts"
+    "seed": "tsx src/scripts/seed.ts",
+    "setup": "tsx src/scripts/setup.ts",
+    "setup:prod": "node dist/scripts/setup.js"
   },
   "dependencies": {
     "argon2": "^0.45.1",

@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import mongoose, { Types, type ClientSession } from 'mongoose';
-import { Order, type OrderDoc, Product, Category, ModifierGroup, TaxRate, Branch, Tenant, Table, KitchenTicket, Customer, Coupon } from '../models';
+import { Order, type OrderDoc, Product, Category, ModifierGroup, TaxRate, Branch, Tenant, Table, KitchenTicket, Customer, Coupon, Printer, PrintJob } from '../models';
 import type { BranchContext } from '../http/context';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors';
 import { PERMISSIONS as P } from '../auth/permissions';
@@ -374,7 +374,28 @@ export async function sendToStations(ctx: BranchContext, orderId: string, submis
     }
   });
   for (const t of created) emitStation(ctx.tenantId, ctx.branchId, t.station, 'ticket.created', { id: t.id, orderNumber: order.number });
+  if (created.length) await queueTicketPrints(ctx, created.map((c) => c.id));
   return { order, tickets: created };
+}
+
+/** Route new kitchen/bar tickets to the station printers of the branch (printed by the local bridge). */
+async function queueTicketPrints(ctx: BranchContext, ticketIds: string[]) {
+  const printers = await Printer.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, active: true, role: { $in: ['kitchen', 'bar'] }, connection: { $ne: 'browser' } }).lean();
+  if (!printers.length) return;
+  const tickets = await KitchenTicket.find({ tenantId: ctx.tenantId, _id: { $in: ticketIds } }).lean();
+  for (const t of tickets) {
+    for (const p of printers.filter((x) => x.role === t.station)) {
+      await PrintJob.updateOne(
+        { tenantId: ctx.tenantId, dedupeKey: `ticket:${t._id}:${p._id}` },
+        { $setOnInsert: { branchId: ctx.branchId, printerId: p._id, kind: t.station === 'bar' ? 'bar_ticket' : 'kitchen_ticket', refId: t._id, requestedBy: ctx.userId, payload: {
+          title: t.station === 'bar' ? 'BAR' : 'KITCHEN',
+          meta: [`${t.tableNumber ? `Table ${t.tableNumber}` : String(t.orderType).replace('_', ' ')}  ${t.orderNumber}`, `${t.waiterName ?? ''}  ${new Date().toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}${t.priority ? '  PRIORITY' : ''}`],
+          lines: t.items.map((i) => ({ qty: i.qty, name: i.name, modifiers: i.modifiers, notes: i.notes })),
+        } } },
+        { upsert: true },
+      );
+    }
+  }
 }
 
 export async function setHold(ctx: BranchContext, orderId: string, hold: boolean) {

@@ -195,12 +195,20 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
         if (!c.ok) return;
         reason = c.reason;
       }
-      const r = await post<{ text: string; copy: string }>(`/orders/${order._id}/receipt/print`, { reason, printer: 'browser' });
-      try {
-        printText(r.text);
-      } catch (e) {
-        await post(`/orders/${order._id}/receipt/print`, { status: 'failed', error: (e as Error).message, printer: 'browser' });
-        throw e;
+      // Use the branch's network receipt printer (via the local bridge) when one is set up; otherwise the browser.
+      const printers = await get<Array<{ _id: string; role: string; connection: string; active: boolean; name: string }>>('/integrations/printers').catch(() => []);
+      const receiptPrinter = printers.find((p) => p.active && p.role === 'receipt' && p.connection !== 'browser');
+      const r = await post<{ text: string; copy: 'original' | 'duplicate' }>(`/orders/${order._id}/receipt/print`, { reason, printer: receiptPrinter?.name ?? 'browser' });
+      if (receiptPrinter) {
+        await post(`/integrations/printers/${receiptPrinter._id}/jobs`, { kind: 'receipt', refId: order._id, copy: r.copy, payload: { text: r.text }, dedupeKey: `receipt:${order._id}:${r.copy}:${Date.now()}` });
+        toast(`Sent to ${receiptPrinter.name}`);
+      } else {
+        try {
+          printText(r.text);
+        } catch (e) {
+          await post(`/orders/${order._id}/receipt/print`, { status: 'failed', error: (e as Error).message, printer: 'browser' });
+          throw e;
+        }
       }
       refetch();
     } catch (e) {

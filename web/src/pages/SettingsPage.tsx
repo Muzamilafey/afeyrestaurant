@@ -173,6 +173,7 @@ function Business() {
         </div>
         <p className="w-full text-xs text-ink-soft">Square PNG, JPG or WebP, up to 5 MB. Changes apply after you press Save.</p>
       </div>
+      <SystemStatus />
       <div className="grid gap-3 md:grid-cols-3">
         <Field label="KRA PIN"><Input value={f.kraPin ?? ''} onChange={(e) => setF({ ...f, kraPin: e.target.value })} /></Field>
         <Field label="Contact email"><Input value={f.contactEmail ?? ''} onChange={(e) => setF({ ...f, contactEmail: e.target.value })} /></Field>
@@ -193,6 +194,18 @@ function Business() {
         </div>
       </div>
     </Card>
+  );
+}
+
+function SystemStatus() {
+  const { data } = useQuery<{ backup: { at: string | null; ok: boolean; error?: string; sizeBytes?: number }; failedNotifications: number; version: string }>({ queryKey: ['system'], queryFn: () => get('/admin/system') });
+  if (!data) return null;
+  return (
+    <div className="mb-5 flex flex-wrap gap-4 rounded-2xl border border-line p-4 text-sm">
+      <span>Last backup: {data.backup.at ? <><b>{dateTime(data.backup.at)}</b> <Pill color={data.backup.ok ? 'green' : 'red'}>{data.backup.ok ? 'OK' : 'failed'}</Pill></> : <Pill color="red">No backup recorded</Pill>}</span>
+      <span>Undelivered messages: <b>{data.failedNotifications}</b></span>
+      <span className="text-ink-soft">Version {data.version}</span>
+    </div>
   );
 }
 

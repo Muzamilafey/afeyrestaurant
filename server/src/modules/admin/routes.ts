@@ -166,6 +166,14 @@ m.route({ method: 'post', path: '/terminals', summary: 'Register a POS terminal'
   return Terminal.create({ tenantId: ctx.tenantId, branchId: ctx.branchId, name: body.name, deviceKey: randomToken(12) });
 });
 
+// ── System status (backups, queues) ──
+m.route({ method: 'get', path: '/system', summary: 'Backup and background-queue status', auth: 'tenant', permission: P.SETTINGS_MANAGE }, async ({ ctx }) => {
+  const { getBackupStatus } = await import('../../services/backupStatus');
+  const { NotificationJob } = await import('../../models');
+  const [backup, failedNotifications] = await Promise.all([getBackupStatus(), NotificationJob.countDocuments({ tenantId: ctx.tenantId, status: { $in: ['failed', 'dead'] } })]);
+  return { backup, failedNotifications, version: process.env.npm_package_version ?? '0.1.0' };
+});
+
 // ── Audit ──
 m.route({ method: 'get', path: '/audit', summary: 'Audit trail', auth: 'tenant', permission: P.AUDIT_VIEW, query: z.object({ action: z.string().optional(), entityId: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(200), before: z.coerce.date().optional() }) }, async ({ ctx, query }) => {
   const f: Record<string, unknown> = { tenantId: ctx.tenantId };
