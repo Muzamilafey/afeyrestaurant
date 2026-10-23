@@ -416,6 +416,8 @@ try {
     Info 'npm ci: downloading and installing packages (2-10 minutes on Windows; antivirus scanning slows it down)'
     # No install-time analytics: swagger-ui's Scarf script runs `npm ls` over the whole tree, which can hang on Windows.
     $env:SCARF_ANALYTICS = 'false'; $env:DO_NOT_TRACK = '1'
+    # The test-only MongoDB download (mongodb-memory-server, hundreds of MB) is never needed on a till/server PC.
+    $env:MONGOMS_DISABLE_POSTINSTALL = '1'
     Run 'npm ci' { npm ci --no-audit --no-fund --loglevel=error }
     $state.lockHash = $lockHash
     if (-not $DryRun) { ($state | ConvertTo-Json) | Set-Content -Encoding UTF8 $stateFile }

@@ -21,6 +21,11 @@
   "engines": {
     "node": ">=20"
   },
+  "config": {
+    "mongodbMemoryServer": {
+      "disablePostinstall": "1"
+    }
+  },
   "scarfSettings": {
     "enabled": false,
     "skipTraversal": true
