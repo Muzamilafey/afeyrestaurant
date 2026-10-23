@@ -20,5 +20,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "scarfSettings": {
+    "enabled": false,
+    "skipTraversal": true
   }
 }
