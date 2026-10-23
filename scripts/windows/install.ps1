@@ -10,7 +10,7 @@
     2. converts MongoDB to a single-node replica set (keeps all data; never re-initiates an existing set);
     3. gets the code (uses the folder this script is in, or clones it), runs `npm ci` and `npm run build`;
     4. creates production settings with generated secrets (stored in C:\ProgramData\ChiliPOS, reused on every
-       re-run — never regenerated) without changing an existing server\.env;
+       re-run - never regenerated) without changing an existing server\.env;
     5. runs the backend (ChiliPOS) and the HTTPS front end (ChiliPOS-Web, Caddy) as Windows services that start
        with the PC;
     6. trusts the local HTTPS certificate on this PC, opens the firewall for the private network, and prints the
@@ -77,7 +77,7 @@ $stateFile = Join-Path $stateDir 'install.json'
 $apiService = 'ChiliPOS'
 $webService = 'ChiliPOS-Web'
 
-# ── 0. Administrator ───────────────────────────────────────────────────────────────────────────
+# -- 0. Administrator ---------------------------------------------------------------------------
 if (-not $DryRun -and -not $CheckOnly) {
   $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
   if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -98,7 +98,7 @@ if ($Uninstall) {
   return
 }
 
-# ── 1. Prerequisites: check every tool, install or upgrade only what is missing ────────────────
+# -- 1. Prerequisites: check every tool, install or upgrade only what is missing ----------------
 function Test-Present([scriptblock]$present) { try { [bool](& $present) } catch { $false } }
 function Find-Exe([string]$name, [string[]]$extra) {
   $c = Get-Command $name -ErrorAction SilentlyContinue
@@ -259,7 +259,7 @@ if ($CheckOnly) {
 }
 $caddy = Join-Path $binDir 'caddy.exe'
 
-# ── 2. Code ────────────────────────────────────────────────────────────────────────────────────
+# -- 2. Code ------------------------------------------------------------------------------------
 Step 'Getting the code'
 $root = $null
 if ($PSScriptRoot) {
@@ -275,7 +275,7 @@ if (-not $root) {
 if ($Update) { Run 'git pull' { git -C $root pull --ff-only } }
 Ok "Chili POS folder: $root"
 
-# ── 3. MongoDB replica set (transactions) ─────────────────────────────────────────────────────
+# -- 3. MongoDB replica set (transactions) -----------------------------------------------------
 Step 'Preparing MongoDB (single-node replica set, existing data is kept)'
 $rsScript = Join-Path $root 'scripts\windows\enable-mongodb-replica-set.ps1'
 Run 'enable replica set' { powershell -NoProfile -ExecutionPolicy Bypass -File $rsScript -Apply }
@@ -286,7 +286,7 @@ if (-not $DryRun) {
 }
 Ok "replica set: $setName"
 
-# ── 4. Settings ────────────────────────────────────────────────────────────────────────────────
+# -- 4. Settings --------------------------------------------------------------------------------
 Step 'Production settings'
 $state = @{}
 if (Test-Path $stateFile) { (Get-Content $stateFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $state[$_.Name] = $_.Value } }
@@ -330,7 +330,7 @@ $apiEnv = @(
 Ok "addresses: $($hosts -join ', ')"
 Ok "database:  $($mongoUri -replace '//[^@/]*@', '//****@')"
 
-# ── 5. Build ───────────────────────────────────────────────────────────────────────────────────
+# -- 5. Build -----------------------------------------------------------------------------------
 Step 'Installing packages and building (a few minutes the first time)'
 Push-Location $root
 try {
@@ -339,7 +339,7 @@ try {
 } finally { Pop-Location }
 Ok 'built server, web app and bridge'
 
-# ── 6. Services ────────────────────────────────────────────────────────────────────────────────
+# -- 6. Services --------------------------------------------------------------------------------
 $logDir = Join-Path $root 'logs'
 function Set-NssmService([string]$name, [string]$exe, [string]$arguments, [string]$dir, [string[]]$envPairs, [string]$dependsOn, [string]$display) {
   if ($DryRun) { Info "[dry run] service $name -> $exe $arguments"; return }
@@ -451,15 +451,15 @@ if (-not $DryRun) {
   if (-not $ok) { Warn "https://localhost did not answer yet - check $logDir\$webService.log" }
 }
 
-# ── 7. Done ────────────────────────────────────────────────────────────────────────────────────
+# -- 7. Done ------------------------------------------------------------------------------------
 $configured = $false
 if (-not $DryRun) { try { $configured = (Invoke-RestMethod 'http://127.0.0.1:4000/api/v1/business' -TimeoutSec 5).data.configured } catch { } }
 $netCategory = try { (Get-NetConnectionProfile -ErrorAction Stop | Select-Object -First 1).NetworkCategory } catch { 'Unknown' }
 
 Write-Host ''
-Write-Host '  ┌────────────────────────────────────────────────────────────────────┐' -ForegroundColor Green
-Write-Host '  │  Chili POS is installed and running                                │' -ForegroundColor Green
-Write-Host '  └────────────────────────────────────────────────────────────────────┘' -ForegroundColor Green
+Write-Host '  +--------------------------------------------------------------------+' -ForegroundColor Green
+Write-Host '  |  Chili POS is installed and running                                |' -ForegroundColor Green
+Write-Host '  +--------------------------------------------------------------------+' -ForegroundColor Green
 Write-Host ''
 Write-Host "  On this PC:          https://localhost" -ForegroundColor White
 foreach ($ip in $ips) { Write-Host "  Other tills/tablets: https://$ip" -ForegroundColor White }

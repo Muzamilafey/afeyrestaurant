@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Converts a local Windows MongoDB service from standalone to a single-node replica set so Chili POS can use
-  transactions. Existing databases are kept as they are — nothing is deleted, dropped or re-created.
+  transactions. Existing databases are kept as they are - nothing is deleted, dropped or re-created.
 
 .DESCRIPTION
   Dry run by default: it only inspects and prints what it would change. Add -Apply to make the changes.
@@ -12,7 +12,7 @@
     4. if access control (security.authorization: enabled) is on and no keyFile is set, creates a keyfile readable
        only by Administrators, SYSTEM and the service account, and adds security.keyFile (MongoDB requires one for
        replica sets with authorization);
-    5. restarts the service — and restores the backup and restarts again if it fails to come up;
+    5. restarts the service - and restores the backup and restarts again if it fails to come up;
     6. runs rs.initiate() ONLY if rs.status() reports NotYetInitialized (an initiated set is never re-initiated),
        waits for the member to become primary and prints rs.hello().
 
