@@ -289,6 +289,12 @@ Ok "Chili POS folder: $root"
 # -- 3. MongoDB replica set (transactions) -----------------------------------------------------
 Step 'Preparing MongoDB (single-node replica set, existing data is kept)'
 $rsScript = Join-Path $root 'scripts\windows\enable-mongodb-replica-set.ps1'
+# Our services depend on MongoDB; stop them while MongoDB may restart (they are started again in step 6).
+if (-not $DryRun) {
+  foreach ($svcName in @($webService, $apiService)) {
+    if (Get-Service $svcName -ErrorAction SilentlyContinue) { Stop-Service $svcName -Force -ErrorAction SilentlyContinue }
+  }
+}
 Run 'enable replica set' { powershell -NoProfile -ExecutionPolicy Bypass -File $rsScript -Apply }
 $setName = 'rs0'
 if (-not $DryRun) {
