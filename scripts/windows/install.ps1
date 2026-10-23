@@ -200,6 +200,11 @@ function Show-System {
   foreach ($port in 4000, 443, 80) {
     $owner = Get-PortOwner $port
     $ours = $owner -and ($owner -match '^(node|caddy)\b')
+    if ($owner -and $owner -match '^tailscaled\b' -and $port -eq 443) {
+      Write-Host ("    {0,-26} " -f "Port $port") -NoNewline
+      Write-Host "used by Tailscale on its own address (fine, Chili POS shares it)" -ForegroundColor Green
+      continue
+    }
     Write-Host ("    {0,-26} " -f "Port $port") -NoNewline
     if (-not $owner) { Write-Host 'free' -ForegroundColor Green }
     elseif ($ours) { Write-Host "in use by $owner (Chili POS or a dev server - stopped/replaced during install)" -ForegroundColor Yellow }
@@ -393,9 +398,27 @@ Ok "database:  $($mongoUri -replace '//[^@/]*@', '//****@')"
 
 # -- 5. Build -----------------------------------------------------------------------------------
 Step 'Installing packages and building (a few minutes the first time)'
+# A running Chili POS keeps files in node_modules open, which makes npm hang or fail on Windows: stop it while
+# building (tills show Offline for a few minutes and keep selling offline; the services start again below).
+if (-not $DryRun) {
+  foreach ($svc in $webService, $apiService) {
+    if ((Get-Service $svc -ErrorAction SilentlyContinue).Status -eq 'Running') { Info "stopping $svc while updating"; Quiet { & $nssm stop $svc confirm } | Out-Null }
+  }
+}
+$lockFile = Join-Path $root 'package-lock.json'
+$lockHash = if (Test-Path $lockFile) { (Get-FileHash $lockFile -Algorithm SHA256).Hash } else { '' }
+$haveModules = Test-Path (Join-Path $root 'node_modules\.package-lock.json')
 Push-Location $root
 try {
-  Run 'npm ci' { npm ci --no-audit --no-fund }
+  if ($haveModules -and $lockHash -and $state.lockHash -eq $lockHash) {
+    Ok 'packages unchanged since the last install - skipping npm ci'
+  } else {
+    Info 'npm ci: downloading and installing packages (2-10 minutes on Windows; antivirus scanning slows it down)'
+    Run 'npm ci' { npm ci --no-audit --no-fund --loglevel=error }
+    $state.lockHash = $lockHash
+    if (-not $DryRun) { ($state | ConvertTo-Json) | Set-Content -Encoding UTF8 $stateFile }
+  }
+  Info 'npm run build: building the server, web app and bridge (1-3 minutes)'
   Run 'npm run build' { npm run build }
 } finally { Pop-Location }
 Ok 'built server, web app and bridge'
@@ -422,7 +445,10 @@ function Set-NssmService([string]$name, [string]$exe, [string]$arguments, [strin
 }
 function Assert-PortFree([int]$port, [string]$owner) {
   if ($DryRun) { return }
-  $l = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+  # Tailscale (tailscale serve) listens on its own 100.x / fd7a: address only; that doesn't clash with Caddy.
+  $l = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+    Where-Object { -not ($_.LocalAddress -match '^100\.' -or $_.LocalAddress -match '^fd7a:') -and (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName -ne 'tailscaled' } |
+    Select-Object -First 1
   if (-not $l) { return }
   $p = Get-CimInstance Win32_Process -Filter "ProcessId=$($l.OwningProcess)" -ErrorAction SilentlyContinue
   if ($p -and $p.CommandLine -and $p.CommandLine -match [regex]::Escape($owner)) { return } # our own service
