@@ -4,7 +4,9 @@
 
 .DESCRIPTION
   Run once in an elevated PowerShell (Run as administrator). It:
-    1. installs what is missing with winget: Node.js LTS, Git, MongoDB Server + Shell + Database Tools, NSSM, Caddy;
+    1. checks this PC (Windows, PowerShell, winget, administrator, disk space, ports 4000/443/80) and every tool it
+       needs - Node.js 20+, npm, Git, MongoDB Server 5.0+, mongosh, MongoDB Database Tools, NSSM, Caddy - showing the
+       version found, then installs or upgrades only what is missing or too old (with winget) and checks again;
     2. converts MongoDB to a single-node replica set (keeps all data; never re-initiates an existing set);
     3. gets the code (uses the folder this script is in, or clones it), runs `npm ci` and `npm run build`;
     4. creates production settings with generated secrets (stored in C:\ProgramData\ChiliPOS, reused on every
@@ -20,6 +22,8 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Update     # pull the latest code, rebuild, restart
 .EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -CheckOnly  # only check Node.js, MongoDB and the other tools
+.EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -DryRun     # show what would be done
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Uninstall  # remove the services (keeps data)
@@ -33,6 +37,7 @@ param(
   [switch]$Update,
   [switch]$SkipPrerequisites,
   [switch]$DryRun,
+  [switch]$CheckOnly,
   [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -73,7 +78,7 @@ $apiService = 'ChiliPOS'
 $webService = 'ChiliPOS-Web'
 
 # ── 0. Administrator ───────────────────────────────────────────────────────────────────────────
-if (-not $DryRun) {
+if (-not $DryRun -and -not $CheckOnly) {
   $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
   if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Please run this in PowerShell opened with "Run as administrator".'
@@ -93,61 +98,164 @@ if ($Uninstall) {
   return
 }
 
-# ── 1. Prerequisites ───────────────────────────────────────────────────────────────────────────
+# ── 1. Prerequisites: check every tool, install or upgrade only what is missing ────────────────
 function Test-Present([scriptblock]$present) { try { [bool](& $present) } catch { $false } }
-function Install-Pkg([string]$id, [scriptblock]$present, [string]$label, [scriptblock]$fallback) {
-  if (Test-Present $present) { Ok "$label - already installed"; return }
-  Info "installing $label ..."
-  if ($DryRun) { Info "[dry run] winget install $id"; return }
-  winget install --id $id -e --silent --accept-package-agreements --accept-source-agreements
-  $code = $LASTEXITCODE
-  Refresh-Path
-  if ($code -ne 0 -and -not (Test-Present $present)) {
-    if ($fallback) { Warn "winget could not install $id (exit $code) - downloading it directly"; & $fallback }
-    else { throw "winget failed to install $id (exit $code). Install $label manually, then run this again." }
-  }
-  if (-not (Test-Present $present)) { throw "$label did not install correctly. Install it manually, then run this again." }
-  Ok "$label - installed"
-}
 function Find-Exe([string]$name, [string[]]$extra) {
   $c = Get-Command $name -ErrorAction SilentlyContinue
   if ($c) { return $c.Source }
-  foreach ($p in $extra) { $hit = Get-ChildItem $p -ErrorAction SilentlyContinue | Select-Object -First 1; if ($hit) { return $hit.FullName } }
+  foreach ($p in $extra) { $hit = Get-ChildItem $p -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1; if ($hit) { return $hit.FullName } }
+  return $null
+}
+# First "1.2" or "1.2.3" in a tool's version output.
+function Get-Ver([scriptblock]$cmd) {
+  try {
+    $out = (Quiet $cmd) -join ' '
+    if ($out -match '(\d+\.\d+(\.\d+)?)') { return $Matches[1] }
+  } catch { }
+  return $null
+}
+function Get-MongodExe {
+  try {
+    $svc = Get-CimInstance Win32_Service -ErrorAction Stop | Where-Object { $_.PathName -match 'mongod(\.exe)?["\s]' } | Select-Object -First 1
+    if ($svc) { $m = [regex]::Match($svc.PathName, '^"?([^"]*mongod(\.exe)?)'); if ($m.Success) { return $m.Groups[1].Value } }
+  } catch { }
   return $null
 }
 
-if (-not $SkipPrerequisites) {
-  Step 'Checking prerequisites'
-  if (-not $DryRun -and -not (Has 'winget')) { throw 'winget is missing. Install "App Installer" from the Microsoft Store, then run this again.' }
-  Install-Pkg 'OpenJS.NodeJS.LTS' { (Has 'node') -and ([int]((node -v) -replace '^v(\d+).*', '$1') -ge 20) } 'Node.js 20+'
-  Install-Pkg 'Git.Git' { Has 'git' } 'Git'
-  Install-Pkg 'MongoDB.Server' { [bool](Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object { $_.PathName -match 'mongod(\.exe)?["\s]' }) } 'MongoDB Server (service)'
-  Install-Pkg 'MongoDB.Shell' { (Has 'mongosh') -or [bool](Find-Exe 'mongosh' @("$env:ProgramFiles\mongosh\mongosh.exe", "$env:LOCALAPPDATA\Programs\mongosh\mongosh.exe")) } 'MongoDB Shell (mongosh)'
-  Install-Pkg 'MongoDB.DatabaseTools' { [bool](Find-Exe 'mongodump' @("$env:ProgramFiles\MongoDB\Tools\*\bin\mongodump.exe")) } 'MongoDB Database Tools (backups)'
-  Install-Pkg 'NSSM.NSSM' { (Test-Path $nssm) -or (Has 'nssm') } 'NSSM (Windows services)' {
-    $zip = Join-Path $env:TEMP 'nssm-2.24.zip'
-    Invoke-WebRequest 'https://nssm.cc/release/nssm-2.24.zip' -OutFile $zip -UseBasicParsing
-    $dest = Join-Path $env:TEMP 'nssm-2.24'
-    Expand-Archive $zip -DestinationPath $env:TEMP -Force
-    New-Item -ItemType Directory -Force $binDir | Out-Null
-    Copy-Item (Join-Path $dest 'win64\nssm.exe') $nssm -Force
+# Name, winget id, minimum version, how to find the installed version. Order = install order.
+$tools = @(
+  @{ Name = 'Node.js'; Id = 'OpenJS.NodeJS.LTS'; Min = '20.0'; Find = { $e = Find-Exe 'node' @("$env:ProgramFiles\nodejs\node.exe"); if ($e) { Get-Ver { & $e -v } } } }
+  @{ Name = 'npm'; Id = $null; Min = '9.0'; Find = { $e = Find-Exe 'npm.cmd' @("$env:ProgramFiles\nodejs\npm.cmd"); if (-not $e) { $e = Find-Exe 'npm' @() }; if ($e) { Get-Ver { & $e -v } } }; Note = 'comes with Node.js' }
+  @{ Name = 'Git'; Id = 'Git.Git'; Min = '2.0'; Find = { $e = Find-Exe 'git' @("$env:ProgramFiles\Git\cmd\git.exe"); if ($e) { Get-Ver { & $e --version } } } }
+  @{ Name = 'MongoDB Server'; Id = 'MongoDB.Server'; Min = '5.0'; NoUpgrade = $true; Find = { $e = Get-MongodExe; if ($e) { Get-Ver { & $e --version } } } }
+  @{ Name = 'MongoDB Shell (mongosh)'; Id = 'MongoDB.Shell'; Min = '1.0'; Find = { $e = Find-Exe 'mongosh' @("$env:ProgramFiles\mongosh\mongosh.exe", "$env:LOCALAPPDATA\Programs\mongosh\mongosh.exe"); if ($e) { Get-Ver { & $e --version } } } }
+  @{ Name = 'MongoDB Database Tools'; Id = 'MongoDB.DatabaseTools'; Min = '100.0'; Find = { $e = Find-Exe 'mongodump' @("$env:ProgramFiles\MongoDB\Tools\*\bin\mongodump.exe"); if ($e) { Get-Ver { & $e --version } } } }
+  @{ Name = 'NSSM'; Id = 'NSSM.NSSM'; Min = '2.24'; Find = { $e = Find-Exe 'nssm' @($nssm, "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\NSSM*\*\win64\nssm.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\NSSM*\*\*\win64\nssm.exe"); if ($e) { $v = (Get-Item $e).VersionInfo.ProductVersion; if ($v -match '(\d+\.\d+)') { $Matches[1] } else { '2.24' } } }
+     Fallback = {
+       $zip = Join-Path $env:TEMP 'nssm-2.24.zip'
+       Invoke-WebRequest 'https://nssm.cc/release/nssm-2.24.zip' -OutFile $zip -UseBasicParsing
+       Expand-Archive $zip -DestinationPath $env:TEMP -Force
+       New-Item -ItemType Directory -Force $binDir | Out-Null
+       Copy-Item (Join-Path $env:TEMP 'nssm-2.24\win64\nssm.exe') $nssm -Force
+     } }
+  @{ Name = 'Caddy'; Id = 'CaddyServer.Caddy'; Min = '2.6'; Find = { $e = Find-Exe 'caddy' @((Join-Path $binDir 'caddy.exe'), "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\CaddyServer*\*\caddy.exe"); if ($e) { Get-Ver { & $e version } } } }
+)
+
+function Test-Tools {
+  foreach ($t in $tools) {
+    $found = $null
+    try { $found = & $t.Find } catch { }
+    $status = if (-not $found) { 'MISSING' } elseif ([version]($found -replace '^(\d+\.\d+).*', '$1') -lt [version]$t.Min) { 'TOO OLD' } else { 'OK' }
+    [pscustomobject]@{ Tool = $t.Name; Needed = "$($t.Min)+"; Found = $(if ($found) { $found } else { '-' }); Status = $status; Def = $t }
   }
-  Install-Pkg 'CaddyServer.Caddy' { (Test-Path (Join-Path $binDir 'caddy.exe')) -or (Has 'caddy') } 'Caddy (HTTPS)'
+}
+function Show-Tools($rows, [string]$title) {
+  Write-Host ""
+  Write-Host ("    {0,-26} {1,-9} {2,-12} {3}" -f $title, 'Needed', 'Found', 'Status') -ForegroundColor Gray
+  Write-Host ("    {0,-26} {1,-9} {2,-12} {3}" -f ('-' * 26), ('-' * 9), ('-' * 12), ('-' * 18)) -ForegroundColor DarkGray
+  foreach ($r in $rows) {
+    $color = switch ($r.Status) { 'OK' { 'Green' } 'TOO OLD' { 'Yellow' } default { 'Red' } }
+    $action = switch ($r.Status) { 'OK' { 'OK' } 'TOO OLD' { if ($r.Def.NoUpgrade) { 'TOO OLD - upgrade manually' } elseif ($r.Def.Id) { 'TOO OLD - will upgrade' } else { 'TOO OLD' } } default { if ($r.Def.Id) { 'MISSING - will install' } else { "MISSING ($($r.Def.Note))" } } }
+    Write-Host ("    {0,-26} {1,-9} {2,-12} " -f $r.Tool, $r.Needed, $r.Found) -NoNewline
+    Write-Host $action -ForegroundColor $color
+  }
+}
+function Get-PortOwner([int]$port) {
+  try {
+    $l = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop | Select-Object -First 1
+    if ($l) { $p = Get-Process -Id $l.OwningProcess -ErrorAction SilentlyContinue; return "$($p.ProcessName) (PID $($l.OwningProcess))" }
+  } catch { }
+  return $null
+}
+function Show-System {
+  Write-Host ""
+  Write-Host ("    {0,-26} {1}" -f 'System', 'Result') -ForegroundColor Gray
+  Write-Host ("    {0,-26} {1}" -f ('-' * 26), ('-' * 40)) -ForegroundColor DarkGray
+  $os = try { (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).Caption } catch { [Environment]::OSVersion.VersionString }
+  Write-Host ("    {0,-26} {1}" -f 'Windows', $os)
+  Write-Host ("    {0,-26} {1}" -f 'PowerShell', $PSVersionTable.PSVersion)
+  $wg = if (Has 'winget') { Get-Ver { winget --version } } else { $null }
+  Write-Host ("    {0,-26} " -f 'winget (App Installer)') -NoNewline
+  if ($wg) { Write-Host $wg -ForegroundColor Green } else { Write-Host 'MISSING - install "App Installer" from the Microsoft Store' -ForegroundColor Red }
+  $isAdmin = try { (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch { $false }
+  Write-Host ("    {0,-26} " -f 'Administrator') -NoNewline
+  if ($isAdmin) { Write-Host 'yes' -ForegroundColor Green } else { Write-Host 'no - right-click PowerShell, "Run as administrator"' -ForegroundColor Red }
+  $drive = try { Get-PSDrive ($env:SystemDrive -replace ':', '') -ErrorAction Stop } catch { $null }
+  if ($drive) {
+    $gb = [math]::Round($drive.Free / 1GB, 1)
+    Write-Host ("    {0,-26} " -f "Free disk ($env:SystemDrive)") -NoNewline
+    if ($gb -ge 5) { Write-Host "$gb GB" -ForegroundColor Green } else { Write-Host "$gb GB - at least 5 GB recommended" -ForegroundColor Yellow }
+  }
+  foreach ($port in 4000, 443, 80) {
+    $owner = Get-PortOwner $port
+    $ours = $owner -and ($owner -match '^(node|caddy)\b')
+    Write-Host ("    {0,-26} " -f "Port $port") -NoNewline
+    if (-not $owner) { Write-Host 'free' -ForegroundColor Green }
+    elseif ($ours) { Write-Host "in use by $owner (Chili POS or a dev server - stopped/replaced during install)" -ForegroundColor Yellow }
+    else { Write-Host "in use by $owner - stop it before installing" -ForegroundColor Red }
+  }
+}
+
+$checkOnlyFailed = $false
+if (-not $SkipPrerequisites) {
+  Step 'Checking this PC'
+  Show-System
+  $rows = @(Test-Tools)
+  Show-Tools $rows 'Tool'
+  $todo = @($rows | Where-Object { $_.Status -ne 'OK' })
+
+  if ($CheckOnly) {
+    if ($todo.Count) { Write-Host "`n    $($todo.Count) tool(s) need installing or upgrading - run without -CheckOnly to do it." -ForegroundColor Yellow; $checkOnlyFailed = $true }
+    else { Write-Host "`n    Everything needed is installed." -ForegroundColor Green }
+  } elseif ($todo.Count) {
+    Step "Installing / upgrading $($todo.Count) tool(s)"
+    if (-not $DryRun -and -not (Has 'winget')) { throw 'winget is missing. Install "App Installer" from the Microsoft Store, then run this again.' }
+    foreach ($r in $todo) {
+      $t = $r.Def
+      if (-not $t.Id) { continue } # npm: comes with Node.js
+      if ($r.Status -eq 'TOO OLD' -and $t.NoUpgrade) {
+        throw "$($t.Name) $($r.Found) is older than $($t.Min). Upgrade MongoDB manually (major versions one at a time, see https://www.mongodb.com/docs/manual/release-notes/), then run this again. Your data has not been touched."
+      }
+      $verb = if ($r.Status -eq 'TOO OLD') { 'upgrade' } else { 'install' }
+      Info "$verb $($t.Name) ($($t.Id)) ..."
+      if ($DryRun) { Info "[dry run] winget $verb $($t.Id)"; continue }
+      winget $verb --id $t.Id -e --silent --accept-package-agreements --accept-source-agreements
+      $code = $LASTEXITCODE
+      Refresh-Path
+      if ($code -ne 0 -and $verb -eq 'upgrade') { winget install --id $t.Id -e --silent --accept-package-agreements --accept-source-agreements; $code = $LASTEXITCODE; Refresh-Path }
+      $now = try { & $t.Find } catch { $null }
+      if (-not $now -and $t.Fallback) { Warn "winget could not install $($t.Id) (exit $code) - downloading it directly"; & $t.Fallback; $now = try { & $t.Find } catch { $null } }
+      if (-not $now) { throw "$($t.Name) did not install (winget exit code $code). Install it manually, then run this again." }
+      Ok "$($t.Name) $now"
+    }
+    if (-not $DryRun) {
+      $after = @(Test-Tools)
+      Show-Tools $after 'Tool (after install)'
+      $still = @($after | Where-Object { $_.Status -ne 'OK' })
+      if ($still.Count) { throw "Still missing or too old: $(($still | ForEach-Object { $_.Tool }) -join ', '). Install them manually (or restart PowerShell so PATH updates), then run this again." }
+    }
+  } else {
+    Ok 'all tools are installed'
+  }
 
   # Services run as SYSTEM, so keep their programs in a machine-wide folder (winget may install portable tools per user).
-  if (-not $DryRun) {
+  if (-not $DryRun -and -not $CheckOnly) {
     New-Item -ItemType Directory -Force $binDir | Out-Null
     foreach ($tool in @('nssm', 'caddy')) {
       $target = Join-Path $binDir "$tool.exe"
       if (-not (Test-Path $target)) {
-        $src = Find-Exe $tool @("$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*\*\$tool.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*\*\*\$tool.exe")
+        $src = Find-Exe $tool @("$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*\*\$tool.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*\*\*\$tool.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*\*\win64\$tool.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*\*\*\win64\$tool.exe")
         if (-not $src) { throw "$tool.exe not found after installing it." }
         [IO.File]::Copy($src, $target, $true) # follows winget's symlink to the real file
       }
     }
-    $mongoshExe = Find-Exe 'mongosh' @("$env:ProgramFiles\mongosh\mongosh.exe", "$env:LOCALAPPDATA\Programs\mongosh\mongosh.exe")
-    if ($mongoshExe) { $env:Path = (Split-Path $mongoshExe) + ';' + $env:Path }
+    foreach ($dir in @((Split-Path (Find-Exe 'mongosh' @("$env:ProgramFiles\mongosh\mongosh.exe", "$env:LOCALAPPDATA\Programs\mongosh\mongosh.exe")) -ErrorAction SilentlyContinue), (Split-Path (Find-Exe 'node' @("$env:ProgramFiles\nodejs\node.exe")) -ErrorAction SilentlyContinue), (Split-Path (Find-Exe 'git' @("$env:ProgramFiles\Git\cmd\git.exe")) -ErrorAction SilentlyContinue))) {
+      if ($dir -and ($env:Path -split ';') -notcontains $dir) { $env:Path = "$dir;$env:Path" }
+    }
   }
+}
+if ($CheckOnly) {
+  if ($checkOnlyFailed) { exit 1 } else { exit 0 }
 }
 $caddy = Join-Path $binDir 'caddy.exe'
 
