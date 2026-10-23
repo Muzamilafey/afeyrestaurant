@@ -21,6 +21,21 @@ with any number of branches, terminals and staff.
 - **Offline**: menu cached on the device; cash sales recorded offline sync idempotently when back online.
 - **Light and dark themes**, installable PWA, responsive from phone to desktop.
 
+## One-command install on Windows (local use)
+
+In the project folder, open **PowerShell as Administrator** and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1
+```
+
+(or double-click `install-windows.cmd`). It installs Node.js, Git, MongoDB, NSSM and Caddy if missing, makes MongoDB a
+replica set (keeping existing data), builds the app, runs the backend and the HTTPS web front end as Windows services
+that start with the PC, trusts the certificate on this PC, opens the firewall for the local network, and prints the
+links — `https://localhost` on that PC and `https://<PC IP>` for other tills — plus the first-run setup token.
+Run it again with `-Update` to pull the latest code and restart; `-Uninstall` removes the services (data is kept).
+The manual steps it automates are described in [docs/MULTI-TILL.md](docs/MULTI-TILL.md).
+
 ## Repository layout
 
 | Path | What |

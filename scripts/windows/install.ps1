@@ -1,0 +1,372 @@
+<#
+.SYNOPSIS
+  One-command install of Chili POS on a Windows PC for local (restaurant network) use.
+
+.DESCRIPTION
+  Run once in an elevated PowerShell (Run as administrator). It:
+    1. installs what is missing with winget: Node.js LTS, Git, MongoDB Server + Shell + Database Tools, NSSM, Caddy;
+    2. converts MongoDB to a single-node replica set (keeps all data; never re-initiates an existing set);
+    3. gets the code (uses the folder this script is in, or clones it), runs `npm ci` and `npm run build`;
+    4. creates production settings with generated secrets (stored in C:\ProgramData\ChiliPOS, reused on every
+       re-run — never regenerated) without changing an existing server\.env;
+    5. runs the backend (ChiliPOS) and the HTTPS front end (ChiliPOS-Web, Caddy) as Windows services that start
+       with the PC;
+    6. trusts the local HTTPS certificate on this PC, opens the firewall for the private network, and prints the
+       links to use.
+  Safe to run again: it updates the build and restarts the services. Add -Update to `git pull` first.
+
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Update     # pull the latest code, rebuild, restart
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -DryRun     # show what would be done
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Uninstall  # remove the services (keeps data)
+#>
+[CmdletBinding()]
+param(
+  [string]$InstallDir = 'C:\chili-pos',
+  [string]$RepoUrl = 'https://github.com/muzamilafey/afeyrestaurant.git',
+  [string]$Branch = 'main',
+  [string]$Database = 'chili_pos',
+  [switch]$Update,
+  [switch]$SkipPrerequisites,
+  [switch]$DryRun,
+  [switch]$Uninstall
+)
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+# Windows PowerShell 5.1 on older .NET does not enable TLS 1.2 by default (needed for https://localhost checks).
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+
+function Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
+function Ok($m) { Write-Host "    $m" -ForegroundColor Green }
+function Info($m) { Write-Host "    $m" }
+function Warn($m) { Write-Host "    ! $m" -ForegroundColor Yellow }
+function Has($cmd) { [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
+function Refresh-Path {
+  $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+}
+function New-Secret([int]$bytes) {
+  $b = New-Object byte[] $bytes
+  [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+  [Convert]::ToBase64String($b)
+}
+# Run a native tool whose messages on stderr must not abort the script (nssm, mongosh, caddy); returns its output.
+function Quiet([scriptblock]$block) {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & $block 2>&1 | ForEach-Object { "$_" } } finally { $ErrorActionPreference = $old }
+}
+function Run([string]$what, [scriptblock]$block) {
+  if ($DryRun) { Info "[dry run] $what"; return }
+  & $block
+  if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)" }
+}
+
+$programData = if ($env:ProgramData) { $env:ProgramData } else { [IO.Path]::GetTempPath() } # dry run on non-Windows
+$stateDir = Join-Path $programData 'ChiliPOS'
+$binDir = Join-Path $stateDir 'bin'
+$stateFile = Join-Path $stateDir 'install.json'
+$apiService = 'ChiliPOS'
+$webService = 'ChiliPOS-Web'
+
+# ── 0. Administrator ───────────────────────────────────────────────────────────────────────────
+if (-not $DryRun) {
+  $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+  if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw 'Please run this in PowerShell opened with "Run as administrator".'
+  }
+}
+
+$nssm = Join-Path $binDir 'nssm.exe'
+
+if ($Uninstall) {
+  Step 'Removing Chili POS services (the database, settings and code are kept)'
+  foreach ($s in @($webService, $apiService)) {
+    if (Get-Service $s -ErrorAction SilentlyContinue) {
+      if (-not $DryRun) { Quiet { & $nssm stop $s confirm } | Out-Null; Quiet { & $nssm remove $s confirm } | Out-Null }
+      Ok "removed $s"
+    }
+  }
+  return
+}
+
+# ── 1. Prerequisites ───────────────────────────────────────────────────────────────────────────
+function Test-Present([scriptblock]$present) { try { [bool](& $present) } catch { $false } }
+function Install-Pkg([string]$id, [scriptblock]$present, [string]$label, [scriptblock]$fallback) {
+  if (Test-Present $present) { Ok "$label - already installed"; return }
+  Info "installing $label ..."
+  if ($DryRun) { Info "[dry run] winget install $id"; return }
+  winget install --id $id -e --silent --accept-package-agreements --accept-source-agreements
+  $code = $LASTEXITCODE
+  Refresh-Path
+  if ($code -ne 0 -and -not (Test-Present $present)) {
+    if ($fallback) { Warn "winget could not install $id (exit $code) - downloading it directly"; & $fallback }
+    else { throw "winget failed to install $id (exit $code). Install $label manually, then run this again." }
+  }
+  if (-not (Test-Present $present)) { throw "$label did not install correctly. Install it manually, then run this again." }
+  Ok "$label - installed"
+}
+function Find-Exe([string]$name, [string[]]$extra) {
+  $c = Get-Command $name -ErrorAction SilentlyContinue
+  if ($c) { return $c.Source }
+  foreach ($p in $extra) { $hit = Get-ChildItem $p -ErrorAction SilentlyContinue | Select-Object -First 1; if ($hit) { return $hit.FullName } }
+  return $null
+}
+
+if (-not $SkipPrerequisites) {
+  Step 'Checking prerequisites'
+  if (-not $DryRun -and -not (Has 'winget')) { throw 'winget is missing. Install "App Installer" from the Microsoft Store, then run this again.' }
+  Install-Pkg 'OpenJS.NodeJS.LTS' { (Has 'node') -and ([int]((node -v) -replace '^v(\d+).*', '$1') -ge 20) } 'Node.js 20+'
+  Install-Pkg 'Git.Git' { Has 'git' } 'Git'
+  Install-Pkg 'MongoDB.Server' { [bool](Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object { $_.PathName -match 'mongod(\.exe)?["\s]' }) } 'MongoDB Server (service)'
+  Install-Pkg 'MongoDB.Shell' { (Has 'mongosh') -or [bool](Find-Exe 'mongosh' @("$env:ProgramFiles\mongosh\mongosh.exe", "$env:LOCALAPPDATA\Programs\mongosh\mongosh.exe")) } 'MongoDB Shell (mongosh)'
+  Install-Pkg 'MongoDB.DatabaseTools' { [bool](Find-Exe 'mongodump' @("$env:ProgramFiles\MongoDB\Tools\*\bin\mongodump.exe")) } 'MongoDB Database Tools (backups)'
+  Install-Pkg 'NSSM.NSSM' { (Test-Path $nssm) -or (Has 'nssm') } 'NSSM (Windows services)' {
+    $zip = Join-Path $env:TEMP 'nssm-2.24.zip'
+    Invoke-WebRequest 'https://nssm.cc/release/nssm-2.24.zip' -OutFile $zip -UseBasicParsing
+    $dest = Join-Path $env:TEMP 'nssm-2.24'
+    Expand-Archive $zip -DestinationPath $env:TEMP -Force
+    New-Item -ItemType Directory -Force $binDir | Out-Null
+    Copy-Item (Join-Path $dest 'win64\nssm.exe') $nssm -Force
+  }
+  Install-Pkg 'CaddyServer.Caddy' { (Test-Path (Join-Path $binDir 'caddy.exe')) -or (Has 'caddy') } 'Caddy (HTTPS)'
+
+  # Services run as SYSTEM, so keep their programs in a machine-wide folder (winget may install portable tools per user).
+  if (-not $DryRun) {
+    New-Item -ItemType Directory -Force $binDir | Out-Null
+    foreach ($tool in @('nssm', 'caddy')) {
+      $target = Join-Path $binDir "$tool.exe"
+      if (-not (Test-Path $target)) {
+        $src = Find-Exe $tool @("$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*\*\$tool.exe", "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*\*\*\$tool.exe")
+        if (-not $src) { throw "$tool.exe not found after installing it." }
+        [IO.File]::Copy($src, $target, $true) # follows winget's symlink to the real file
+      }
+    }
+    $mongoshExe = Find-Exe 'mongosh' @("$env:ProgramFiles\mongosh\mongosh.exe", "$env:LOCALAPPDATA\Programs\mongosh\mongosh.exe")
+    if ($mongoshExe) { $env:Path = (Split-Path $mongoshExe) + ';' + $env:Path }
+  }
+}
+$caddy = Join-Path $binDir 'caddy.exe'
+
+# ── 2. Code ────────────────────────────────────────────────────────────────────────────────────
+Step 'Getting the code'
+$root = $null
+if ($PSScriptRoot) {
+  $candidate = Resolve-Path (Join-Path $PSScriptRoot '..\..') -ErrorAction SilentlyContinue
+  if ($candidate -and (Test-Path (Join-Path $candidate 'server\package.json'))) { $root = $candidate.Path }
+}
+if (-not $root) {
+  $root = $InstallDir
+  if (-not (Test-Path (Join-Path $root 'server\package.json'))) {
+    Run "git clone $RepoUrl" { git clone --branch $Branch $RepoUrl $root }
+  }
+}
+if ($Update) { Run 'git pull' { git -C $root pull --ff-only } }
+Ok "Chili POS folder: $root"
+
+# ── 3. MongoDB replica set (transactions) ─────────────────────────────────────────────────────
+Step 'Preparing MongoDB (single-node replica set, existing data is kept)'
+$rsScript = Join-Path $root 'scripts\windows\enable-mongodb-replica-set.ps1'
+Run 'enable replica set' { powershell -NoProfile -ExecutionPolicy Bypass -File $rsScript -Apply }
+$setName = 'rs0'
+if (-not $DryRun) {
+  $found = Quiet { mongosh 'mongodb://127.0.0.1:27017/?directConnection=true' --quiet --eval 'db.hello().setName' } | Where-Object { $_ -match '^\w+$' } | Select-Object -Last 1
+  if ($found) { $setName = "$found".Trim() }
+}
+Ok "replica set: $setName"
+
+# ── 4. Settings ────────────────────────────────────────────────────────────────────────────────
+Step 'Production settings'
+$state = @{}
+if (Test-Path $stateFile) { (Get-Content $stateFile -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $state[$_.Name] = $_.Value } }
+# Reuse secrets from an existing server\.env so encrypted integration settings stay readable.
+$dotenv = @{}
+$envFile = Join-Path $root 'server\.env'
+if (Test-Path $envFile) {
+  foreach ($line in Get-Content $envFile) { if ($line -match '^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$') { $dotenv[$Matches[1]] = $Matches[2].Trim('"').Trim("'") } }
+}
+if (-not $state.jwt) { $state.jwt = if ($dotenv.JWT_ACCESS_SECRET -and -not $dotenv.JWT_ACCESS_SECRET.StartsWith('dev-')) { $dotenv.JWT_ACCESS_SECRET } else { New-Secret 48 } }
+if (-not $state.key) { $state.key = if ($dotenv.SECRETS_ENCRYPTION_KEY) { $dotenv.SECRETS_ENCRYPTION_KEY } else { New-Secret 32 } }
+if (-not $state.setupToken) { $state.setupToken = (New-Secret 12) -replace '[^A-Za-z0-9]', '' }
+if (-not $DryRun) {
+  New-Item -ItemType Directory -Force $stateDir | Out-Null
+  ($state | ConvertTo-Json) | Set-Content -Encoding UTF8 $stateFile
+  & icacls $stateFile /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F' | Out-Null
+}
+
+# Addresses this PC can be reached at.
+$ips = @()
+try {
+  $ips = @(Get-NetIPConfiguration -ErrorAction Stop | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } | ForEach-Object { $_.IPv4Address.IPAddress })
+} catch {
+  $ips = @([Net.Dns]::GetHostAddresses([Net.Dns]::GetHostName()) | Where-Object { $_.AddressFamily -eq 'InterNetwork' -and -not $_.ToString().StartsWith('127.') } | ForEach-Object { $_.ToString() })
+}
+$ips = @($ips | Select-Object -Unique)
+$hostName = ([Net.Dns]::GetHostName()).ToLower()
+$hosts = @('localhost') + $ips + @($hostName) | Select-Object -Unique
+$origins = ($hosts | ForEach-Object { "https://$_" }) -join ','
+$primary = if ($ips.Count) { $ips[0] } else { 'localhost' }
+$mongoUri = if ($dotenv.MONGODB_URI -and $dotenv.MONGODB_URI -match 'replicaSet=') { $dotenv.MONGODB_URI } else { "mongodb://127.0.0.1:27017/$Database`?replicaSet=$setName" }
+$extraOrigins = if ($dotenv.CORS_ORIGINS) { ($dotenv.CORS_ORIGINS -split ',' | Where-Object { $_ -like 'https://*' }) } else { @() }
+$allOrigins = (@($origins -split ',') + $extraOrigins | Select-Object -Unique) -join ','
+
+# Passed to the service; they take precedence over server\.env (which is left untouched).
+$apiEnv = @(
+  'NODE_ENV=production', 'PORT=4000', "MONGODB_URI=$mongoUri", "CORS_ORIGINS=$allOrigins", "PUBLIC_API_URL=https://$primary",
+  'COOKIE_SECURE=true', 'TRUST_PROXY=loopback', "JWT_ACCESS_SECRET=$($state.jwt)", "SECRETS_ENCRYPTION_KEY=$($state.key)",
+  "SETUP_TOKEN=$($state.setupToken)", 'RUN_WORKER_IN_PROCESS=true'
+)
+Ok "addresses: $($hosts -join ', ')"
+Ok "database:  $($mongoUri -replace '//[^@/]*@', '//****@')"
+
+# ── 5. Build ───────────────────────────────────────────────────────────────────────────────────
+Step 'Installing packages and building (a few minutes the first time)'
+Push-Location $root
+try {
+  Run 'npm ci' { npm ci --no-audit --no-fund }
+  Run 'npm run build' { npm run build }
+} finally { Pop-Location }
+Ok 'built server, web app and bridge'
+
+# ── 6. Services ────────────────────────────────────────────────────────────────────────────────
+$logDir = Join-Path $root 'logs'
+function Set-NssmService([string]$name, [string]$exe, [string]$arguments, [string]$dir, [string[]]$envPairs, [string]$dependsOn, [string]$display) {
+  if ($DryRun) { Info "[dry run] service $name -> $exe $arguments"; return }
+  New-Item -ItemType Directory -Force $logDir | Out-Null
+  if (Get-Service $name -ErrorAction SilentlyContinue) { Quiet { & $nssm stop $name confirm } | Out-Null } else { Quiet { & $nssm install $name $exe } | Out-Null }
+  Quiet { & $nssm set $name Application $exe } | Out-Null
+  Quiet { & $nssm set $name AppParameters $arguments } | Out-Null
+  Quiet { & $nssm set $name AppDirectory $dir } | Out-Null
+  Quiet { & $nssm set $name DisplayName $display } | Out-Null
+  Quiet { & $nssm set $name AppStdout (Join-Path $logDir "$name.log") } | Out-Null
+  Quiet { & $nssm set $name AppStderr (Join-Path $logDir "$name.log") } | Out-Null
+  Quiet { & $nssm set $name AppRotateFiles 1 } | Out-Null
+  Quiet { & $nssm set $name AppRotateBytes 10485760 } | Out-Null
+  Quiet { & $nssm set $name AppExit Default Restart } | Out-Null
+  Quiet { & $nssm set $name Start SERVICE_AUTO_START } | Out-Null
+  if ($envPairs) { Quiet { & $nssm set $name AppEnvironmentExtra @envPairs } | Out-Null }
+  if ($dependsOn) { Quiet { & $nssm set $name DependOnService $dependsOn } | Out-Null }
+  Quiet { & $nssm start $name } | Out-Null
+}
+function Assert-PortFree([int]$port, [string]$owner) {
+  if ($DryRun) { return }
+  $l = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $l) { return }
+  $p = Get-CimInstance Win32_Process -Filter "ProcessId=$($l.OwningProcess)" -ErrorAction SilentlyContinue
+  if ($p -and $p.CommandLine -and $p.CommandLine -match [regex]::Escape($owner)) { return } # our own service
+  throw "Port $port is already used by $($p.Name) (PID $($l.OwningProcess)). Stop it (for example a running 'npm run dev', IIS or Skype) and run this again."
+}
+
+Step 'Starting the backend service'
+$mongoSvc = if ($DryRun) { 'MongoDB' } else { (Get-CimInstance Win32_Service | Where-Object { $_.PathName -match 'mongod(\.exe)?["\s]' } | Select-Object -First 1).Name }
+if (-not $DryRun -and (Get-Service $apiService -ErrorAction SilentlyContinue)) { Quiet { & $nssm stop $apiService confirm } | Out-Null }
+Assert-PortFree 4000 'server\dist\index.js'
+$node = (Get-Command node -ErrorAction SilentlyContinue).Source
+Set-NssmService $apiService $node "`"$(Join-Path $root 'server\dist\index.js')`"" (Join-Path $root 'server') $apiEnv $mongoSvc 'Chili POS (backend)'
+if (-not $DryRun) {
+  $ready = $false
+  for ($i = 0; $i -lt 40 -and -not $ready; $i++) {
+    Start-Sleep -Seconds 2
+    try { $r = Invoke-RestMethod 'http://127.0.0.1:4000/api/v1/ready' -TimeoutSec 3; $ready = $r.status -eq 'ready' } catch { }
+  }
+  if (-not $ready) { throw "The backend did not become ready. See $logDir\$apiService.log" }
+}
+Ok 'backend running on http://127.0.0.1:4000 (only reachable from this PC)'
+
+Step 'Starting the HTTPS front end'
+$siteList = ($hosts | ForEach-Object { "https://$_" }) -join ', '
+$httpList = ($hosts | ForEach-Object { "http://$_" }) -join ', '
+$webRoot = (Join-Path $root 'web\dist') -replace '\\', '/'
+$caddyfile = @"
+# Generated by scripts\windows\install.ps1 - re-run the installer instead of editing this file.
+{
+	local_certs
+}
+
+$siteList {
+	tls internal
+	encode gzip
+	handle /api/* {
+		reverse_proxy 127.0.0.1:4000
+	}
+	handle /uploads/* {
+		reverse_proxy 127.0.0.1:4000
+	}
+	handle {
+		root * "$webRoot"
+		@app path /index.html /sw.js /registerSW.js
+		header @app Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+$httpList {
+	redir https://{host}{uri} permanent
+}
+"@
+$caddyDir = Join-Path $stateDir 'caddy'
+$caddyFilePath = Join-Path $caddyDir 'Caddyfile'
+if ($DryRun) { Info '[dry run] Caddyfile:'; $caddyfile -split "`n" | ForEach-Object { Info "  $_" } }
+else {
+  New-Item -ItemType Directory -Force $caddyDir | Out-Null
+  [IO.File]::WriteAllText($caddyFilePath, $caddyfile, (New-Object Text.UTF8Encoding $false))
+  $out = Quiet { & $caddy validate --config $caddyFilePath --adapter caddyfile }
+  if ($LASTEXITCODE -ne 0) { $out | ForEach-Object { Warn $_ }; throw 'The generated Caddyfile is not valid.' }
+  if (Get-Service $webService -ErrorAction SilentlyContinue) { Quiet { & $nssm stop $webService confirm } | Out-Null }
+  Assert-PortFree 443 'caddy'
+  Assert-PortFree 80 'caddy'
+}
+# XDG_DATA_HOME keeps Caddy's certificates in C:\ProgramData\ChiliPOS\caddy (not the SYSTEM profile).
+Set-NssmService $webService $caddy "run --config `"$caddyFilePath`" --adapter caddyfile" $caddyDir @("XDG_DATA_HOME=$caddyDir\data") $apiService 'Chili POS (web, HTTPS)'
+
+if (-not $DryRun) {
+  $rootCrt = Join-Path $caddyDir 'data\caddy\pki\authorities\local\root.crt'
+  for ($i = 0; $i -lt 30 -and -not (Test-Path $rootCrt); $i++) { Start-Sleep -Seconds 1 }
+  if (-not (Test-Path $rootCrt)) { throw "Caddy did not create its certificate. See $logDir\$webService.log" }
+  Import-Certificate -FilePath $rootCrt -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+  Copy-Item $rootCrt (Join-Path $root 'chili-root.crt') -Force
+  Ok 'this PC trusts the Chili POS certificate; chili-root.crt is ready for the other tills'
+
+  if (-not (Get-NetFirewallRule -DisplayName 'Chili POS (HTTPS)' -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -DisplayName 'Chili POS (HTTPS)' -Direction Inbound -Protocol TCP -LocalPort 80, 443 -Action Allow -Profile Private, Domain | Out-Null
+  }
+  Ok 'firewall: ports 80/443 open on private networks (backend port 4000 stays closed)'
+
+  $ok = $false
+  for ($i = 0; $i -lt 20 -and -not $ok; $i++) {
+    try { $r = Invoke-RestMethod 'https://localhost/api/v1/ready' -TimeoutSec 5; $ok = $r.status -eq 'ready' } catch { Start-Sleep -Seconds 2 }
+  }
+  if (-not $ok) { Warn "https://localhost did not answer yet - check $logDir\$webService.log" }
+}
+
+# ── 7. Done ────────────────────────────────────────────────────────────────────────────────────
+$configured = $false
+if (-not $DryRun) { try { $configured = (Invoke-RestMethod 'http://127.0.0.1:4000/api/v1/business' -TimeoutSec 5).data.configured } catch { } }
+$netCategory = try { (Get-NetConnectionProfile -ErrorAction Stop | Select-Object -First 1).NetworkCategory } catch { 'Unknown' }
+
+Write-Host ''
+Write-Host '  ┌────────────────────────────────────────────────────────────────────┐' -ForegroundColor Green
+Write-Host '  │  Chili POS is installed and running                                │' -ForegroundColor Green
+Write-Host '  └────────────────────────────────────────────────────────────────────┘' -ForegroundColor Green
+Write-Host ''
+Write-Host "  On this PC:          https://localhost" -ForegroundColor White
+foreach ($ip in $ips) { Write-Host "  Other tills/tablets: https://$ip" -ForegroundColor White }
+Write-Host ''
+if (-not $configured) {
+  Write-Host "  First-run setup token: $($state.setupToken)" -ForegroundColor Yellow
+  Write-Host '  (the setup screen asks for it once, to create the business and the owner account)'
+  Write-Host ''
+}
+Write-Host '  Other tills: copy chili-root.crt from this folder to each till and install it as a'
+Write-Host '  Trusted Root certificate (docs\MULTI-TILL.md, step 7), then open the link above.'
+if ("$netCategory" -eq 'Public') { Write-Host "  ! This network is set to Public - tills cannot connect until it is Private:" -ForegroundColor Yellow; Write-Host '    Set-NetConnectionProfile -NetworkCategory Private' }
+Write-Host ''
+Write-Host "  Services: $apiService (backend), $webService (web) - start automatically with Windows."
+Write-Host "  Logs:     $logDir"
+Write-Host '  Update:   run this installer again with -Update'
+Write-Host ''
+if (-not $DryRun) { Start-Process 'https://localhost' }

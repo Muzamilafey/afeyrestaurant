@@ -14,6 +14,11 @@ till the moment they change (tills update each other in real time).
           (Wi-Fi / LAN)          ▲ receipt printers 9100 · kitchen/bar printers · ZKTeco 4370
 ```
 
+> **Shortcut:** steps 2–5 and the certificate/firewall parts are automated by one command on the server PC
+> (PowerShell as Administrator, in the project folder):
+> `powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1` — it prints the links and the setup
+> token when done. Then continue with step 7 on the other tills.
+
 Pick where the server runs:
 
 | | **A. Server PC in the restaurant** (this guide) | **B. Cloud server** ([DEPLOYMENT.md](DEPLOYMENT.md)) |
