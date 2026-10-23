@@ -36,7 +36,9 @@ checks again, makes MongoDB a
 replica set (keeping existing data), builds the app, runs the backend and the HTTPS web front end as Windows services
 that start with the PC, trusts the certificate on this PC, opens the firewall for the local network, and prints the
 links — `https://localhost` on that PC and `https://<PC IP>` for other tills — plus the first-run setup token.
-Add `-CheckOnly` to only see that report (changes nothing). Run it again with `-Update` to pull the latest code and
+Add `-Tailscale` so phones and tablets can open it on **any** Wi-Fi or mobile data without installing a certificate
+(they install the free Tailscale app and sign in with the same account) — use this when phones can't reach the PC
+on the local Wi-Fi. Add `-CheckOnly` to only see that report (changes nothing). Run it again with `-Update` to pull the latest code and
 restart; `-Uninstall` removes the services (data is kept).
 The manual steps it automates are described in [docs/MULTI-TILL.md](docs/MULTI-TILL.md).
 

@@ -22,6 +22,8 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Update     # pull the latest code, rebuild, restart
 .EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Tailscale  # also reach it from phones on any network
+.EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -CheckOnly  # only check Node.js, MongoDB and the other tools
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -DryRun     # show what would be done
@@ -38,6 +40,7 @@ param(
   [switch]$SkipPrerequisites,
   [switch]$DryRun,
   [switch]$CheckOnly,
+  [switch]$Tailscale,
   [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -76,6 +79,9 @@ $binDir = Join-Path $stateDir 'bin'
 $stateFile = Join-Path $stateDir 'install.json'
 $apiService = 'ChiliPOS'
 $webService = 'ChiliPOS-Web'
+# -Tailscale is remembered, so later runs (e.g. -Update) keep publishing to Tailscale.
+if (-not $Tailscale -and (Test-Path $stateFile)) { try { if ((Get-Content $stateFile -Raw | ConvertFrom-Json).tailscale) { $Tailscale = $true } } catch { } }
+$tsPort = 8088
 
 # -- 0. Administrator ---------------------------------------------------------------------------
 if (-not $DryRun -and -not $CheckOnly) {
@@ -89,6 +95,8 @@ $nssm = Join-Path $binDir 'nssm.exe'
 
 if ($Uninstall) {
   Step 'Removing Chili POS services (the database, settings and code are kept)'
+  $tsExe = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+  if (-not $DryRun -and (Test-Path $tsExe)) { Quiet { & $tsExe serve reset } | Out-Null; Ok 'stopped publishing Chili POS on Tailscale' }
   foreach ($s in @($webService, $apiService)) {
     if (Get-Service $s -ErrorAction SilentlyContinue) {
       if (-not $DryRun) { Quiet { & $nssm stop $s confirm } | Out-Null; Quiet { & $nssm remove $s confirm } | Out-Null }
@@ -140,6 +148,9 @@ $tools = @(
      } }
   @{ Name = 'Caddy'; Id = 'CaddyServer.Caddy'; Min = '2.6'; Find = { $e = Find-Exe 'caddy' @((Join-Path $binDir 'caddy.exe'), "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\CaddyServer*\*\caddy.exe"); if ($e) { Get-Ver { & $e version } } } }
 )
+if ($Tailscale) {
+  $tools += @{ Name = 'Tailscale'; Id = 'Tailscale.Tailscale'; Min = '1.60'; Find = { $e = Find-Exe 'tailscale' @("$env:ProgramFiles\Tailscale\tailscale.exe"); if ($e) { Get-Ver { & $e version } } } }
+}
 
 function Test-Tools {
   foreach ($t in $tools) {
@@ -299,10 +310,53 @@ if (Test-Path $envFile) {
 if (-not $state.jwt) { $state.jwt = if ($dotenv.JWT_ACCESS_SECRET -and -not $dotenv.JWT_ACCESS_SECRET.StartsWith('dev-')) { $dotenv.JWT_ACCESS_SECRET } else { New-Secret 48 } }
 if (-not $state.key) { $state.key = if ($dotenv.SECRETS_ENCRYPTION_KEY) { $dotenv.SECRETS_ENCRYPTION_KEY } else { New-Secret 32 } }
 if (-not $state.setupToken) { $state.setupToken = (New-Secret 12) -replace '[^A-Za-z0-9]', '' }
+if ($Tailscale) { $state.tailscale = $true }
 if (-not $DryRun) {
   New-Item -ItemType Directory -Force $stateDir | Out-Null
   ($state | ConvertTo-Json) | Set-Content -Encoding UTF8 $stateFile
   & icacls $stateFile /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F' | Out-Null
+}
+
+# Tailscale: a private network between this PC and the staff phones that works across any Wi-Fi or mobile data,
+# with a real HTTPS certificate (no certificate to install on phones).
+$tsExe = $null
+$tsName = $null
+function Get-TsStatus { try { ((Quiet { & $tsExe status --json }) | Where-Object { $_ -notmatch '^\s*$' }) -join "`n" | ConvertFrom-Json } catch { $null } }
+# Runs a tailscale command that may wait for the user in a browser; opens the first login/enable link it prints.
+function Invoke-TsInteractive([string[]]$tsArgs, [scriptblock]$done, [int]$seconds = 300) {
+  $out = Join-Path $env:TEMP ("chili-ts-{0}.txt" -f [guid]::NewGuid())
+  $p = Start-Process $tsExe -ArgumentList $tsArgs -RedirectStandardOutput $out -RedirectStandardError "$out.err" -PassThru -WindowStyle Hidden
+  $opened = $false
+  for ($i = 0; $i -lt $seconds; $i++) {
+    Start-Sleep -Seconds 1
+    $text = ((Get-Content $out, "$out.err" -ErrorAction SilentlyContinue) -join "`n")
+    if (-not $opened -and $text -match '(https://login\.tailscale\.com/\S+)') {
+      $opened = $true
+      Info "Opening $($Matches[1]) - sign in / approve there (the same account you will use on the phones)."
+      Start-Process $Matches[1]
+    }
+    if ($p.HasExited -or (& $done)) { break }
+  }
+  if (-not $p.HasExited) { try { $p.Kill() } catch { } }
+  Remove-Item $out, "$out.err" -ErrorAction SilentlyContinue
+}
+if ($Tailscale -and -not $CheckOnly) {
+  Step 'Connecting this PC to Tailscale'
+  $tsExe = Find-Exe 'tailscale' @("$env:ProgramFiles\Tailscale\tailscale.exe")
+  if ($DryRun) { Info '[dry run] tailscale up; tailscale serve'; $tsName = 'thispc.your-tailnet.ts.net' }
+  else {
+    if (-not $tsExe) { throw 'Tailscale is not installed (run without -SkipPrerequisites).' }
+    $st = Get-TsStatus
+    if (-not $st -or $st.BackendState -ne 'Running') {
+      Info 'A browser window opens: sign in to Tailscale (a free account is fine).'
+      Invoke-TsInteractive @('up', '--timeout', '300s') { $x = Get-TsStatus; $x -and $x.BackendState -eq 'Running' }
+      $st = Get-TsStatus
+    }
+    if (-not $st -or $st.BackendState -ne 'Running') { throw 'Tailscale sign-in did not finish. Run the installer again and complete the sign-in in the browser.' }
+    $tsName = "$($st.Self.DNSName)".TrimEnd('.')
+    if (-not $tsName) { throw 'Tailscale has no name for this PC. In the Tailscale admin console enable MagicDNS, then run this again.' }
+    Ok "this PC on Tailscale: $tsName"
+  }
 }
 
 # Addresses this PC can be reached at.
@@ -319,7 +373,8 @@ $origins = ($hosts | ForEach-Object { "https://$_" }) -join ','
 $primary = if ($ips.Count) { $ips[0] } else { 'localhost' }
 $mongoUri = if ($dotenv.MONGODB_URI -and $dotenv.MONGODB_URI -match 'replicaSet=') { $dotenv.MONGODB_URI } else { "mongodb://127.0.0.1:27017/$Database`?replicaSet=$setName" }
 $extraOrigins = if ($dotenv.CORS_ORIGINS) { ($dotenv.CORS_ORIGINS -split ',' | Where-Object { $_ -like 'https://*' }) } else { @() }
-$allOrigins = (@($origins -split ',') + $extraOrigins | Select-Object -Unique) -join ','
+$tsOrigins = if ($tsName) { @("https://$tsName") } else { @() }
+$allOrigins = (@($origins -split ',') + $extraOrigins + $tsOrigins | Select-Object -Unique) -join ','
 
 # Passed to the service; they take precedence over server\.env (which is left untouched).
 $apiEnv = @(
@@ -388,14 +443,21 @@ Step 'Starting the HTTPS front end'
 $siteList = ($hosts | ForEach-Object { "https://$_" }) -join ', '
 $httpList = ($hosts | ForEach-Object { "http://$_" }) -join ', '
 $webRoot = (Join-Path $root 'web\dist') -replace '\\', '/'
+$tsSite = if ($Tailscale) { @"
+
+# Tailscale publishes this local-only listener at https://$tsName (Tailscale provides the certificate).
+:$tsPort {
+	bind 127.0.0.1
+	import chili
+}
+"@ } else { '' }
 $caddyfile = @"
 # Generated by scripts\windows\install.ps1 - re-run the installer instead of editing this file.
 {
 	local_certs
 }
 
-$siteList {
-	tls internal
+(chili) {
 	encode gzip
 	handle /api/* {
 		reverse_proxy 127.0.0.1:4000
@@ -412,9 +474,15 @@ $siteList {
 	}
 }
 
+$siteList {
+	tls internal
+	import chili
+}
+
 $httpList {
 	redir https://{host}{uri} permanent
 }
+$tsSite
 "@
 $caddyDir = Join-Path $stateDir 'caddy'
 $caddyFilePath = Join-Path $caddyDir 'Caddyfile'
@@ -427,6 +495,7 @@ else {
   if (Get-Service $webService -ErrorAction SilentlyContinue) { Quiet { & $nssm stop $webService confirm } | Out-Null }
   Assert-PortFree 443 'caddy'
   Assert-PortFree 80 'caddy'
+  if ($Tailscale) { Assert-PortFree $tsPort 'caddy' }
 }
 # XDG_DATA_HOME keeps Caddy's certificates in C:\ProgramData\ChiliPOS\caddy (not the SYSTEM profile).
 Set-NssmService $webService $caddy "run --config `"$caddyFilePath`" --adapter caddyfile" $caddyDir @("XDG_DATA_HOME=$caddyDir\data") $apiService 'Chili POS (web, HTTPS)'
@@ -449,6 +518,18 @@ if (-not $DryRun) {
     try { $r = Invoke-RestMethod 'https://localhost/api/v1/ready' -TimeoutSec 5; $ok = $r.status -eq 'ready' } catch { Start-Sleep -Seconds 2 }
   }
   if (-not $ok) { Warn "https://localhost did not answer yet - check $logDir\$webService.log" }
+
+  if ($Tailscale -and $tsName) {
+    Step "Publishing Chili POS on Tailscale (https://$tsName)"
+    Info 'If Tailscale asks to enable HTTPS / Serve for your account, a browser window opens - approve it.'
+    Invoke-TsInteractive @('serve', '--bg', "http://127.0.0.1:$tsPort") { $false } 300
+    $tsOk = $false
+    for ($i = 0; $i -lt 30 -and -not $tsOk; $i++) {
+      try { $r = Invoke-RestMethod "https://$tsName/api/v1/ready" -TimeoutSec 10; $tsOk = $r.status -eq 'ready' } catch { Start-Sleep -Seconds 3 }
+    }
+    if ($tsOk) { Ok "reachable at https://$tsName" }
+    else { Warn "https://$tsName did not answer yet (the first certificate can take a minute). Check with: tailscale serve status" }
+  }
 }
 
 # -- 7. Done ------------------------------------------------------------------------------------
@@ -463,6 +544,12 @@ Write-Host '  +-----------------------------------------------------------------
 Write-Host ''
 Write-Host "  On this PC:          https://localhost" -ForegroundColor White
 foreach ($ip in $ips) { Write-Host "  Other tills/tablets: https://$ip" -ForegroundColor White }
+if ($tsName) {
+  Write-Host ''
+  Write-Host "  Phones (any Wi-Fi or mobile data): https://$tsName" -ForegroundColor Cyan
+  Write-Host '    1. Install the "Tailscale" app (Play Store / App Store), sign in with the SAME account, turn it on.'
+  Write-Host "    2. Open https://$tsName in Chrome/Safari - no certificate needed. Add it to the home screen."
+}
 Write-Host ''
 if (-not $configured) {
   Write-Host "  First-run setup token: $($state.setupToken)" -ForegroundColor Yellow

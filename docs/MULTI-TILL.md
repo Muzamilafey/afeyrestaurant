@@ -34,6 +34,22 @@ same for the tills (steps 7–10) — only the server part differs.
 
 ---
 
+## Phones can't reach the server? Use Tailscale
+
+If tills or phones show "This site can't be reached" although the server works on the PC itself (common causes:
+the router's client/AP isolation, a VPN on the phone, a Wi-Fi extender on another network), run the installer with
+`-Tailscale` on the server PC:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Tailscale
+```
+
+It installs Tailscale, signs the PC in (a browser opens — a free account is fine), and publishes Chili POS at a
+private address such as `https://afey.your-tailnet.ts.net` with a real certificate. On each phone/tablet: install the
+**Tailscale** app, sign in with the **same account**, turn it on, open that address. No router settings, no
+certificate to install, and it also works on mobile data (handy for the owner's dashboard). Needs internet; the
+local `https://<PC IP>` address keeps working on the LAN.
+
 ## 1. Plan the network
 
 Use one router/switch for the restaurant. Give every fixed device a **reserved IP address** (router admin page →
