@@ -64,8 +64,10 @@ const paymentSchema = new Schema(
     phone: String,
     customerId: Schema.Types.ObjectId,
     status: { type: String, enum: ['confirmed', 'provisional'], default: 'confirmed' },
-    /** confirmed_by_provider | manual | offline_cash */
-    verification: { type: String, enum: ['provider', 'manual', 'cash', 'offline_cash'], required: true },
+    /** provider | manual | cash | offline_cash | offline_mpesa (code typed in while offline, confirmed against C2B) */
+    verification: { type: String, enum: ['provider', 'manual', 'cash', 'offline_cash', 'offline_mpesa'], required: true },
+    /** An offline M-Pesa code that was already used on another sale (kept for review instead of losing the sale). */
+    claimedReference: String,
     manualConfirmation: { by: Schema.Types.ObjectId, reason: String },
     refundedAmount: { ...money },
     receivedBy: Schema.Types.ObjectId,

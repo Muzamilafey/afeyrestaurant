@@ -9,7 +9,8 @@ import { ApiError, get, post, patch } from '@/lib/api';
 import { money, uuid, toCents } from '@/lib/format';
 import { cacheCatalog, cachedCatalog, queueOfflineOrder, terminalId } from '@/lib/offline';
 import { printReceipt, type ReceiptDoc } from '@/lib/printing';
-import { useOnline } from '@/layout/AppShell';
+import { useOnline } from '@/lib/connectivity';
+import { OfflinePayDialog, type OfflinePayment } from './OfflinePayDialog';
 import { ProductCard } from './ProductCard';
 import { ModifierDialog } from './ModifierDialog';
 import { PaymentDialog, ReceiptPanel } from './PaymentDialog';
@@ -259,7 +260,9 @@ export default function PosPage() {
         const o = await createFromDraft(true, table);
         if (o) setPaying(true);
       } catch (e) {
-        handleError(e);
+        // The connection dropped before the till noticed: carry on as an offline sale instead of failing.
+        if (e instanceof ApiError && e.code === 'NETWORK') void payOffline();
+        else handleError(e);
       } finally {
         setBusy(null);
       }
@@ -268,22 +271,38 @@ export default function PosPage() {
     setPaying(true);
   }
 
-  /** Offline: record a provisional cash sale locally; it syncs when the connection returns. */
+  /** Offline: open the offline payment window (cash, card or M-Pesa code); the sale syncs when the connection returns. */
+  const offlineActions: string[] = session?.business?.settings?.offlineAllowedActions ?? ['create_order', 'cash_payment', 'card_payment', 'mpesa_payment'];
+  const offlineAllowed = { cash: offlineActions.includes('cash_payment'), card: offlineActions.includes('card_payment'), mpesa: offlineActions.includes('mpesa_payment') };
+  const [offlinePay, setOfflinePay] = useState(false);
   async function payOffline() {
     if (order) return toast('This order lives on the server. Reconnect to take payment.', 'error');
-    if (!(session?.business?.settings?.offlineAllowedActions ?? ['create_order', 'cash_payment']).includes('cash_payment')) return toast('Offline payments are disabled', 'error');
+    if (!offlineActions.includes('create_order') || !(offlineAllowed.cash || offlineAllowed.card || offlineAllowed.mpesa)) return toast('Offline sales are switched off in Settings → Business', 'error');
+    setOfflinePay(true);
+  }
+  async function recordOfflineSale(p: OfflinePayment) {
+    setOfflinePay(false);
     const total = draft.reduce((s, d) => s + d.unitPrice * d.qty, 0);
-    const c = await confirm({ title: 'Offline cash sale', message: <>The connection is down. Record a <b>cash</b> sale of <b>{money(total)}</b> locally? It is marked <i>pending sync</i> until the server verifies it. M-Pesa and card are unavailable offline.</>, confirmLabel: 'Record cash sale' });
-    if (!c.ok) return;
     const clientId = uuid();
     const createdAt = new Date().toISOString();
+    const type = mode === 'bar_counter' ? 'bar_counter' : mode === 'dine_in' && tableId ? 'dine_in' : 'takeaway';
+    const tableNo = tables.find((t) => t._id === tableId)?.number;
     await queueOfflineOrder(branchId, {
-      clientId, terminalId: terminalId(), createdAt, type: mode === 'bar_counter' ? 'bar_counter' : mode === 'dine_in' && tableId ? 'dine_in' : 'takeaway', tableId: mode === 'dine_in' ? tableId || undefined : undefined, customerName: customerName || undefined,
+      clientId, terminalId: terminalId(), createdAt, type, tableId: mode === 'dine_in' ? tableId || undefined : undefined, customerName: customerName || undefined,
       items: draft.map((d) => ({ lineId: d.lineId, productId: d.productId, qty: d.qty, variant: d.variant, modifiers: d.modifiers.map(({ groupId, optionId }) => ({ groupId, optionId })), notes: d.notes, unitPrice: d.unitPrice, name: d.name })),
-      payments: [{ clientPaymentId: uuid(), method: 'cash', amount: total, tendered: total }],
+      payments: [{ clientPaymentId: uuid(), method: p.method, amount: total, tendered: p.tendered, reference: p.reference, phone: p.phone }],
     });
     const amt = (c: number) => (c / 100).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const offlineDoc: ReceiptDoc = {
+    const ref = clientId.slice(0, 8).toUpperCase();
+    const when = new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const service = `${type === 'dine_in' ? 'Dine in' : type === 'bar_counter' ? 'Bar' : 'Takeaway'}${tableNo ? ` - Table ${tableNo}` : ''}`;
+    const payRows: ReceiptDoc['lines'] =
+      p.method === 'cash'
+        ? [{ k: 'row', l: 'Cash', r: amt(total), bold: true }, ...((p.tendered ?? total) > total ? [{ k: 'row' as const, l: '  Cash given', r: amt(p.tendered!), muted: true }, { k: 'row' as const, l: '  Change', r: amt(p.tendered! - total), muted: true }] : [])]
+        : p.method === 'card'
+          ? [{ k: 'row', l: `Card${p.reference ? ` ${p.reference}` : ''}`, r: amt(total), bold: true }]
+          : [{ k: 'row', l: `M-Pesa ${p.reference}`, r: amt(total), bold: true }, { k: 'row', l: '  (being confirmed with M-Pesa)', r: '', muted: true }];
+    const receipt: ReceiptDoc = {
       kind: 'receipt',
       copy: 'original',
       lines: [
@@ -292,27 +311,49 @@ export default function PosPage() {
         ...(branch?.name ? [{ k: 'center' as const, t: branch.name, bold: true }] : []),
         { k: 'rule', heavy: true },
         { k: 'banner', t: 'OFFLINE SALE - PENDING SYNC' },
-        { k: 'row', l: 'Reference', r: clientId.slice(0, 8).toUpperCase() },
-        { k: 'row', l: 'Date', r: new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) },
+        { k: 'row', l: 'Reference', r: ref },
+        { k: 'row', l: 'Date', r: when },
+        { k: 'row', l: 'Service', r: service },
         { k: 'rule' },
-        ...draft.map((d) => ({ k: 'item' as const, qty: d.qty, name: d.name, total: amt(d.unitPrice * d.qty), each: d.qty > 1 ? amt(d.unitPrice) : undefined, mods: [] })),
+        ...draft.map((d) => ({ k: 'item' as const, qty: d.qty, name: d.name, total: amt(d.unitPrice * d.qty), each: d.qty > 1 ? amt(d.unitPrice) : undefined, mods: d.modifiers.map((m) => m.name) })),
         { k: 'rule', heavy: true },
         { k: 'row', l: 'TOTAL', r: `KSh ${amt(total)}`, bold: true, big: true },
-        { k: 'row', l: 'Cash', r: amt(total), bold: true },
+        ...payRows,
         { k: 'rule' },
-        { k: 'center', t: 'Official receipt issued once the sale syncs.', muted: true },
+        { k: 'center', t: 'Official receipt number issued once the sale syncs.', muted: true },
         { k: 'center', t: 'Powered by Chili POS', muted: true },
       ],
     };
-    setOfflineReceipt({ _id: clientId, number: clientId.slice(0, 8), totals: { total } } as Order);
+    // The kitchen/bar screens can't receive the order while offline, so print their tickets on this till.
+    const tickets: ReceiptDoc[] = p.printTickets
+      ? (['kitchen', 'bar'] as const)
+          .map((station) => ({ station, items: draft.filter((d) => d.station === station) }))
+          .filter((g) => g.items.length)
+          .map((g) => ({
+            kind: 'receipt' as const,
+            copy: 'original' as const,
+            lines: [
+              { k: 'title' as const, t: g.station === 'kitchen' ? 'KITCHEN' : 'BAR' },
+              { k: 'banner' as const, t: 'OFFLINE ORDER' },
+              { k: 'row' as const, l: service, r: when.split(', ').pop() ?? '' },
+              { k: 'row' as const, l: 'Ref', r: ref },
+              ...(customerName ? [{ k: 'row' as const, l: 'Customer', r: customerName }] : []),
+              { k: 'rule' as const, heavy: true },
+              ...g.items.map((d) => ({ k: 'item' as const, qty: d.qty, name: d.name, total: '', mods: [...d.modifiers.map((m) => m.name), ...(d.notes ? [`NOTE: ${d.notes}`] : [])] })),
+              { k: 'rule' as const },
+            ],
+          }))
+      : [];
+    setOfflineReceipt({ _id: clientId, number: ref, totals: { total } } as Order);
     resetDraft();
     try {
-      printReceipt(offlineDoc, 'Offline receipt');
+      printReceipt([receipt, ...tickets], 'Offline sale');
     } catch {
       /* printing is optional */
     }
-    toast('Offline sale saved — will sync automatically');
+    toast(p.method === 'mpesa' ? 'Offline M-Pesa sale saved — the code is confirmed when the connection returns' : 'Offline sale saved — it uploads automatically when the connection returns');
   }
+
 
   async function action(name: string, fn: () => Promise<unknown>, success?: string) {
     setBusy(name);
@@ -548,7 +589,7 @@ export default function PosPage() {
               {locked ? (
                 <Button size="lg" onClick={() => setPaying(true)} disabled={order?.status !== 'paid'}>Receipt</Button>
               ) : (
-                <Button size="lg" disabled={lines.length === 0 || (order ? order.totals.total - order.totals.paid <= 0 : false)} loading={busy === 'pay'} onClick={() => startPayment()}>{online ? 'Pay' : 'Cash (offline)'}</Button>
+                <Button size="lg" disabled={lines.length === 0 || (order ? order.totals.total - order.totals.paid <= 0 : false)} loading={busy === 'pay'} onClick={() => startPayment()}>{online ? 'Pay' : 'Pay (offline)'}</Button>
               )}
             </div>
           </div>
@@ -602,6 +643,7 @@ export default function PosPage() {
           }}
         />
       )}
+      {offlinePay && <OfflinePayDialog total={draft.reduce((a, d) => a + d.unitPrice * d.qty, 0)} allowed={offlineAllowed} hasTickets={draft.some((d) => d.station === 'kitchen' || d.station === 'bar')} onClose={() => setOfflinePay(false)} onConfirm={(p) => void recordOfflineSale(p)} />}
       {dialog === 'transfer' && order && <TablePicker title="Transfer to table" tables={tables.filter((t) => t._id !== order.tableId)} onClose={() => setDialog(null)} onPick={(id) => action('transfer', () => post(`/orders/${order._id}/transfer`, { tableId: id }), 'Order transferred').then(() => setDialog(null))} />}
       {dialog === 'merge' && order && <OrderPicker title="Merge another order into this one" orders={activeChips.filter((c) => c.id !== order._id)} onClose={() => setDialog(null)} onPick={(id) => action('merge', () => post(`/orders/${order._id}/merge`, { sourceOrderId: id }), 'Orders merged').then(() => setDialog(null))} />}
       {dialog === 'held' && <HeldOrders onClose={() => setDialog(null)} onPick={(id) => { setOrder(id); setDialog(null); }} />}

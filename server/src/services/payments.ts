@@ -507,7 +507,7 @@ export async function buildReceipt(tenantId: Types.ObjectId, orderId: Types.Obje
     lines,
     totals: order.totals,
     taxes: order.taxBreakdown,
-    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference, phone: p.phone })),
+    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference ?? p.claimedReference, phone: p.phone, pending: p.status === 'provisional' })),
   };
 }
 

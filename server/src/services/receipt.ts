@@ -29,7 +29,7 @@ export interface ReceiptData {
   lines: Array<{ name: string; qty: number; unitPrice: number; total: number; modifiers: string[]; complimentary: boolean }>;
   totals?: { subtotal?: number | null; discount?: number | null; serviceCharge?: number | null; deliveryFee?: number | null; total?: number | null; paid?: number | null; balance?: number | null } | null;
   taxes?: Array<{ code?: string | null; name?: string | null; rateBps?: number | null; inclusive?: boolean | null; amount?: number | null }> | null;
-  payments: Array<{ method: string; amount: number; tendered?: number | null; change?: number | null; reference?: string | null; phone?: string | null }>;
+  payments: Array<{ method: string; amount: number; tendered?: number | null; change?: number | null; reference?: string | null; phone?: string | null; pending?: boolean }>;
 }
 
 /** 123456 cents → "1,234.56" */
@@ -97,6 +97,7 @@ export function receiptDoc(r: ReceiptData, copy: 'original' | 'duplicate' = 'ori
     for (const p of r.payments) {
       const ref = p.method === 'mpesa' ? [p.reference, maskPhone(p.phone)].filter(Boolean).join(' ') : p.reference && p.method !== 'cash' ? p.reference : '';
       L.push({ k: 'row', l: `${METHOD[p.method] ?? p.method}${ref ? ` ${ref}` : ''}`, r: amount(p.amount), bold: true });
+      if (p.pending) L.push({ k: 'row', l: '  (being confirmed with M-Pesa)', r: '', muted: true });
       if (p.method === 'cash' && p.tendered && p.tendered > p.amount) {
         L.push({ k: 'row', l: '  Cash given', r: amount(p.tendered), muted: true });
         L.push({ k: 'row', l: '  Change', r: amount(p.change ?? p.tendered - p.amount), muted: true });

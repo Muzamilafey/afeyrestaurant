@@ -6,6 +6,8 @@ import {
 import { useAuth, shiftStaff } from '@/auth/AuthContext';
 import { cx } from '@/components/ui';
 import { outbox, syncOutbox } from '@/lib/offline';
+import { useFeedback } from '@/components/feedback';
+import { useOnline } from '@/lib/connectivity';
 import { useRealtime } from '@/lib/socket';
 import { BusinessMark } from '@/pages/Login';
 import { AccountMenu } from './AccountMenu';
@@ -31,20 +33,6 @@ const NAV = [
   { to: '/settings', label: 'Settings', icon: Settings, perms: ['settings.manage', 'menu.manage', 'users.manage', 'tables.manage', 'audit.view'] },
 ];
 
-export function useOnline() {
-  const [online, setOnline] = useState(navigator.onLine);
-  useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener('online', on);
-    window.addEventListener('offline', off);
-    return () => {
-      window.removeEventListener('online', on);
-      window.removeEventListener('offline', off);
-    };
-  }, []);
-  return online;
-}
 
 function SyncBadge({ branchId }: { branchId: string | null }) {
   const online = useOnline();
@@ -55,11 +43,21 @@ function SyncBadge({ branchId }: { branchId: string | null }) {
     window.addEventListener('chili:outbox', refresh);
     return () => window.removeEventListener('chili:outbox', refresh);
   }, []);
+  const { toast } = useFeedback();
+  // Upload offline sales as soon as the server is reachable again (and every 30 s while any are waiting).
   useEffect(() => {
-    if (online && branchId && pending) syncOutbox(branchId).catch(() => undefined);
-    const t = setInterval(() => online && branchId && syncOutbox(branchId).catch(() => undefined), 30_000);
+    if (!online || !branchId) return;
+    const run = () =>
+      syncOutbox(branchId)
+        .then(({ synced, rejected }) => {
+          if (synced) toast(`${synced} offline sale${synced === 1 ? '' : 's'} uploaded`);
+          if (rejected) toast(`${rejected} offline sale${rejected === 1 ? ' was' : 's were'} refused by the server — ask a manager to check the order list`, 'error');
+        })
+        .catch(() => undefined);
+    if (pending) run();
+    const t = setInterval(() => pending && run(), 30_000);
     return () => clearInterval(t);
-  }, [online, branchId, pending]);
+  }, [online, branchId, pending, toast]);
   return (
     <div className="flex items-center gap-2">
       {pending > 0 && (

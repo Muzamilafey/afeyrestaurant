@@ -23,7 +23,7 @@ export interface OfflineOrderPayload {
   customerName?: string;
   notes?: string;
   items: Array<{ lineId: string; productId: string; qty: number; variant?: string; modifiers?: Array<{ groupId: string; optionId: string }>; notes?: string; unitPrice: number; name: string }>;
-  payments: Array<{ clientPaymentId: string; method: 'cash'; amount: number; tendered: number }>;
+  payments: Array<{ clientPaymentId: string; method: 'cash' | 'card' | 'mpesa'; amount: number; tendered?: number; reference?: string; phone?: string }>;
 }
 
 let dbp: Promise<IDBPDatabase<ChiliDB>> | null = null;

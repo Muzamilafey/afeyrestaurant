@@ -209,7 +209,7 @@ function Business() {
           <Toggle checked={!!s.dailySummary} onChange={(v) => setF({ ...f, settings: { ...s, dailySummary: v } })} label="Send daily sales summary to alert contacts" />
           <Toggle checked={s.lowStockAlerts !== false} onChange={(v) => setF({ ...f, settings: { ...s, lowStockAlerts: v } })} label="Send low-stock alerts" />
           <p className="label mt-2">Allowed offline actions</p>
-          <div className="flex flex-wrap gap-3">{['browse', 'create_order', 'cash_payment', 'print'].map((a) => <Toggle key={a} checked={s.offlineAllowedActions?.includes(a)} onChange={(v) => setF({ ...f, settings: { ...s, offlineAllowedActions: v ? [...s.offlineAllowedActions, a] : s.offlineAllowedActions.filter((x: string) => x !== a) } })} label={titleCase(a)} />)}</div>
+          <div className="flex flex-wrap gap-3">{(['browse', 'create_order', 'cash_payment', 'card_payment', 'mpesa_payment', 'print'] as const).map((a) => <Toggle key={a} checked={s.offlineAllowedActions?.includes(a)} onChange={(v) => setF({ ...f, settings: { ...s, offlineAllowedActions: v ? [...s.offlineAllowedActions, a] : s.offlineAllowedActions.filter((x: string) => x !== a) } })} label={({ browse: 'Browse menu', create_order: 'Take orders', cash_payment: 'Cash payments', card_payment: 'Card payments', mpesa_payment: 'M-Pesa (code) payments', print: 'Print receipts' } as const)[a]} />)}</div>
         </div>
       </div>
     </Card>

@@ -132,6 +132,8 @@ m.route(
     ]);
     const tableTotal = tables.reduce((a, t) => a + t.count, 0);
 
+    // M-Pesa codes typed in while a till was offline and not yet matched to Safaricom's confirmation.
+    const [unconfirmed] = await Payment.aggregate([{ $match: { ...base, method: 'mpesa', status: 'provisional' } }, { $group: { _id: null, count: { $sum: 1 }, amount: { $sum: '$amount' }, reused: { $sum: { $cond: [{ $ifNull: ['$claimedReference', false] }, 1, 0] } } } }]);
     const canStock = ctx.permissions.has(P.INVENTORY_VIEW) || ctx.permissions.has(P.REPORTS_INVENTORY);
     const lowStock = canStock ? (await Promise.all(branchIds.map((b) => lowStockItems(ctx.tenantId, b)))).flat() : [];
 
@@ -162,6 +164,7 @@ m.route(
         voids: voids[0] ?? { count: 0, value: 0 },
         refunds: refunds[0] ? { count: refunds[0].count, amount: refunds[0].amount } : { count: 0, amount: 0 },
         discounts: cur.discounts,
+        unconfirmedMpesa: unconfirmed ? { count: unconfirmed.count, amount: unconfirmed.amount, reused: unconfirmed.reused } : { count: 0, amount: 0, reused: 0 },
       },
     };
   },

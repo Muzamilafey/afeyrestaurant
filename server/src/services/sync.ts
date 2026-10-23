@@ -4,6 +4,7 @@ import type { BranchContext } from '../http/context';
 import { buildLines, recalc, type ItemInput } from './orders';
 import { finalizePaidOrder, emitTicketsClosed } from './payments';
 import { findOpenDrawer } from './cash';
+import { confirmOfflineMpesa } from './offlineMpesa';
 import { withTransaction } from '../db/connect';
 import { nextNumber } from './counters';
 import { audit } from './audit';
@@ -18,7 +19,7 @@ export interface OfflineOrder {
   customerName?: string;
   notes?: string;
   items: Array<ItemInput & { lineId: string; unitPrice: number }>;
-  payments: Array<{ clientPaymentId: string; method: 'cash'; amount: number; tendered: number }>;
+  payments: Array<{ clientPaymentId: string; method: 'cash' | 'card' | 'mpesa'; amount: number; tendered?: number; reference?: string; phone?: string }>;
 }
 
 export type SyncResult = { clientId: string; status: 'created' | 'duplicate' | 'rejected'; orderId?: string; number?: string; error?: string; priceConflicts?: number };
@@ -53,12 +54,27 @@ export async function syncOfflineOrder(ctx: BranchContext, o: OfflineOrder): Pro
       await recalc(order, session);
       const { drawer: cs } = await findOpenDrawer(ctx, session);
       let paid = 0;
+      const mpesaCodes: string[] = [];
+      const reusedCodes: string[] = [];
       for (const p of o.payments) {
         const amount = Math.min(p.amount, order.totals!.total - paid);
         if (amount <= 0) break;
         const key = `offline:${p.clientPaymentId}`;
         if (await Payment.exists({ tenantId: ctx.tenantId, idempotencyKey: key }).session(session)) continue;
-        await Payment.create([{ tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, orderNumber: number, method: 'cash', amount, tendered: p.tendered, change: Math.max(0, p.tendered - amount), verification: 'offline_cash', receivedBy: ctx.userId, cashSessionId: cs?._id as Types.ObjectId | undefined, idempotencyKey: key, receivedAt: o.createdAt }], { session });
+        const base = { tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, orderNumber: number, amount, receivedBy: ctx.userId, idempotencyKey: key, receivedAt: o.createdAt };
+        if (p.method === 'card') {
+          // Approved on the card terminal at the till; recorded like a manually confirmed card payment.
+          await Payment.create([{ ...base, method: 'card', reference: p.reference, verification: 'manual', manualConfirmation: { by: ctx.userId, reason: 'Card payment taken while offline' } }], { session });
+        } else if (p.method === 'mpesa') {
+          const code = (p.reference ?? '').toUpperCase();
+          const used = await Payment.exists({ tenantId: ctx.tenantId, method: 'mpesa', reference: code }).session(session);
+          await Payment.create([{ ...base, method: 'mpesa', phone: p.phone, status: 'provisional', verification: 'offline_mpesa', ...(used ? { claimedReference: code } : { reference: code }) }], { session });
+          if (used) reusedCodes.push(code);
+          else mpesaCodes.push(code);
+        } else {
+          const tendered = p.tendered ?? amount;
+          await Payment.create([{ ...base, method: 'cash', tendered, change: Math.max(0, tendered - amount), verification: 'offline_cash', cashSessionId: cs?._id as Types.ObjectId | undefined }], { session });
+        }
         paid += amount;
       }
       order.totals!.paid = paid;
@@ -66,6 +82,9 @@ export async function syncOfflineOrder(ctx: BranchContext, o: OfflineOrder): Pro
       order.paymentStatus = paid <= 0 ? 'unpaid' : order.totals!.balance <= 0 ? 'paid' : 'partial';
       if (order.totals!.balance <= 0 && paid > 0) await finalizePaidOrder(order, session);
       await order.save({ session });
+      // Confirm offline M-Pesa codes whose Till/Paybill confirmation is already here.
+      for (const code of mpesaCodes) await confirmOfflineMpesa(ctx.tenantId, code, session);
+      if (reusedCodes.length) await audit(ctx, { action: 'sync.mpesa_code_reused', entity: 'Order', entityId: order._id, meta: { codes: reusedCodes } });
       return order;
     });
     if (conflicts.length) await audit(ctx, { action: 'sync.price_conflict', entity: 'Order', entityId: result._id, meta: { conflicts } });

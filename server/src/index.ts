@@ -2,6 +2,7 @@ import http from 'node:http';
 import { env, isProd } from './config/env';
 import { connectDb, disconnectDb, ensureIndexes } from './db/connect';
 import { getCapabilities, transactionsHelp } from './db/capabilities';
+import { upgradeOfflinePaymentSettings } from './services/offlineMpesa';
 import { createApp } from './app';
 import { attachRealtime } from './realtime/socket';
 import { startScheduler } from './jobs/scheduler';
@@ -16,6 +17,7 @@ async function main() {
     logger.warn('Starting anyway because NODE_ENV is not production: reads work, but every write that needs a transaction will fail with 503 DATABASE_TRANSACTIONS_UNAVAILABLE until MongoDB is a replica set. Run `npm run db:check` after fixing it.');
   }
   await ensureIndexes();
+  await upgradeOfflinePaymentSettings();
   const app = createApp();
   const server = http.createServer(app);
   const io = attachRealtime(server);

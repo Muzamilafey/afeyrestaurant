@@ -4,6 +4,7 @@ import { Types } from 'mongoose';
 import { createModule, zId } from '../../http/route';
 import { PaymentAttempt, MpesaC2BTransaction, IntegrationConfiguration, Order, Payment } from '../../models';
 import { PERMISSIONS as P } from '../../auth/permissions';
+import { confirmOfflineMpesa } from '../../services/offlineMpesa';
 import { handleStkCallback, applyStkResult, finalizePaidOrder, emitTicketsClosed } from '../../services/payments';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../../lib/errors';
 import { env, mocksAllowed } from '../../config/env';
@@ -66,6 +67,8 @@ m.route({ method: 'post', path: '/c2b/:integrationId/:key/confirmation', summary
     { $setOnInsert: { branchId: integ.branchId ?? undefined, transType: b.TransactionType, amount, shortCode: b.BusinessShortCode, billRef: b.BillRefNumber, msisdn: b.MSISDN, firstName: b.FirstName, transTime: b.TransTime, raw: b } },
     { upsert: true },
   );
+  // A till may already have recorded this code while it was offline: confirm that sale now.
+  await confirmOfflineMpesa(integ.tenantId as Types.ObjectId, String(b.TransID)).catch(() => undefined);
   await recordIntegrationResult(integ.tenantId as Types.ObjectId, 'mpesa', { ok: true, action: 'c2b_confirmation', message: `C2B ${b.TransID} received` });
   res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
 });

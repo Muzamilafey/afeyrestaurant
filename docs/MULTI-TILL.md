@@ -34,6 +34,9 @@ same for the tills (steps 7–10) — only the server part differs.
 
 ---
 
+> Prefer one address that works everywhere (tills, phones, the owner at home) with offline selling when the
+> internet drops? Host it on a cloud server instead: see [HOSTING.md](HOSTING.md).
+
 ## Phones can't reach the server? Use Tailscale
 
 If tills or phones show "This site can't be reached" although the server works on the PC itself (common causes:

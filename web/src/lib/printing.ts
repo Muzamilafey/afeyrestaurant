@@ -80,8 +80,11 @@ function openPrintWindow(body: string, title: string, css: string) {
 }
 
 /** Print a structured receipt or bill in the browser (80mm thermal paper or A4 — it centres itself). */
-export function printReceipt(doc: ReceiptDoc, title = doc.kind === 'bill' ? 'Bill' : 'Receipt') {
-  openPrintWindow(`<div class="rcpt" style="width:72mm;margin:0 auto;padding:2mm 0">${receiptHtml(doc)}</div>`, title, RECEIPT_CSS);
+export function printReceipt(doc: ReceiptDoc | ReceiptDoc[], title?: string) {
+  // Several slips (e.g. receipt + kitchen ticket) go out as one print job, each on its own page / cut.
+  const docs = Array.isArray(doc) ? doc : [doc];
+  const body = docs.map((d, i) => `<div class="rcpt" style="width:72mm;margin:0 auto;padding:2mm 0;${i < docs.length - 1 ? 'break-after:page;page-break-after:always' : ''}">${receiptHtml(d)}</div>`).join('');
+  openPrintWindow(body, title ?? (docs[0].kind === 'bill' ? 'Bill' : 'Receipt'), RECEIPT_CSS);
 }
 
 /** Browser fallback printing for plain text (kept for anything not yet structured). */

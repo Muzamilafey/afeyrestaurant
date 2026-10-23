@@ -25,7 +25,7 @@ m.route(
       settings: z.object({
         timezone: z.string().optional(), discountApprovalThresholdBps: z.number().int().min(0).max(10000).optional(), loyaltyPointsPer100: z.number().min(0).max(100).optional(),
         loyaltyRedeemValue: z.number().int().min(0).optional(), costingPolicy: z.enum(['fifo', 'weighted_average']).optional(), allowNegativeStock: z.boolean().optional(),
-        mpesaTimeoutSeconds: z.number().int().min(30).max(600).optional(), offlineAllowedActions: z.array(z.enum(['browse', 'create_order', 'cash_payment', 'print'])).optional(),
+        mpesaTimeoutSeconds: z.number().int().min(30).max(600).optional(), offlineAllowedActions: z.array(z.enum(['browse', 'create_order', 'cash_payment', 'card_payment', 'mpesa_payment', 'print'])).optional(),
         alertEmails: z.array(z.email()).max(5).optional(), alertPhones: z.array(z.string().max(20)).max(5).optional(), dailySummary: z.boolean().optional(), lowStockAlerts: z.boolean().optional(),
       }).optional(),
     }),

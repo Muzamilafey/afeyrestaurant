@@ -24,7 +24,7 @@ interface Dashboard {
   topItems: Array<{ name: string; qty: number; revenue: number }>;
   staff: Array<{ name: string; revenue: number; orders: number }>;
   live: { openOrders: number; openOrdersValue: number; tables: { total: number; occupied: number }; kitchen: number; bar: number; delayedTickets: number; delayMinutes: number; openDrawers: number; pendingMpesa: number };
-  attention: { lowStock: Array<{ name: string; qty: number; unit?: string; min?: number }>; lowStockCount: number; voids: { count: number; value: number }; refunds: { count: number; amount: number }; discounts: number };
+  attention: { lowStock: Array<{ name: string; qty: number; unit?: string; min?: number }>; lowStockCount: number; voids: { count: number; value: number }; refunds: { count: number; amount: number }; discounts: number; unconfirmedMpesa?: { count: number; amount: number; reused: number } };
 }
 
 const RANGES: Array<{ id: Range; label: string; vs: string; current: string }> = [
@@ -449,6 +449,7 @@ export default function DashboardPage() {
                 const items: ReactNode[] = [];
                 if (data.live.delayedTickets) items.push(<LiveRow key="late" to="/kitchen" tone="danger" icon={<ChefHat className="h-4 w-4" />} label="Late kitchen tickets" sub={`Waiting over ${data.live.delayMinutes} minutes`} value={data.live.delayedTickets} />);
                 if (a.lowStockCount) items.push(<LiveRow key="stock" to="/inventory" tone="warn" icon={<Package className="h-4 w-4" />} label="Low stock" sub={a.lowStock.slice(0, 3).map((s) => s.name).join(', ') + (a.lowStockCount > 3 ? ` +${a.lowStockCount - 3} more` : '')} value={a.lowStockCount} />);
+                if (a.unconfirmedMpesa?.count) items.push(<LiveRow key="mpesa" to="/accounting" tone="warn" icon={<Smartphone className="h-4 w-4" />} label="Offline M-Pesa to confirm" sub={`${kmoney(a.unconfirmedMpesa.amount)} not yet matched with Safaricom${a.unconfirmedMpesa.reused ? ` · ${a.unconfirmedMpesa.reused} code(s) used twice` : ''}`} value={a.unconfirmedMpesa.count} />);
                 if (a.voids.count) items.push(<LiveRow key="voids" to="/reports" tone="warn" icon={<AlertTriangle className="h-4 w-4" />} label="Voided items" sub={`${kmoney(a.voids.value)} removed from orders`} value={a.voids.count} />);
                 if (a.refunds.count) items.push(<LiveRow key="refunds" to="/accounting" tone="warn" icon={<Undo2 className="h-4 w-4" />} label="Refunds" sub={`${kmoney(a.refunds.amount)} paid back`} value={a.refunds.count} />);
                 if (a.discounts) items.push(<LiveRow key="disc" to="/reports" icon={<ReceiptText className="h-4 w-4" />} label="Discounts given" sub={`${data.kpis.current.revenue ? ((a.discounts / (data.kpis.current.revenue + a.discounts)) * 100).toFixed(1) : '0'}% of gross sales`} value={<span className="text-base">{kmoney(a.discounts)}</span>} />);

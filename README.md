@@ -42,6 +42,11 @@ on the local Wi-Fi. Add `-CheckOnly` to only see that report (changes nothing). 
 restart; `-Uninstall` removes the services (data is kept).
 The manual steps it automates are described in [docs/MULTI-TILL.md](docs/MULTI-TILL.md).
 
+**Hosted online (cloud server) with offline selling:** on an Ubuntu VPS whose domain points at it, run
+`sudo bash scripts/linux/install.sh --domain pos.example.co.ke --email you@example.co.ke`. It installs MongoDB,
+the app, HTTPS (Let's Encrypt), a firewall and nightly backups. Tills keep selling when the internet drops and sync
+when it returns. See [docs/HOSTING.md](docs/HOSTING.md).
+
 ## Repository layout
 
 | Path | What |
@@ -87,6 +92,7 @@ needs credentials or hardware, and what is unverified.
 ## Documentation
 
 - [Setup & configuration](docs/SETUP.md)
+- [Hosting on a cloud server, one command, offline selling and sync](docs/HOSTING.md)
 - [Production deployment (Nginx, PM2, Let's Encrypt, backups)](docs/DEPLOYMENT.md)
 - [Several tills sharing one server and database (Windows server PC, HTTPS, step by step)](docs/MULTI-TILL.md)
 - [MongoDB on Windows: enable transactions](docs/MONGODB-WINDOWS.md)
