@@ -28,6 +28,7 @@ import crm, { publicModule } from './modules/customers/routes';
 import reports from './modules/reports/routes';
 import dashboard from './modules/reports/dashboard';
 import sync from './modules/sync/routes';
+import live, { liveCopyGuard } from './modules/live/routes';
 import { AppError } from './lib/errors';
 
 export function createApp() {
@@ -53,9 +54,10 @@ export function createApp() {
   app.use(sanitizeInput);
   app.use('/api', rateLimit({ windowMs: 60_000, limit: isTest ? 100000 : 600, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: { code: 'RATE_LIMITED', message: 'Too many requests' } } }));
 
+  app.use(liveCopyGuard);
   app.use('/api/v1', healthRouter);
   app.use('/api/v1', manifestRouter);
-  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, integrations, staff, bridgeModule, crm, publicModule, reports, dashboard, sync]) {
+  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, integrations, staff, bridgeModule, crm, publicModule, reports, dashboard, sync, live]) {
     app.use(`/api/v1${mod.basePath}`, mod.router);
   }
   const spec = buildOpenApi();

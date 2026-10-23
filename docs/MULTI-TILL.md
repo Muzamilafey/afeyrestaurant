@@ -35,7 +35,8 @@ same for the tills (steps 7–10) — only the server part differs.
 ---
 
 > Prefer one address that works everywhere (tills, phones, the owner at home) with offline selling when the
-> internet drops? Host it on a cloud server instead: see [HOSTING.md](HOSTING.md).
+> internet drops? Host it on a cloud server instead: see [HOSTING.md](HOSTING.md). Or keep this server and add a
+> view-only live copy online (Settings → Live server): see [HOSTING.md § 8](HOSTING.md#8-or-tills-on-a-restaurant-server-with-a-live-copy-online).
 
 ## Phones can't reach the server? Use Tailscale
 

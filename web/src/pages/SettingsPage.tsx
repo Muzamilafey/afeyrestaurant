@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Upload } from 'lucide-react';
-import { api, get, patch, post, put } from '@/lib/api';
+import { CloudOff, ExternalLink, Globe, Plus, RefreshCw, Unplug, Upload } from 'lucide-react';
+import { api, ApiError, get, patch, post, put } from '@/lib/api';
 import { dateTime, fromCents, money, titleCase, toCents } from '@/lib/format';
-import { Button, Card, DataTable, Field, Input, Modal, PageHeader, Pill, Select, StatusPill, Tabs, Textarea, Toggle } from '@/components/ui';
+import { Button, Card, cx, DataTable, Field, Input, Modal, PageHeader, Pill, Select, StatusPill, Tabs, Textarea, Toggle } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
 import { makeAppIcons } from '@/lib/appIcons';
 import { AccountMenu } from '@/layout/AccountMenu';
 
-type TabId = 'business' | 'branches' | 'users' | 'roles' | 'menu' | 'taxes' | 'tables' | 'audit' | 'account';
+type TabId = 'live' | 'business' | 'branches' | 'users' | 'roles' | 'menu' | 'taxes' | 'tables' | 'audit' | 'account';
 
 export default function SettingsPage() {
   const { can } = useAuth();
@@ -24,6 +24,7 @@ export default function SettingsPage() {
         { id: 'users', label: 'Users', hidden: !can('users.manage') },
         { id: 'roles', label: 'Roles', hidden: !can('roles.manage') },
         { id: 'taxes', label: 'Taxes', hidden: !can('settings.manage') },
+        { id: 'live', label: 'Live server', hidden: !can('settings.manage') },
         { id: 'tables', label: 'Tables', hidden: !can('tables.manage') },
         { id: 'audit', label: 'Audit log', hidden: !can('audit.view') },
         { id: 'account', label: 'My account' },
@@ -34,6 +35,7 @@ export default function SettingsPage() {
       {tab === 'users' && <Users />}
       {tab === 'roles' && <Roles />}
       {tab === 'taxes' && <Taxes />}
+      {tab === 'live' && <LiveServer />}
       {tab === 'tables' && <TablesAdmin />}
       {tab === 'audit' && <Audit />}
       {tab === 'account' && <Account />}
@@ -225,6 +227,116 @@ function SystemStatus() {
       <span>Undelivered messages: <b>{data.failedNotifications}</b></span>
       <span className="text-ink-soft">Version {data.version}</span>
     </div>
+  );
+}
+
+type LiveStatus =
+  | { role: 'live'; sourceName?: string; linkedAt?: string; lastPushAt?: string; docsReceived?: number }
+  | { role: 'local'; linked: false }
+  | { role: 'local'; linked: true; url: string; liveName?: string; linkedAt: string; linkedBy?: string; lastAttemptAt?: string; lastSuccessAt?: string; lastError?: string | null; docsSent: number; pending: number; syncing: boolean };
+
+const ago = (iso?: string | null) => {
+  if (!iso) return 'never';
+  const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  return s < 10 ? 'just now' : s < 60 ? `${s} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : dateTime(iso);
+};
+
+/** Link this (restaurant) server to a live server on the internet, which receives a view-only copy of everything. */
+function LiveServer() {
+  const { handleError, toast, confirm } = useFeedback();
+  const qc = useQueryClient();
+  const { data: st, refetch } = useQuery<LiveStatus>({
+    queryKey: ['live-status'],
+    queryFn: () => get('/live/status'),
+    refetchInterval: (q) => ((q.state.data as { syncing?: boolean } | undefined)?.syncing ? 2_000 : 10_000),
+  });
+  const [f, setF] = useState({ url: '', setupToken: '' });
+  const [busy, setBusy] = useState(false);
+
+  async function connect(replaceEmpty = false) {
+    setBusy(true);
+    try {
+      const r = await post<{ url: string; name: string }>('/live/connect', { ...f, replaceEmpty });
+      toast(`Linked to ${r.url} — sending data now`);
+      setF({ url: '', setupToken: '' });
+      qc.invalidateQueries({ queryKey: ['live-status'] });
+    } catch (e) {
+      const d = e instanceof ApiError ? (e.details as { canReplace?: boolean; name?: string } | undefined) : undefined;
+      if (e instanceof ApiError && e.code === 'LIVE_HAS_OTHER_BUSINESS' && d?.canReplace && !replaceEmpty) {
+        const ok = await confirm({ title: 'Replace the live server\'s business?', message: <>The live server was set up on its own as <b>{d.name}</b> and has no sales yet. Replace it with this restaurant's menu, staff and sales? Sign in there with your accounts from this server afterwards.</>, confirmLabel: 'Replace and link', danger: true });
+        if (ok.ok) return connect(true);
+      } else handleError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!st) return <Card title="Live server"><p className="text-sm text-ink-soft">Loading…</p></Card>;
+
+  if (st.role === 'live') {
+    return (
+      <Card title="This is the live copy">
+        <div className="space-y-3 text-sm">
+          <p>This server receives a view-only copy of <b>{st.sourceName ?? 'the restaurant server'}</b>. Sales, reports and the dashboard here follow the restaurant; menu, staff and settings are changed on the restaurant's own server.</p>
+          <div className="flex flex-wrap gap-4 rounded-2xl border border-line p-4">
+            <span>Last update: <b>{ago(st.lastPushAt)}</b></span>
+            <span>Linked: <b>{st.linkedAt ? dateTime(st.linkedAt) : '—'}</b></span>
+            <span>Records received: <b>{(st.docsReceived ?? 0).toLocaleString('en-KE')}</b></span>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  if (!st.linked) {
+    return (
+      <Card title="Live server">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="space-y-3 text-sm text-ink-soft">
+            <p className="text-ink">Send a copy of everything on this server — sales, orders, payments, stock, menu and staff — to your live server on the internet, so you can follow the restaurant from anywhere.</p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li>The tills keep using this server: selling never depends on the internet.</li>
+              <li>Changes are sent every few seconds. When the internet is down they wait here and go out when it returns.</li>
+              <li>The live server is <b>view only</b>; make changes here.</li>
+            </ul>
+            <p>The live server is set up with <code className="rounded bg-page px-1">scripts/linux/install.sh</code>; its setup token is shown at the end of the install (and is in <code className="rounded bg-page px-1">/etc/chili-pos/chili.env</code>).</p>
+          </div>
+          <div className="space-y-3">
+            <Field label="Live server address"><Input value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} placeholder="https://pos.myrestaurant.co.ke" inputMode="url" autoComplete="off" /></Field>
+            <Field label="Live server setup token"><Input type="password" value={f.setupToken} onChange={(e) => setF({ ...f, setupToken: e.target.value })} autoComplete="off" /></Field>
+            <Button icon={<Globe className="h-4 w-4" />} loading={busy} disabled={!f.url.trim() || !f.setupToken.trim()} onClick={() => connect()}>Connect and start syncing</Button>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  const waiting = !!st.lastError;
+  return (
+    <Card
+      title="Live server"
+      actions={<>
+        <Button size="sm" variant="secondary" className="whitespace-nowrap" icon={<RefreshCw className={cx('h-4 w-4', st.syncing && 'animate-spin')} />} disabled={st.syncing} onClick={() => post('/live/sync').then(() => { toast('Syncing with the live server'); setTimeout(() => refetch(), 500); }).catch(handleError)}>Sync now</Button>
+        <Button size="sm" variant="secondary" className="whitespace-nowrap" icon={<Unplug className="h-4 w-4" />} onClick={async () => { const ok = await confirm({ title: 'Stop syncing?', message: 'The live server keeps the data it already has but stops receiving new sales. You can link again later with its setup token.', confirmLabel: 'Stop syncing', danger: true }); if (ok.ok) api('/live/connect', { method: 'DELETE' }).then(() => { qc.invalidateQueries({ queryKey: ['live-status'] }); toast('Live sync stopped'); }).catch(handleError); }}>Disconnect</Button>
+      </>}
+    >
+      <div className="space-y-4 text-sm">
+        <div className={cx('flex items-start gap-3 rounded-2xl p-4', waiting ? 'bg-warn-pale text-warn-ink' : 'bg-brand-pale text-brand-dark')}>
+          {waiting ? <CloudOff className="mt-0.5 h-5 w-5 shrink-0" /> : <Globe className="mt-0.5 h-5 w-5 shrink-0" />}
+          <div>
+            <p className="font-semibold">{waiting ? 'Waiting for the internet — nothing is lost' : st.syncing ? 'Syncing…' : 'Connected and in sync'}</p>
+            <p>{waiting ? `${st.lastError}. Changes are kept here and sent automatically when the live server can be reached.` : <>Sending to <a className="font-semibold underline" href={st.url} target="_blank" rel="noreferrer">{st.url} <ExternalLink className="inline h-3.5 w-3.5" /></a></>}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-2xl border border-line p-3"><p className="text-xs text-ink-soft">Last successful sync</p><p className="font-bold">{ago(st.lastSuccessAt)}</p></div>
+          <div className="rounded-2xl border border-line p-3"><p className="text-xs text-ink-soft">Changes waiting</p><p className="font-bold tabular-nums">{st.pending.toLocaleString('en-KE')}</p></div>
+          <div className="rounded-2xl border border-line p-3"><p className="text-xs text-ink-soft">Records sent</p><p className="font-bold tabular-nums">{st.docsSent.toLocaleString('en-KE')}</p></div>
+          <div className="rounded-2xl border border-line p-3"><p className="text-xs text-ink-soft">Linked</p><p className="font-bold">{dateTime(st.linkedAt)}</p>{st.linkedBy && <p className="text-xs text-ink-soft">by {st.linkedBy}</p>}</div>
+        </div>
+        <p className="text-ink-soft">On the live server, sign in with the same email and password as here. It shows sales, reports and the dashboard; changes are made on this server.</p>
+      </div>
+    </Card>
   );
 }
 

@@ -45,7 +45,8 @@ The manual steps it automates are described in [docs/MULTI-TILL.md](docs/MULTI-T
 **Hosted online (cloud server) with offline selling:** on an Ubuntu VPS whose domain points at it, run
 `sudo bash scripts/linux/install.sh --domain pos.example.co.ke --email you@example.co.ke`. It installs MongoDB,
 the app, HTTPS (Let's Encrypt), a firewall and nightly backups. Tills keep selling when the internet drops and sync
-when it returns. See [docs/HOSTING.md](docs/HOSTING.md).
+when it returns. See [docs/HOSTING.md](docs/HOSTING.md). A restaurant server can also send a view-only live copy to
+such a server (**Settings → Live server**).
 
 ## Repository layout
 

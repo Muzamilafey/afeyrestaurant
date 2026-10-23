@@ -1,8 +1,10 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import {
-  LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList,
+  LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList, Eye,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { get } from '@/lib/api';
 import { useAuth, shiftStaff } from '@/auth/AuthContext';
 import { cx } from '@/components/ui';
 import { outbox, syncOutbox } from '@/lib/offline';
@@ -33,6 +35,20 @@ const NAV = [
   { to: '/settings', label: 'Settings', icon: Settings, perms: ['settings.manage', 'menu.manage', 'users.manage', 'tables.manage', 'audit.view'] },
 ];
 
+
+/** On the live (internet) copy everything is view-only: changes are made on the restaurant's own server. */
+function LiveCopyBanner() {
+  const { data } = useQuery<{ liveCopy: { lastPushAt: string | null } | null }>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000, refetchInterval: 60_000 });
+  if (!data?.liveCopy) return null;
+  const at = data.liveCopy.lastPushAt ? new Date(data.liveCopy.lastPushAt) : null;
+  const mins = at ? Math.round((Date.now() - at.getTime()) / 60_000) : null;
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-b border-line bg-info-pale px-4 py-1.5 text-xs font-semibold text-info sm:text-sm">
+      <Eye className="h-4 w-4 shrink-0" />
+      <span>Live copy · view only. Updated {mins == null ? 'not yet' : mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : at!.toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' })}. Make changes on the restaurant's own server.</span>
+    </div>
+  );
+}
 
 function SyncBadge({ branchId }: { branchId: string | null }) {
   const online = useOnline();
@@ -180,6 +196,7 @@ export function AppShell() {
             </button>
           )}
         </header>
+        <LiveCopyBanner />
         <main className={cx('min-h-0 flex-1', isPos ? 'overflow-hidden' : 'scroll-thin overflow-y-auto p-4 sm:p-6')}>
           <Outlet />
         </main>

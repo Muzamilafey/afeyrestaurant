@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { setupDb, teardownDb, api, login, uuid, type Session } from './helpers';
-import { CashSession, Payment, Product } from '../src/models';
+import { Branch, CashSession, Payment, Product } from '../src/models';
 
 let seed: Awaited<ReturnType<typeof setupDb>>;
 let cashier: Session;
@@ -10,6 +10,8 @@ let wings: string;
 
 beforeAll(async () => {
   seed = await setupDb();
+  // No weekday 17:00–19:00 happy hour here: the amounts below must not depend on when the suite runs.
+  await Branch.updateMany({ tenantId: seed.tenantId }, { $set: { 'settings.happyHours': [] } });
   [cashier, manager, owner] = await Promise.all([login('cashier@chili.demo'), login('manager@chili.demo'), login('owner@chili.demo')]);
   wings = String((await Product.findOne({ tenantId: seed.tenantId, sku: 'ST-002' }).lean())!._id);
 });

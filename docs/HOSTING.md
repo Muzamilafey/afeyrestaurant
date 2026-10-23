@@ -129,6 +129,42 @@ be registered: see [integrations/mpesa.md](integrations/mpesa.md).
   `rsync`/`scp` to another machine.
 - **Restore:** see [DEPLOYMENT.md](DEPLOYMENT.md#backups).
 
+## 8. Or: tills on a restaurant server, with a live copy online
+
+You can also keep the server **inside the restaurant**, a Windows PC installed with
+`scripts/windows/install.ps1` (see [MULTI-TILL.md](MULTI-TILL.md)), and link it to a live server on the internet:
+
+```
+  Tills ──► Restaurant server (Windows PC, MongoDB) ──── internet ────► Live server (VPS, view only)
+            sells with or without internet          sends every change          owner follows from anywhere
+```
+
+- The tills only use the restaurant server, so selling never depends on the internet.
+- Every change (sales, orders, payments, stock, menu, staff, settings, images) is sent to the live server within
+  about 15 seconds.
+- When the internet is down, the changes wait on the restaurant server and go out when it comes back. Records
+  deleted in the meantime are removed from the live copy too.
+- The live server is a **view-only copy**:
+  - Sign in there with the same email and password as at the restaurant.
+  - It shows the dashboard, sales, orders and reports.
+  - Any change is refused with "make changes on the restaurant's own server".
+  - It sends no SMS, alerts or summaries itself; the restaurant server does.
+- Not copied: sign-in sessions, till registrations, print and message queues, and integration passwords (M-Pesa,
+  SMS, email), which stay encrypted on the restaurant server.
+
+**Link them:**
+
+1. Install the live server with the one command from section 2, and **don't** complete the setup screen there. Note
+   the **setup token** printed at the end. It is also in `/etc/chili-pos/chili.env` as `SETUP_TOKEN`.
+2. On the restaurant server, sign in as the owner. Go to **Settings → Live server**, enter the live address
+   (`https://pos.myrestaurant.co.ke`) and the setup token, and press **Connect and start syncing**.
+3. The first copy takes a few seconds to a few minutes. The same screen shows the last sync, the number of changes
+   waiting and any connection problem. **Sync now** sends immediately and checks everything; **Disconnect** stops
+   sending, and the live server keeps what it already has.
+
+If the live server was already set up as a separate business with no sales yet, the restaurant server asks whether
+to replace it. A live server that already has its own sales is never overwritten; use a fresh one.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -136,4 +172,6 @@ be registered: see [integrations/mpesa.md](integrations/mpesa.md).
 | The link doesn't open after the install | The DNS A record must point at this server (`dig +short pos.domain`). Ports 80 and 443 must be open at the VPS provider's firewall too. `journalctl -u caddy -n 50` |
 | "Offline" stays on although the internet works | `systemctl status chili-pos`. Then `curl -s https://pos.domain/api/v1/health` |
 | Sales stay "pending sync" | Open the app while online and sign in again if asked. Rejected sales show an error message with the reason. |
+| Settings → Live server shows "Waiting for the internet" | The restaurant has no internet, or the live server is down (`systemctl status chili-pos` there). Changes are kept and sent later. |
+| "Wrong setup token" or "no longer linked" | Use `SETUP_TOKEN` from `/etc/chili-pos/chili.env` on the live server and connect again. Nothing is lost: everything is sent again. |
 | An offline M-Pesa sale is not confirmed | C2B confirmation URL registered? Was the code typed correctly? See Dashboard → *Offline M-Pesa to confirm*. |

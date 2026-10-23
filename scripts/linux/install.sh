@@ -295,6 +295,7 @@ printf '\033[1;32m  Chili POS is installed\033[0m\n\n'
 printf '  Open:  \033[1mhttps://%s\033[0m   (tills, phones, the owner at home)\n' "$DOMAIN"
 [[ $HTTPS_OK -eq 1 || $DRY -eq 1 ]] || c_warn "https://$DOMAIN is not answering yet - check the DNS A record; Caddy keeps retrying. Logs: journalctl -u caddy -n 50"
 if [[ "$CONFIGURED" != "true" ]]; then printf '  First-run setup token: \033[1;33m%s\033[0m  (asked once on the setup screen)\n' "$TOKEN"; fi
+if [[ "$CONFIGURED" != "true" ]]; then printf '  Live copy of a restaurant server instead? Skip the setup screen; on the restaurant server open\n  Settings -> Live server and enter https://%s with this token.\n' "$DOMAIN"; fi
 cat <<EOF
 
   Offline: each till keeps selling when the internet drops (cash, card, M-Pesa code) and uploads the
