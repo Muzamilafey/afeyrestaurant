@@ -416,7 +416,15 @@ export default function PosPage() {
               <div className="flex items-center gap-2">
                 {order && <StatusPill status={order.status} />}
                 {order && <StatusPill status={order.paymentStatus} />}
-                {(order || draft.length > 0) && <Button size="sm" variant="ghost" onClick={() => { setOrder(null); resetDraft(); }}>New</Button>}
+                {(order || draft.length > 0) && (
+                  <button
+                    onClick={() => { setOrder(null); resetDraft(); }}
+                    title="Start a new order (this one stays open)"
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border-2 border-brand bg-brand-pale px-3 py-1.5 text-sm font-bold text-brand-dark shadow-soft transition hover:bg-brand hover:text-white dark:text-brand dark:hover:text-white"
+                  >
+                    <Plus className="h-4 w-4" /> New order
+                  </button>
+                )}
               </div>
             </div>
             {!order ? (

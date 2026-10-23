@@ -9,6 +9,9 @@ import { badRequest, conflict, forbidden, notFound, AppError } from '../../lib/e
 import { revokeAllForUser } from '../../auth/tokens';
 import { randomToken } from '../../lib/crypto';
 
+/** Our own uploaded files only. */
+const zUpload = z.string().max(300).regex(/^\/uploads\/[\w-]+\/[\w-]+\.(png|jpg|webp)$/);
+
 const m = createModule('/admin', 'Administration');
 
 // ── Business profile & settings ──
@@ -18,7 +21,7 @@ m.route(
     method: 'patch', path: '/tenant', summary: 'Update business name, logo, branding and settings', auth: 'tenant', permission: P.SETTINGS_MANAGE,
     body: z.object({
       name: z.string().min(2).max(120).optional(), contactEmail: z.email().optional(), contactPhone: z.string().optional(), kraPin: z.string().max(20).optional(),
-      branding: z.object({ logoUrl: z.string().max(500).regex(/^(\/uploads\/|https:\/\/)/, 'Upload the logo or use an https URL').or(z.literal('')).optional(), primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), receiptHeader: z.string().max(300).optional(), receiptFooter: z.string().max(300).optional() }).optional(),
+      branding: z.object({ logoUrl: z.string().max(500).regex(/^(\/uploads\/|https:\/\/)/, 'Upload the logo or use an https URL').or(z.literal('')).optional(), primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), receiptHeader: z.string().max(300).optional(), receiptFooter: z.string().max(300).optional(), appIcons: z.object({ icon192: zUpload, icon512: zUpload, maskable512: zUpload, source: z.string().max(500) }).nullable().optional() }).optional(),
       settings: z.object({
         timezone: z.string().optional(), discountApprovalThresholdBps: z.number().int().min(0).max(10000).optional(), loyaltyPointsPer100: z.number().min(0).max(100).optional(),
         loyaltyRedeemValue: z.number().int().min(0).optional(), costingPolicy: z.enum(['fifo', 'weighted_average']).optional(), allowNegativeStock: z.boolean().optional(),

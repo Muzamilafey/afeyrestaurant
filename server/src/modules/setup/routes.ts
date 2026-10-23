@@ -11,7 +11,7 @@ const m = createModule('', 'Business');
 /** Public branding for the sign-in screen and installable app. */
 m.route({ method: 'get', path: '/business', summary: 'Business name, logo and colour (public)', auth: 'public' }, async () => {
   const b = await getBusiness();
-  return { configured: !!b, name: b?.name ?? 'Chili POS', logoUrl: b?.branding?.logoUrl ?? null, primaryColor: b?.branding?.primaryColor ?? '#07963C', setupRequiresToken: !b && !!env.SETUP_TOKEN };
+  return { configured: !!b, name: b?.name ?? 'Chili POS', logoUrl: b?.branding?.logoUrl ?? null, icons: b?.branding?.appIcons?.icon192 ? b.branding.appIcons : null, primaryColor: b?.branding?.primaryColor ?? '#07963C', setupRequiresToken: !b && !!env.SETUP_TOKEN };
 });
 
 /**

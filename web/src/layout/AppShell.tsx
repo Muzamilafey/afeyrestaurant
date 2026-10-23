@@ -96,7 +96,8 @@ export function AppShell() {
   const items = NAV.filter((n) => can(...n.perms));
   const isPos = loc.pathname.startsWith('/pos');
 
-  const nav = (
+  // The desktop sidebar can be collapsed to icons; the mobile slide-out menu always shows the full names.
+  const renderNav = (collapsed: boolean) => (
     <nav className="flex h-full flex-col">
       <div className="flex items-center gap-3 px-4 pb-4 pt-5">
         <BusinessMark name={session.business?.name ?? 'Chili POS'} logoUrl={session.business?.branding?.logoUrl} />
@@ -147,13 +148,13 @@ export function AppShell() {
 
   return (
     <div className="flex h-full">
-      <aside className={cx('hidden shrink-0 border-r border-line bg-card transition-all lg:block', collapsed ? 'w-[76px]' : 'w-60')}>{nav}</aside>
+      <aside className={cx('hidden shrink-0 border-r border-line bg-card transition-all lg:block', collapsed ? 'w-[76px]' : 'w-60')}>{renderNav(collapsed)}</aside>
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
-          <aside className="absolute left-0 top-0 h-full w-64 bg-card shadow-lift" onClick={(e) => e.stopPropagation()}>
+          <aside className="absolute left-0 top-0 h-full w-72 max-w-[85vw] bg-card shadow-lift" onClick={(e) => e.stopPropagation()}>
             <button className="absolute right-3 top-5 rounded-lg p-1 text-ink-soft" onClick={() => setOpen(false)} aria-label="Close menu"><X className="h-5 w-5" /></button>
-            {nav}
+            {renderNav(false)}
           </aside>
         </div>
       )}

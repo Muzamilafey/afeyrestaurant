@@ -202,5 +202,20 @@ describe('GET /api/v1/manifest.webmanifest (PWA)', () => {
     const after = await api().get('/api/v1/manifest.webmanifest');
     expect(after.body.name).toBe('Afey Restaurant & Grill');
     expect(after.body.short_name.length).toBeLessThanOrEqual(12);
+
+    // The business logo becomes the app icon once its PNG icons are saved.
+    const login = await api().post('/api/v1/auth/login').send({ email: 'owner@afey.co.ke', password: 'Str0ng#Passw0rd!' });
+    const auth = { Authorization: `Bearer ${login.body.data.accessToken}`, 'X-Requested-With': 'chili-pos' };
+    const base = '/uploads/' + '0123456789abcdef01234567' + '/';
+    const icons = { icon192: `${base}a-192.png`, icon512: `${base}a-512.png`, maskable512: `${base}a-m.png`, source: `${base}logo.png` };
+    const bad = await api().patch('/api/v1/admin/tenant').set(auth).send({ branding: { appIcons: { ...icons, icon192: 'https://evil.example/x.png' } } });
+    expect(bad.status).toBe(400);
+    expect((await api().patch('/api/v1/admin/tenant').set(auth).send({ branding: { logoUrl: icons.source, appIcons: icons } })).status).toBe(200);
+    const branded = await api().get('/api/v1/manifest.webmanifest');
+    expect(branded.body.icons.map((i: { src: string }) => i.src)).toEqual([icons.icon192, icons.icon512, icons.maskable512]);
+    expect((await api().get('/api/v1/business')).body.data.icons).toMatchObject({ icon192: icons.icon192 });
+    // Removing the logo goes back to the Chili POS icons.
+    expect((await api().patch('/api/v1/admin/tenant').set(auth).send({ branding: { logoUrl: '', appIcons: null } })).status).toBe(200);
+    expect((await api().get('/api/v1/manifest.webmanifest')).body.icons[0].src).toBe('/icon-192.png');
   });
 });

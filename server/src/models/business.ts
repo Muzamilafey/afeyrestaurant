@@ -18,6 +18,8 @@ const tenantSchema = new Schema(
     kraPin: String,
     branding: {
       logoUrl: String,
+      /** PNG app icons generated from the logo (browser tab, home screen, installed app); source = the logo they came from. */
+      appIcons: { icon192: String, icon512: String, maskable512: String, source: String },
       primaryColor: { type: String, default: '#07963C' },
       receiptHeader: String,
       receiptFooter: { type: String, default: 'Thank you for dining with us!' },

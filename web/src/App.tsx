@@ -1,10 +1,13 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
 import { AppShell } from '@/layout/AppShell';
 import Login from '@/pages/Login';
 import { ForgotPassword, ResetPassword } from '@/pages/PasswordReset';
 import { Skeleton, Empty } from '@/components/ui';
+import { get } from '@/lib/api';
+import { applyDocumentBranding, type AppIcons } from '@/lib/appIcons';
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const PosPage = lazy(() => import('@/pages/pos/PosPage'));
@@ -50,9 +53,19 @@ function Home() {
   return <Empty title={`Welcome, ${session?.user.name}`} hint="Use the menu to get started." />;
 }
 
+/** Browser tab icon, home-screen icon and window title follow the business name and logo. */
+function BrandingSync() {
+  const { data } = useQuery<{ name: string; logoUrl: string | null; icons: AppIcons | null; primaryColor: string }>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000 });
+  useEffect(() => {
+    if (data) applyDocumentBranding(data);
+  }, [data]);
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <BrandingSync />
       <Suspense fallback={<Loading />}>
         <Routes>
           <Route path="/login" element={<Login />} />

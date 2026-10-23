@@ -6,6 +6,7 @@ import { dateTime, fromCents, money, titleCase, toCents } from '@/lib/format';
 import { Button, Card, DataTable, Field, Input, Modal, PageHeader, Pill, Select, StatusPill, Tabs, Textarea, Toggle } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
+import { makeAppIcons } from '@/lib/appIcons';
 import { AccountMenu } from '@/layout/AccountMenu';
 
 type TabId = 'business' | 'branches' | 'users' | 'roles' | 'menu' | 'taxes' | 'tables' | 'audit' | 'account';
@@ -164,7 +165,20 @@ function Business() {
       setUploading(false);
     }
   };
-  const save = () => patch('/admin/tenant', { name: f.name, kraPin: f.kraPin, contactEmail: f.contactEmail || undefined, contactPhone: f.contactPhone, branding: { primaryColor: f.branding.primaryColor, receiptHeader: f.branding.receiptHeader, receiptFooter: f.branding.receiptFooter, logoUrl: f.branding.logoUrl ?? '' }, settings: { discountApprovalThresholdBps: Number(s.discountApprovalThresholdBps), loyaltyPointsPer100: Number(s.loyaltyPointsPer100), costingPolicy: s.costingPolicy, allowNegativeStock: s.allowNegativeStock, mpesaTimeoutSeconds: Number(s.mpesaTimeoutSeconds), offlineAllowedActions: s.offlineAllowedActions, alertEmails: s.alertEmails, dailySummary: s.dailySummary, lowStockAlerts: s.lowStockAlerts } }).then(async () => { await refreshSession(); qc.invalidateQueries({ queryKey: ['public-business'] }); toast('Business settings saved'); }).catch(handleError);
+  const save = async () => {
+    // The logo also becomes the app icon (browser tab, home screen, installed app): make PNG icons when it changes.
+    let appIcons = f.branding.appIcons ?? null;
+    if (!f.branding.logoUrl) appIcons = null;
+    else if (!appIcons || appIcons.source !== f.branding.logoUrl) {
+      try {
+        appIcons = await makeAppIcons(f.branding.logoUrl);
+      } catch (e) {
+        appIcons = null;
+        toast(`Logo saved, but the app icon could not be made: ${(e as Error).message}`, 'info');
+      }
+    }
+    return patch('/admin/tenant', { name: f.name, kraPin: f.kraPin, contactEmail: f.contactEmail || undefined, contactPhone: f.contactPhone, branding: { primaryColor: f.branding.primaryColor, receiptHeader: f.branding.receiptHeader, receiptFooter: f.branding.receiptFooter, logoUrl: f.branding.logoUrl ?? '', appIcons }, settings: { discountApprovalThresholdBps: Number(s.discountApprovalThresholdBps), loyaltyPointsPer100: Number(s.loyaltyPointsPer100), costingPolicy: s.costingPolicy, allowNegativeStock: s.allowNegativeStock, mpesaTimeoutSeconds: Number(s.mpesaTimeoutSeconds), offlineAllowedActions: s.offlineAllowedActions, alertEmails: s.alertEmails, dailySummary: s.dailySummary, lowStockAlerts: s.lowStockAlerts } }).then(async () => { await refreshSession(); qc.invalidateQueries({ queryKey: ['public-business'] }); toast('Business settings saved'); }).catch(handleError);
+  };
   return (
     <Card title="Business settings" actions={<Button size="sm" onClick={save}>Save</Button>}>
       <div className="mb-5 flex flex-wrap items-center gap-4 rounded-2xl bg-page p-4">
