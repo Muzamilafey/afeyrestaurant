@@ -10,6 +10,8 @@ export interface AppIcons { icon192: string; icon512: string; maskable512: strin
 function loadImage(url: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
+    // A logo on another site (https URL) must be loaded with CORS, or the canvas can't be exported as PNG.
+    if (/^https?:\/\//.test(url) && !url.startsWith(window.location.origin)) img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('The logo could not be loaded to make app icons'));
     img.src = url;
@@ -77,3 +79,6 @@ export function applyDocumentBranding(b: { name?: string | null; logoUrl?: strin
   const meta = document.head.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
   if (meta && b.name) meta.content = b.name;
 }
+
+/** True when there is a logo but no app icons made from it (set before icons existed, or changed elsewhere). */
+export const appIconsStale = (b?: { logoUrl?: string | null; icons?: AppIcons | null } | null) => !!b?.logoUrl && (!b.icons || b.icons.source !== b.logoUrl);

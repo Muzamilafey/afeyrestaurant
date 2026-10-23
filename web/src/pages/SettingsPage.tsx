@@ -193,6 +193,14 @@ function Business() {
           {f.branding.logoUrl && <Button variant="ghost" onClick={() => setF({ ...f, branding: { ...f.branding, logoUrl: '' } })}>Remove</Button>}
         </div>
         <p className="w-full text-xs text-ink-soft">Square PNG, JPG or WebP, up to 5 MB. Changes apply after you press Save.</p>
+        {f.branding.logoUrl && (
+          <div className="flex w-full items-center gap-3 rounded-xl border border-line bg-card p-3 text-xs text-ink-soft">
+            {f.branding.appIcons?.icon192 && f.branding.appIcons.source === f.branding.logoUrl
+              ? <img src={f.branding.appIcons.icon192} alt="App icon" className="h-12 w-12 shrink-0 rounded-xl shadow-soft" />
+              : <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-dashed border-line text-[10px]">Save</span>}
+            <p><b className="text-ink">App icon.</b> The logo is also the icon of the installed app (desktop, taskbar, phone home screen). An app installed before the logo was set keeps its old icon: on that till, uninstall the app (right-click its icon → Uninstall, or in the app's ⋮ menu) and install it again from the browser.</p>
+          </div>
+        )}
       </div>
       <SystemStatus />
       <div className="grid gap-3 md:grid-cols-3">

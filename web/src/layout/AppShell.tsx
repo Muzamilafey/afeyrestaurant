@@ -1,10 +1,11 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList, Eye,
 } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import { get } from '@/lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { get, patch } from '@/lib/api';
+import { appIconsStale, makeAppIcons, type AppIcons } from '@/lib/appIcons';
 import { useAuth, shiftStaff } from '@/auth/AuthContext';
 import { cx } from '@/components/ui';
 import { outbox, syncOutbox } from '@/lib/offline';
@@ -35,6 +36,26 @@ const NAV = [
   { to: '/settings', label: 'Settings', icon: Settings, perms: ['settings.manage', 'menu.manage', 'users.manage', 'tables.manage', 'audit.view'] },
 ];
 
+
+/**
+ * The installed app (desktop / home-screen icon) uses icons made from the business logo. If the logo has no icons yet
+ * — it was uploaded before icons were made automatically — make them once, quietly, when an admin is signed in.
+ */
+function AppIconRepair() {
+  const { can } = useAuth();
+  const qc = useQueryClient();
+  const done = useRef(false);
+  const { data } = useQuery<{ logoUrl: string | null; icons: AppIcons | null; liveCopy: unknown }>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000 });
+  useEffect(() => {
+    if (done.current || !data || data.liveCopy || !appIconsStale(data) || !can('settings.manage') || !can('menu.manage')) return;
+    done.current = true;
+    makeAppIcons(data.logoUrl!)
+      .then((appIcons) => patch('/admin/tenant', { branding: { appIcons } }))
+      .then(() => qc.invalidateQueries({ queryKey: ['public-business'] }))
+      .catch(() => undefined); // Settings -> Business shows the problem when the logo is saved
+  }, [data, can, qc]);
+  return null;
+}
 
 /** On the live (internet) copy everything is view-only: changes are made on the restaurant's own server. */
 function LiveCopyBanner() {
@@ -197,6 +218,7 @@ export function AppShell() {
           )}
         </header>
         <LiveCopyBanner />
+        <AppIconRepair />
         <main className={cx('min-h-0 flex-1', isPos ? 'overflow-hidden' : 'scroll-thin overflow-y-auto p-4 sm:p-6')}>
           <Outlet />
         </main>
