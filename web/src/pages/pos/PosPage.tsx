@@ -236,13 +236,22 @@ export default function PosPage() {
     if (table === tableId && needsTable()) return setPickTableFor('send');
     setBusy('send');
     try {
+      let sent: string | null = null;
       if (!order) {
         const o = await createFromDraft(true, table);
-        if (o) toast(`Order ${o.number} sent`);
+        if (o) sent = `Order ${o.number} sent`;
       } else {
         const r = await post<{ order: Order; tickets: unknown[] }>(`/orders/${order._id}/send`, { submissionKey: uuid() });
         qc.setQueryData(['order', order._id], (old: { order: Order } | undefined) => ({ ...(old ?? {}), order: r.order }));
-        toast(r.tickets.length ? 'Sent to kitchen/bar' : 'Nothing new to send');
+        if (r.tickets.length) sent = `${order.number} sent to kitchen/bar`;
+        else toast('Nothing new to send');
+      }
+      // Sent: start a fresh order straight away. The sent one stays open in the strip below (tap it to add or pay).
+      if (sent) {
+        setOrder(null);
+        resetDraft();
+        qc.invalidateQueries({ queryKey: ['tables'] });
+        toast(`${sent} · new order started`);
       }
     } catch (e) {
       handleError(e);
@@ -608,10 +617,11 @@ export default function PosPage() {
           <p className="py-1.5 text-sm text-ink-soft">{online ? 'No active tables or orders.' : 'Offline — active orders unavailable.'}</p>
         ) : (
           activeChips.map((c) => (
-            <button key={c.id} onClick={() => setOrder(c.id)} className={cx('flex min-w-[150px] flex-col gap-1 rounded-xl border-2 px-3 py-2 text-left', orderId === c.id ? 'border-brand bg-brand-50' : 'border-line hover:border-brand/40')}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-bold">{c.table.length <= 3 ? `T-${c.table}` : c.table}</span>
-                <span className="text-xs text-ink-soft">{c.itemCount} items</span>
+            <button key={c.id} onClick={() => setOrder(c.id)} title={`${c.number} · ${c.table.length <= 3 ? `Table ${c.table}` : c.table}`} className={cx('flex min-w-[170px] max-w-[230px] shrink-0 flex-col gap-1 rounded-xl border-2 px-3 py-2 text-left', orderId === c.id ? 'border-brand bg-brand-50' : 'border-line hover:border-brand/40')}>
+              <span className="truncate text-sm font-bold tabular-nums">{c.number}</span>
+              <div className="flex items-center justify-between gap-2 text-xs text-ink-soft">
+                <span className="rounded-md bg-page px-1.5 py-0.5 font-semibold text-ink">{c.table.length <= 3 ? `T-${c.table}` : c.table}</span>
+                <span>{c.itemCount} {c.itemCount === 1 ? 'item' : 'items'}</span>
               </div>
               <span className="truncate text-xs text-ink-soft">{c.waiterName ?? '—'} · {money(c.total)}</span>
               <div className="h-1.5 overflow-hidden rounded-full bg-page"><div className="h-full rounded-full bg-brand" style={{ width: `${Math.round((c.progress ?? 0) * 100)}%` }} /></div>
