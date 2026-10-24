@@ -116,8 +116,8 @@ export function AppShell() {
   const { theme, toggle } = useTheme();
   useIdleLock(!!terminalToken && !!session, logout);
   const [open, setOpen] = useState(false);
-  // Start collapsed on tablets so the POS gets the full width.
-  const [collapsed, setCollapsed] = useState(() => window.innerWidth < 1280);
+  // The sidebar starts closed (icons only) after signing in, so the screen gets the full width; ☰ opens it.
+  const [collapsed, setCollapsed] = useState(true);
   const loc = useLocation();
   const navigate = useNavigate();
   const switchTo = async (id: string) => {
