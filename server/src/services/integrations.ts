@@ -7,7 +7,7 @@ export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
 
 /** Which settings keys are secrets for each integration. Secrets are encrypted and never returned. */
 export const SECRET_KEYS: Record<string, string[]> = {
-  mpesa: ['consumerKey', 'consumerSecret', 'passkey', 'initiatorPassword'],
+  mpesa: ['consumerKey', 'consumerSecret', 'passkey', 'initiatorPassword', 'securityCredential'],
   sms: ['apiKey'],
   email: ['smtpPass'],
   online_ordering: ['apiKey'],

@@ -1,7 +1,8 @@
 import type { Types } from 'mongoose';
 import { mocksAllowed } from '../config/env';
 import { loadIntegration } from '../services/integrations';
-import { DarajaClient, type DarajaConfig } from './mpesa/daraja';
+import { DarajaClient, securityCredential, type DarajaConfig } from './mpesa/daraja';
+import { logger } from '../lib/logger';
 import { MockSmsProvider, TalkSasaProvider, type SmsProvider } from './sms/provider';
 import { MockEmailProvider, SmtpProvider, type EmailProvider } from './email/provider';
 import { AppError } from '../lib/errors';
@@ -66,6 +67,19 @@ export async function getMpesa(tenantId: Types.ObjectId, branchId: Types.ObjectI
     shortCode: String(s.shortCode),
     transactionType: s.transactionType === 'CustomerBuyGoodsOnline' ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline',
     partyB: s.partyB ? String(s.partyB) : undefined,
+    initiatorName: s.initiatorName ? String(s.initiatorName).trim() : undefined,
+    securityCredential: cfg.secrets.securityCredential || initiatorCredential(cfg.secrets.initiatorPassword, s.certificate),
   };
   return { mode: 'daraja', client: new DarajaClient(dc), settings: s, environment: env };
+}
+
+/** Encrypt the initiator password with the Safaricom certificate pasted in the settings (when no ready credential). */
+function initiatorCredential(password?: string, certificate?: string) {
+  if (!password || !certificate) return undefined;
+  try {
+    return securityCredential(password, String(certificate));
+  } catch (e) {
+    logger.warn({ err: (e as Error).message }, 'M-Pesa: the Safaricom certificate could not be used to encrypt the initiator password');
+    return undefined;
+  }
 }

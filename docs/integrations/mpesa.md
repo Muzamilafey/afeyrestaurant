@@ -22,6 +22,26 @@ callbacks, reconciliation. Sandbox and production are separate settings.
 6. Optional: **Register C2B URLs** to receive direct Till/Paybill payments, which cashiers can apply to orders under
    the payment dialog (verified by Safaricom’s confirmation, not by the cashier).
 
+### Payer name (who paid)
+
+After a prompt payment succeeds, Chili POS asks Safaricom's **Transaction Status API** who paid. The answer
+(`DebitPartyName`, e.g. `254712345678 - JANE WANJIKU DOE`) arrives a few seconds later. It is shown on the
+*Payment complete* screen ("Paid by JANE WANJIKU DOE"), printed on the receipt and stored on the payment.
+Till/Paybill (C2B) payments carry the name in Safaricom's confirmation, so they need nothing extra.
+
+Needs, in Integrations → M-Pesa:
+
+1. **Initiator name**: an API user created in the M-Pesa org portal with the *Transaction Status Query* role
+   (sandbox: `testapi`).
+2. **Security credential**: the initiator password encrypted with Safaricom's certificate. Either paste the ready
+   credential from the Daraja portal, or enter the **initiator password** and paste the **Safaricom certificate**
+   (sandbox or production, from the portal) and Chili POS encrypts it.
+3. A public **callback base URL**. Safaricom only delivers the answer to `…/api/v1/payhooks/status/…`, so a server
+   reachable only on the local network never gets names. Payments are not affected: the sale completes either way.
+
+If something is missing, the payment attempt records why (*nameLookup*), and the sale still completes. The
+*Simulated* provider returns "SIMULATED CUSTOMER" so the flow can be tried without Safaricom.
+
 Secrets are encrypted at rest (AES-256-GCM) and never returned to the browser; the UI shows masked hints only.
 
 ## Payment lifecycle and safeguards

@@ -16,7 +16,7 @@ export async function confirmOfflineMpesa(tenantId: Types.ObjectId, code: string
     logger.warn({ code, received: tx.amount, recorded: payment.amount }, 'Offline M-Pesa code found but the amount received is less than the sale');
     return false;
   }
-  payment.set({ status: 'confirmed', verification: 'provider', phone: payment.phone ?? tx.msisdn });
+  payment.set({ status: 'confirmed', verification: 'provider', phone: payment.phone ?? tx.msisdn, payerName: tx.payerName ?? tx.firstName ?? undefined });
   await payment.save({ session });
   tx.set({ status: 'matched', matchedOrderId: payment.orderId, matchedPaymentId: payment._id });
   await tx.save({ session });

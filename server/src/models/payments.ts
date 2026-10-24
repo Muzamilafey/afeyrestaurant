@@ -37,6 +37,16 @@ const paymentAttemptSchema = new Schema(
     paymentId: Schema.Types.ObjectId,
     initiatedBy: Schema.Types.ObjectId,
     error: String,
+    /** Registered M-Pesa name of the payer, from Safaricom's Transaction Status API (DebitPartyName). */
+    payerName: String,
+    /** The name lookup: requested -> received | failed | unavailable (not configured / not reachable). */
+    nameLookup: {
+      status: { type: String, enum: ['requested', 'received', 'failed', 'unavailable'] },
+      tokenHash: String,
+      requestedAt: Date,
+      receivedAt: Date,
+      error: String,
+    },
   },
   schemaOpts,
 );
@@ -62,6 +72,8 @@ const paymentSchema = new Schema(
     change: { ...money },
     reference: String, // M-Pesa receipt, card approval code, etc.
     phone: String,
+    /** M-Pesa: the payer's registered name (Transaction Status API or the C2B confirmation). */
+    payerName: String,
     customerId: Schema.Types.ObjectId,
     status: { type: String, enum: ['confirmed', 'provisional'], default: 'confirmed' },
     /** provider | manual | cash | offline_cash | offline_mpesa (code typed in while offline, confirmed against C2B) */
@@ -179,6 +191,8 @@ const c2bSchema = new Schema(
     billRef: String,
     msisdn: String, // may be hashed by Safaricom on newer API versions
     firstName: String,
+    /** First, middle and last name from the C2B confirmation. */
+    payerName: String,
     transTime: String,
     status: { type: String, enum: ['unmatched', 'matched', 'ignored'], default: 'unmatched', index: true },
     matchedOrderId: Schema.Types.ObjectId,

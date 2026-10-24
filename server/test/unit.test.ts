@@ -153,3 +153,27 @@ describe('Daraja STK status query', () => {
     }
   });
 });
+
+describe('M-Pesa payer name (Transaction Status API)', () => {
+  it('reads the registered name, phone and receipt from the status result', async () => {
+    const { parseStatusResult } = await import('../src/integrations/mpesa/daraja');
+    const r = parseStatusResult({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'The service request is processed successfully.', OriginatorConversationID: 'x', ConversationID: 'y', TransactionID: 'TJK8XYZ123',
+      ResultParameters: { ResultParameter: [{ Key: 'DebitPartyName', Value: '254712345678 - JANE WANJIKU DOE' }, { Key: 'ReceiptNo', Value: 'TJK8XYZ123' }, { Key: 'Amount', Value: 240 }, { Key: 'TransactionStatus', Value: 'Completed' }] } } });
+    expect(r).toMatchObject({ resultCode: 0, payerName: 'JANE WANJIKU DOE', payerPhone: '254712345678', receipt: 'TJK8XYZ123', amount: 240, transactionStatus: 'Completed' });
+    expect(parseStatusResult({ Result: { ResultCode: 2001, ResultDesc: 'The initiator information is invalid.' } })).toMatchObject({ resultCode: 2001, payerName: undefined });
+    expect(parseStatusResult({ nope: true })).toBeNull();
+  });
+
+  it('encrypts the initiator password with the Safaricom certificate, even when the PEM lost its line breaks', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const crypto = await import('node:crypto');
+    const { securityCredential } = await import('../src/integrations/mpesa/daraja');
+    const cert = fs.readFileSync(path.join(__dirname, 'fixtures/test-daraja-cert.pem'), 'utf8');
+    const key = fs.readFileSync(path.join(__dirname, 'fixtures/test-daraja-key.pem'), 'utf8');
+    const oneLine = cert.replace(/\n/g, ' ');
+    const enc = securityCredential('Safaricom999!*!', oneLine);
+    const plain = crypto.privateDecrypt({ key, padding: crypto.constants.RSA_PKCS1_PADDING }, Buffer.from(enc, 'base64')).toString();
+    expect(plain).toBe('Safaricom999!*!');
+  });
+});

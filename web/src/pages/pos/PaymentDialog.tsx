@@ -180,7 +180,19 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
   const { toast, handleError, confirm } = useFeedback();
   const { can } = useAuth();
   const [to, setTo] = useState(order.customerPhone ? `0${order.customerPhone.slice(3)}` : '');
-  const { data, refetch } = useQuery<{ text: string; doc: ReceiptDoc; printCount: number }>({ queryKey: ['receipt', order._id], queryFn: () => get(`/orders/${order._id}/receipt`) });
+  // The M-Pesa payer's registered name comes from Safaricom a few seconds after the payment: keep checking for a while.
+  const [openedAt] = useState(() => Date.now());
+  const { data, refetch } = useQuery<{ text: string; doc: ReceiptDoc; printCount: number }>({
+    queryKey: ['receipt', order._id],
+    queryFn: () => get(`/orders/${order._id}/receipt`),
+    refetchInterval: (q) => {
+      const lines = q.state.data?.doc.lines ?? [];
+      const mpesa = lines.some((l) => l.k === 'row' && /^M-Pesa/.test(l.l));
+      const named = lines.some((l) => l.k === 'row' && /^\s*Paid by /.test(l.l));
+      return mpesa && !named && Date.now() - openedAt < 45_000 ? 2500 : false;
+    },
+  });
+  const payerName = data?.doc.lines.map((l) => (l.k === 'row' ? /^\s*Paid by (.+)$/.exec(l.l)?.[1] : undefined)).find(Boolean);
   async function print() {
     try {
       let reason: string | undefined;
@@ -225,6 +237,7 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
           <div>
             <p className="font-bold">{money(order.totals.total)} received</p>
             <p className="text-sm">Receipt {order.receiptNumber}{order.source === 'offline' ? ' · pending cloud verification' : ''}</p>
+            {payerName && <p className="mt-0.5 text-sm font-semibold">Paid by {payerName}</p>}
           </div>
         </div>
         <ReceiptPaper doc={data?.doc} animate />

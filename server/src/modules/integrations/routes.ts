@@ -58,7 +58,7 @@ m.route({ method: 'get', path: '', summary: 'Integration centre overview (no sec
 
 const zSave = z.object({
   provider: z.string().min(2).max(30), enabled: z.boolean(), environment: z.enum(['sandbox', 'production', 'mock']).optional(), branchId: zId.nullable().optional(),
-  settings: z.record(z.string(), z.union([z.string().max(500), z.number(), z.boolean(), z.null()])).optional(),
+  settings: z.record(z.string(), z.union([z.string().max(4000), z.number(), z.boolean(), z.null()])).optional(), // 4000: a pasted certificate
   secrets: z.record(z.string(), z.string().max(2000).nullable()).optional(),
 });
 const PROVIDERS: Record<string, string[]> = { mpesa: ['daraja', 'mock'], sms: ['talksasa', 'mock'], email: ['smtp', 'mock'], online_ordering: ['none'], accounting_export: ['csv'] };

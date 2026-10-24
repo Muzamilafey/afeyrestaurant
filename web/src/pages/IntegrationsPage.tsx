@@ -89,6 +89,11 @@ const FIELDS: Record<string, Array<{ key: string; label: string; secret?: boolea
     { key: 'accountReferenceFormat', label: 'Account reference format', hint: '{order} is replaced by the order number (max 12 chars)' },
     { key: 'transactionDesc', label: 'Transaction description', hint: 'Max 13 characters' },
     { key: 'verifyCallbackWithQuery', label: 'Verify success callbacks with a status query', options: [['true', 'Yes (recommended)'], ['false', 'No']] },
+    { key: 'fetchPayerName', label: 'Show the payer’s M-Pesa name', options: [['true', 'Yes'], ['false', 'No']], hint: 'Asks Safaricom (Transaction Status API) who paid after each prompt payment. Needs the initiator below and a public callback base URL.' },
+    { key: 'initiatorName', label: 'Initiator name', hint: 'API user from the M-Pesa org portal with the “Transaction Status Query” role (sandbox: testapi)' },
+    { key: 'securityCredential', label: 'Security credential', secret: true, hint: 'The encrypted initiator password from the Daraja portal (or fill the two fields below instead)' },
+    { key: 'initiatorPassword', label: 'Initiator password', secret: true, hint: 'Used with the certificate below when no security credential is given' },
+    { key: 'certificate', label: 'Safaricom certificate (PEM)', hint: 'Paste the sandbox or production certificate from the Daraja portal' },
   ],
   sms: [
     { key: 'baseUrl', label: 'API base URL', hint: 'Default https://bulksms.talksasa.com/api/v3 — confirm in your Talk Sasa dashboard' },

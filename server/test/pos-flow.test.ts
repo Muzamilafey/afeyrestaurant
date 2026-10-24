@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Types } from 'mongoose';
 import { setupDb, teardownDb, api, login, uuid, approval, type Session } from './helpers';
-import { Product, Table, ModifierGroup, StockBalance, StockLedger, Ingredient, KitchenTicket, Payment, Order, Receipt, Branch, IntegrationConfiguration, MpesaC2BTransaction } from '../src/models';
+import { Product, Table, ModifierGroup, StockBalance, StockLedger, Ingredient, KitchenTicket, Payment, Order, Receipt, Branch, IntegrationConfiguration, MpesaC2BTransaction, PaymentAttempt } from '../src/models';
 import { sha256 } from '../src/lib/crypto';
 import { MockSmsProvider } from '../src/integrations/sms/provider';
 import { processNotificationQueue } from '../src/services/notify';
@@ -330,6 +330,28 @@ describe('M-Pesa completion without a callback', () => {
     expect(String(p!.manualConfirmation!.by)).toBeTruthy();
     const bad = await cashier.as(api().post('/api/v1/orders').send({ clientId: uuid(), type: 'takeaway', items: [{ productId: ids.coke, qty: 1 }] }));
     expect((await cashier.as(api().post(`/api/v1/orders/${bad.body.data._id}/payments`).send({ method: 'mpesa_manual', amount: bad.body.data.totals.total, reference: 'x!', idempotencyKey: uuid() }))).status).toBe(400);
+  });
+});
+
+describe('M-Pesa payer name', () => {
+  it('shows who paid: simulated lookup after payment, and Safaricom’s status result on the callback path', async () => {
+    const r = await cashier.as(api().post('/api/v1/orders').send({ clientId: uuid(), type: 'takeaway', items: [{ productId: ids.coke, qty: 1 }] }));
+    const o = r.body.data as { _id: string; totals: { total: number } };
+    const a = await cashier.as(api().post(`/api/v1/orders/${o._id}/mpesa`).send({ phone: '0712345678', amount: o.totals.total, idempotencyKey: uuid() }));
+    await cashier.as(api().post(`/api/v1/mpesa/simulate/${a.body.data._id}`).send({ resultCode: 0 }));
+    expect((await Payment.findOne({ tenantId: seed.tenantId, orderId: o._id }).lean())!.payerName).toBe('SIMULATED CUSTOMER');
+    const receipt = await cashier.as(api().get(`/api/v1/orders/${o._id}/receipt`));
+    expect(receipt.body.data.text).toContain('Paid by SIMULATED CUSTOMER');
+
+    // The real answer arrives at /payhooks/status/<attempt>/<token>/result; only the right token is accepted.
+    const token = 'c0ffee'.repeat(8);
+    await PaymentAttempt.updateOne({ tenantId: seed.tenantId, _id: a.body.data._id }, { $set: { 'nameLookup.status': 'requested', 'nameLookup.tokenHash': sha256(token) }, $unset: { payerName: 1 } });
+    const result = { Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'ok', ResultParameters: { ResultParameter: [{ Key: 'DebitPartyName', Value: '254712345678 - JANE WANJIKU' }, { Key: 'ReceiptNo', Value: 'TJK8NAME01' }] } } };
+    expect((await api().post(`/api/v1/payhooks/status/${a.body.data._id}/wrong/result`).send(result)).status).toBe(404);
+    const ok = await api().post(`/api/v1/payhooks/status/${a.body.data._id}/${token}/result`).send(result);
+    expect(ok.body).toMatchObject({ ResultCode: 0 });
+    expect((await PaymentAttempt.findOne({ tenantId: seed.tenantId, _id: a.body.data._id }).lean())).toMatchObject({ payerName: 'JANE WANJIKU', nameLookup: { status: 'received' } });
+    expect((await Payment.findOne({ tenantId: seed.tenantId, orderId: o._id }).lean())!.payerName).toBe('JANE WANJIKU');
   });
 });
 

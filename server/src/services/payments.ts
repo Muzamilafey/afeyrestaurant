@@ -14,7 +14,7 @@ import { broadcastOrder, releaseTableIfFree } from './orders';
 import { emitBranch, emitStation } from '../realtime/bus';
 import { resolveApproval, type ApprovalInput } from './approval';
 import { getMpesa } from '../integrations/factory';
-import { parseStkCallback, STK_RESULT_CODES, type StkCallbackParsed } from '../integrations/mpesa/daraja';
+import { parseStatusResult, parseStkCallback, STK_RESULT_CODES, type StkCallbackParsed } from '../integrations/mpesa/daraja';
 import { ProviderError } from '../integrations/http';
 import { normalizeKePhone } from '../lib/phone';
 import { sha256 } from '../lib/crypto';
@@ -405,8 +405,74 @@ export async function handleStkCallback(attemptId: string, token: string, body: 
       return { accepted: false };
     }
   }
-  await applyStkResult(attempt._id, attempt.tenantId as Types.ObjectId, parsed, 'callback');
+  const res = await applyStkResult(attempt._id, attempt.tenantId as Types.ObjectId, parsed, 'callback');
+  if (res.attempt.status === 'succeeded') void requestPayerName(attempt.tenantId as Types.ObjectId, attempt._id).catch((e) => logger.warn({ err: e }, 'M-Pesa payer name lookup failed'));
   return { accepted: true };
+}
+
+/**
+ * Ask Safaricom who paid: the Transaction Status API returns the payer's registered M-Pesa name (DebitPartyName). Its
+ * answer is sent later to a ResultURL on this server, so this needs the initiator credentials and a public callback
+ * address. Never blocks or fails a sale: the name is a nice-to-have that appears when it arrives.
+ */
+export async function requestPayerName(tenantId: Types.ObjectId, attemptId: Types.ObjectId) {
+  const attempt = await PaymentAttempt.findOne({ tenantId, _id: attemptId });
+  if (!attempt || attempt.status !== 'succeeded' || attempt.payerName) return;
+  if (attempt.nameLookup?.status === 'requested' && attempt.nameLookup.requestedAt && Date.now() - attempt.nameLookup.requestedAt.getTime() < 60_000) return;
+  const mp = await getMpesa(tenantId, attempt.branchId as Types.ObjectId).catch(() => null);
+  if (!mp) return;
+  const unavailable = async (why: string) => {
+    attempt.set('nameLookup', { status: 'unavailable', error: why });
+    await attempt.save();
+  };
+  if (mp.mode === 'mock') {
+    // Simulated provider: behave like Safaricom's answer arriving a moment later.
+    attempt.set({ payerName: 'SIMULATED CUSTOMER', nameLookup: { status: 'received', receivedAt: new Date() } });
+    await attempt.save();
+    await savePayerName(tenantId, attempt._id, 'SIMULATED CUSTOMER');
+    return;
+  }
+  if (mp.settings.fetchPayerName === false || mp.settings.fetchPayerName === 'false') return unavailable('Payer name lookup is switched off');
+  const base = ((mp.settings.callbackBaseUrl as string) || env.PUBLIC_API_URL).replace(/\/+$/, '');
+  if (!/^https:\/\//.test(base) || /\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(base)) return unavailable('Needs a public https callback address for Safaricom to send the name to');
+  if (!attempt.mpesaReceipt && !attempt.merchantRequestId) return unavailable('No M-Pesa reference to look up');
+  const token = randomBytes(24).toString('hex');
+  const url = `${base}/api/v1/payhooks/status/${attempt._id}/${token}`;
+  try {
+    await mp.client.transactionStatus({ receipt: attempt.mpesaReceipt ?? undefined, originalConversationId: attempt.merchantRequestId ?? undefined, resultUrl: `${url}/result`, timeoutUrl: `${url}/timeout` });
+    attempt.set('nameLookup', { status: 'requested', tokenHash: sha256(token), requestedAt: new Date() });
+    await attempt.save();
+  } catch (e) {
+    const msg = (e as Error).message;
+    await unavailable(/initiator name and security credential/.test(msg) ? 'Add the initiator name and security credential in Integrations → M-Pesa to see payer names' : msg);
+  }
+}
+
+/** Store the payer's name on the M-Pesa payment and tell the tills. */
+async function savePayerName(tenantId: Types.ObjectId, attemptId: Types.ObjectId, name: string) {
+  const a = await PaymentAttempt.findOne({ tenantId, _id: attemptId }).lean();
+  if (!a) return;
+  if (a.paymentId) await Payment.updateOne({ tenantId, _id: a.paymentId }, { $set: { payerName: name } });
+  emitBranch(tenantId, a.branchId as Types.ObjectId, 'payment.updated', { orderId: String(a.orderId), attemptId: String(a._id), status: a.status, payerName: name });
+}
+
+/** Safaricom's Transaction Status answer (POSTed to the ResultURL given in requestPayerName). */
+export async function handleStatusResult(attemptId: string, token: string, body: unknown, timedOut: boolean) {
+  const attempt = await PaymentAttempt.findOne({ _id: attemptId }).setOptions({ skipTenantGuard: true });
+  if (!attempt?.nameLookup?.tokenHash || attempt.nameLookup.tokenHash !== sha256(token)) throw new AppError(404, 'NOT_FOUND', 'Unknown callback');
+  const tenantId = attempt.tenantId as Types.ObjectId;
+  const r = timedOut ? null : parseStatusResult(body);
+  if (!r || r.resultCode !== 0 || !r.payerName) {
+    attempt.set({ 'nameLookup.status': 'failed', 'nameLookup.error': timedOut ? 'Safaricom timed out' : r ? r.resultDesc || 'No name in the answer' : 'Unreadable answer' });
+    await attempt.save();
+    return;
+  }
+  attempt.payerName = r.payerName;
+  if (r.receipt && !attempt.mpesaReceipt) attempt.mpesaReceipt = r.receipt;
+  attempt.set('nameLookup', { status: 'received', receivedAt: new Date() });
+  await attempt.save();
+  if (r.receipt && attempt.paymentId) await Payment.updateOne({ tenantId, _id: attempt.paymentId, reference: { $exists: false } }, { $set: { reference: r.receipt } });
+  await savePayerName(tenantId, attempt._id, r.payerName);
 }
 
 /** Poll Daraja for attempts whose callback has not arrived (reconciliation job and "check status" button). */
@@ -435,7 +501,10 @@ export async function queryAttempt(tenantId: Types.ObjectId, attemptId: Types.Ob
   if (q.pending) return attempt.toObject();
   // Final answer from Safaricom. Success records the payment at once (the amount is the one requested in the prompt).
   const res = await applyStkResult(attempt._id, tenantId, { checkoutRequestId: attempt.checkoutRequestId, merchantRequestId: attempt.merchantRequestId ?? '', resultCode: q.resultCode ?? -1, resultDesc: q.resultDesc ?? '', ...(q.resultCode === 0 ? { amount: attempt.amount / 100 } : {}) }, 'query');
-  if (q.resultCode === 0 && res.attempt.status === 'succeeded') emitBranch(tenantId, res.attempt.branchId as Types.ObjectId, 'payment.updated', { orderId: String(res.attempt.orderId), attemptId: String(res.attempt._id), status: 'succeeded' });
+  if (q.resultCode === 0 && res.attempt.status === 'succeeded') {
+    emitBranch(tenantId, res.attempt.branchId as Types.ObjectId, 'payment.updated', { orderId: String(res.attempt.orderId), attemptId: String(res.attempt._id), status: 'succeeded' });
+    void requestPayerName(tenantId, res.attempt._id).catch((e) => logger.warn({ err: e }, 'M-Pesa payer name lookup failed'));
+  }
   return res.attempt.toObject();
 }
 
@@ -519,7 +588,7 @@ export async function buildReceipt(tenantId: Types.ObjectId, orderId: Types.Obje
     lines,
     totals: order.totals,
     taxes: order.taxBreakdown,
-    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference ?? p.claimedReference, phone: p.phone, pending: p.status === 'provisional' })),
+    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference ?? p.claimedReference, phone: p.phone, payerName: p.payerName, pending: p.status === 'provisional' })),
   };
 }
 

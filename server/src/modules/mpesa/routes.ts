@@ -5,7 +5,7 @@ import { createModule, zId } from '../../http/route';
 import { PaymentAttempt, MpesaC2BTransaction, IntegrationConfiguration, Order, Payment } from '../../models';
 import { PERMISSIONS as P } from '../../auth/permissions';
 import { confirmOfflineMpesa } from '../../services/offlineMpesa';
-import { handleStkCallback, applyStkResult, finalizePaidOrder, emitTicketsClosed } from '../../services/payments';
+import { handleStkCallback, handleStatusResult, requestPayerName, applyStkResult, finalizePaidOrder, emitTicketsClosed } from '../../services/payments';
 import { AppError, badRequest, conflict, forbidden, notFound } from '../../lib/errors';
 import { env, mocksAllowed } from '../../config/env';
 import { logger } from '../../lib/logger';
@@ -62,6 +62,19 @@ function registerCallbacks(m: ReturnType<typeof createModule>) {
 registerCallbacks(m);
 registerCallbacks(callbacks);
 
+/** Transaction Status answers (payer name). Always 200 once authenticated: the name is optional, never retry-worthy. */
+for (const kind of ['result', 'timeout'] as const) {
+  callbacks.route({ method: 'post', path: `/status/:attemptId/:token/${kind}`, summary: `Daraja transaction status ${kind} (public, token-authenticated)`, auth: 'public', raw: true }, async ({ params, body, req, res }) => {
+    checkCallbackIp(req);
+    if (!Types.ObjectId.isValid(params.attemptId)) throw notFound('Callback');
+    await handleStatusResult(params.attemptId, params.token, body, kind === 'timeout').catch((e) => {
+      if (e instanceof AppError && e.status === 404) throw e;
+      logger.warn({ err: e, attemptId: params.attemptId }, 'Transaction status result could not be processed');
+    });
+    res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+  });
+}
+
 async function c2bIntegration(id: string, key: string) {
   if (!Types.ObjectId.isValid(id)) throw notFound('Callback');
   const integ = await IntegrationConfiguration.findOne({ _id: id, kind: 'mpesa' }).setOptions({ skipTenantGuard: true }).lean();
@@ -78,7 +91,7 @@ async function c2bConfirmation({ params, body, req, res }: { params: Record<stri
   if (!Number.isFinite(amount) || amount <= 0) throw badRequest('Invalid amount');
   await MpesaC2BTransaction.updateOne(
     { tenantId: integ.tenantId, transId: String(b.TransID) },
-    { $setOnInsert: { branchId: integ.branchId ?? undefined, transType: b.TransactionType, amount, shortCode: b.BusinessShortCode, billRef: b.BillRefNumber, msisdn: b.MSISDN, firstName: b.FirstName, transTime: b.TransTime, raw: b } },
+    { $setOnInsert: { branchId: integ.branchId ?? undefined, transType: b.TransactionType, amount, shortCode: b.BusinessShortCode, billRef: b.BillRefNumber, msisdn: b.MSISDN, firstName: b.FirstName, payerName: [b.FirstName, b.MiddleName, b.LastName].filter(Boolean).join(' ').trim() || undefined, transTime: b.TransTime, raw: b } },
     { upsert: true },
   );
   // A till may already have recorded this code while it was offline: confirm that sale now.
@@ -103,7 +116,7 @@ m.route({ method: 'post', path: '/c2b/:id/match', summary: 'Apply a C2B transact
     const balance = order.totals!.total - order.totals!.paid;
     const apply = Math.min(balance, tx.amount);
     if (apply <= 0) throw conflict('Order has no outstanding balance', 'ALREADY_PAID');
-    const [payment] = await Payment.create([{ tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, orderNumber: order.number, method: 'mpesa', amount: apply, tendered: tx.amount, reference: tx.transId, phone: tx.msisdn, verification: 'provider', receivedBy: ctx.userId, idempotencyKey: `c2b:${tx._id}` }], { session });
+    const [payment] = await Payment.create([{ tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, orderNumber: order.number, method: 'mpesa', amount: apply, tendered: tx.amount, reference: tx.transId, phone: tx.msisdn, payerName: tx.payerName ?? tx.firstName ?? undefined, verification: 'provider', receivedBy: ctx.userId, idempotencyKey: `c2b:${tx._id}` }], { session });
     tx.set({ status: 'matched', matchedOrderId: order._id, matchedPaymentId: payment._id, matchedBy: ctx.userId });
     await tx.save({ session });
     order.totals!.paid += apply;
@@ -185,6 +198,7 @@ m.route({ method: 'post', path: '/simulate/:attemptId', summary: '[dev] Simulate
     amount: body.amount ?? a.amount / 100, mpesaReceipt: body.resultCode === 0 ? body.receipt ?? `SIM${Date.now().toString(36).toUpperCase().slice(-7)}` : undefined, phone: a.phone ?? undefined,
     transactionDate: new Date().toISOString().replace(/\D/g, '').slice(0, 14),
   }, 'simulation');
+  if (r.attempt.status === 'succeeded') await requestPayerName(ctx.tenantId, a._id).catch(() => undefined);
   return { simulated: true, status: r.attempt.status, resultDesc: r.attempt.resultDesc, duplicate: r.duplicate };
 });
 

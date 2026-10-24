@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { httpJson, ProviderError, isRetryableStatus } from '../http';
 
 /**
@@ -13,6 +14,35 @@ export interface DarajaConfig {
   transactionType: 'CustomerPayBillOnline' | 'CustomerBuyGoodsOnline';
   /** PartyB: Paybill number, or Till number for Buy Goods. Defaults to shortCode. */
   partyB?: string;
+  /** Org-portal API user with the "Transaction Status Query" role, and its encrypted password (security credential). */
+  initiatorName?: string;
+  securityCredential?: string;
+}
+
+/**
+ * Daraja's SecurityCredential: the initiator password encrypted with Safaricom's public certificate (RSA, PKCS#1 v1.5),
+ * base64. The certificate (sandbox or production) is downloaded from the Daraja portal; a PEM pasted into a one-line
+ * field loses its line breaks, so it is rebuilt here.
+ */
+export function securityCredential(initiatorPassword: string, certificate: string) {
+  const body = certificate.replace(/-----(BEGIN|END) CERTIFICATE-----/g, '').replace(/\s+/g, '');
+  const pem = `-----BEGIN CERTIFICATE-----\n${body.match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE-----\n`;
+  return crypto.publicEncrypt({ key: new crypto.X509Certificate(pem).publicKey, padding: crypto.constants.RSA_PKCS1_PADDING }, Buffer.from(initiatorPassword)).toString('base64');
+}
+
+/** The interesting parts of a Transaction Status result (sent asynchronously to the ResultURL). */
+export interface StatusResult { resultCode: number; resultDesc: string; payerName?: string; payerPhone?: string; receipt?: string; amount?: number; transactionStatus?: string }
+export function parseStatusResult(body: any): StatusResult | null {
+  const r = body?.Result;
+  if (!r || r.ResultCode === undefined) return null;
+  const params = new Map<string, unknown>(((r.ResultParameters?.ResultParameter ?? []) as Array<{ Key: string; Value: unknown }>).map((p) => [p.Key, p.Value]));
+  // DebitPartyName looks like "254712345678 - JANE WANJIKU DOE" (phone or short code, then the registered name).
+  const debit = String(params.get('DebitPartyName') ?? '').trim();
+  const dash = debit.indexOf(' - ');
+  const payerName = (dash >= 0 ? debit.slice(dash + 3) : /\d{6,}/.test(debit) ? '' : debit).trim() || undefined;
+  const payerPhone = dash >= 0 ? debit.slice(0, dash).trim() : undefined;
+  const amount = params.has('Amount') ? Number(params.get('Amount')) : undefined;
+  return { resultCode: Number(r.ResultCode), resultDesc: String(r.ResultDesc ?? ''), payerName, payerPhone, receipt: params.get('ReceiptNo') ? String(params.get('ReceiptNo')) : undefined, amount, transactionStatus: params.get('TransactionStatus') ? String(params.get('TransactionStatus')) : undefined };
 }
 
 export interface StkPushResult {
@@ -118,6 +148,26 @@ export class DarajaClient {
     if (status === 429 || /spike arrest|throttl|rate limit/i.test(text)) return { pending: true, raw: body };
     if (status !== 200) throw new ProviderError(`STK query failed: ${body?.errorMessage ?? `HTTP ${status}`}`, status, body, isRetryableStatus(status));
     return { pending: false, resultCode: Number(body.ResultCode), resultDesc: body.ResultDesc, raw: body };
+  }
+
+  /**
+   * Transaction Status query (CommandID TransactionStatusQuery). Only an acknowledgement comes back here; the details —
+   * including the payer's registered name — are POSTed later to resultUrl.
+   */
+  async transactionStatus(input: { receipt?: string; originalConversationId?: string; resultUrl: string; timeoutUrl: string }) {
+    if (!this.cfg.initiatorName || !this.cfg.securityCredential) throw new ProviderError('Transaction status needs an initiator name and security credential', 400, null, false);
+    const token = await this.accessToken();
+    const { status, body } = await httpJson(`${this.base}/mpesa/transactionstatus/v1/query`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        Initiator: this.cfg.initiatorName, SecurityCredential: this.cfg.securityCredential, CommandID: 'TransactionStatusQuery',
+        ...(input.receipt ? { TransactionID: input.receipt } : { OriginalConversationID: input.originalConversationId }),
+        PartyA: this.cfg.shortCode, IdentifierType: '4', ResultURL: input.resultUrl, QueueTimeOutURL: input.timeoutUrl, Remarks: 'Payer name', Occasion: 'POS',
+      }),
+    });
+    if (status !== 200 || (body?.ResponseCode !== undefined && String(body.ResponseCode) !== '0')) throw new ProviderError(`Transaction status failed: ${body?.errorMessage ?? body?.ResponseDescription ?? `HTTP ${status}`}`, status, body, isRetryableStatus(status));
+    return { conversationId: body?.ConversationID as string | undefined, originatorConversationId: body?.OriginatorConversationID as string | undefined };
   }
 
   async registerC2BUrls(input: { confirmationUrl: string; validationUrl: string; responseType: 'Completed' | 'Cancelled' }) {
