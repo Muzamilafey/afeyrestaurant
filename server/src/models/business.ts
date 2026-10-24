@@ -37,6 +37,8 @@ const tenantSchema = new Schema(
       mpesaTimeoutSeconds: { type: Number, default: 90 },
       offlineAllowedActions: { type: [String], default: ['browse', 'create_order', 'cash_payment', 'card_payment', 'mpesa_payment', 'print'] },
       offlineMethodsUpgraded: { type: Boolean, default: true },
+      /** New businesses get orders.view_all in their system roles at setup; older ones once at startup. */
+      ordersViewAllUpgraded: { type: Boolean, default: true },
       alertEmails: [String],
       alertPhones: [String],
       dailySummary: { type: Boolean, default: false },

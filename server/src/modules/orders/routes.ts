@@ -21,11 +21,13 @@ const zItem = z.object({
 const ORDER_TYPES = ['dine_in', 'takeaway', 'delivery', 'room_service', 'bar_counter', 'online'] as const;
 
 m.route(
-  { method: 'get', path: '', summary: 'List orders for the active branch', permission: P.ORDERS_VIEW, query: z.object({ status: z.string().optional(), active: z.coerce.boolean().optional(), tableId: zId.optional(), type: z.string().optional(), q: z.string().max(40).optional(), from: z.coerce.date().optional(), to: z.coerce.date().optional(), limit: z.coerce.number().int().min(1).max(200).default(100) }) },
+  { method: 'get', path: '', summary: 'List orders for the active branch', permission: P.ORDERS_VIEW, query: z.object({ mine: z.coerce.boolean().optional(), status: z.string().optional(), active: z.coerce.boolean().optional(), tableId: zId.optional(), type: z.string().optional(), q: z.string().max(40).optional(), from: z.coerce.date().optional(), to: z.coerce.date().optional(), limit: z.coerce.number().int().min(1).max(200).default(100) }) },
   async ({ ctx, query }) => {
     const f: Record<string, unknown> = { tenantId: ctx.tenantId, branchId: ctx.branchId };
     if (query.active) f.status = { $in: ['open', 'held'] };
     else if (query.status) f.status = { $in: query.status.split(',') };
+    // POS lists (held orders): staff without orders.view_all get only their own.
+    if (query.mine && !ctx.permissions.has(P.ORDERS_VIEW_ALL)) f.waiterId = ctx.userId;
     if (query.tableId) f.tableId = query.tableId;
     if (query.type) f.type = query.type;
     if (query.q) f.$or = [{ number: { $regex: query.q.replace(/[^\w-]/g, ''), $options: 'i' } }, { customerPhone: query.q.replace(/\D/g, '') || '__none__' }, { receiptNumber: query.q }];

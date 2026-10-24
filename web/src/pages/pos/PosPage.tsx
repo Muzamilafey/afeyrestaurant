@@ -652,7 +652,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
       {/* ── Bottom service bar: active tables & orders ── */}
       <div className="scroll-thin flex shrink-0 gap-2 overflow-x-auto border-t border-line bg-card px-4 py-2.5">
         {activeChips.length === 0 ? (
-          <p className="py-1.5 text-sm text-ink-soft">{online ? `No open ${outlet === 'bar' ? 'bar' : 'restaurant'} orders.` : 'Offline — active orders unavailable.'}</p>
+          <p className="py-1.5 text-sm text-ink-soft">{online ? (can('orders.view_all') ? `No open ${outlet === 'bar' ? 'bar' : 'restaurant'} orders.` : `You have no open ${outlet === 'bar' ? 'bar' : 'restaurant'} orders.`) : 'Offline — active orders unavailable.'}</p>
         ) : (
           activeChips.map((c) => (
             <button key={c.id} onClick={() => setOrder(c.id)} title={`${c.number} · ${c.table.length <= 3 ? `Table ${c.table}` : c.table}`} className={cx('flex min-w-[170px] max-w-[230px] shrink-0 flex-col gap-1 rounded-xl border-2 px-3 py-2 text-left', orderId === c.id ? 'border-brand bg-brand-50' : 'border-line hover:border-brand/40')}>
@@ -787,7 +787,7 @@ function OrderPicker({ title, orders, onClose, onPick }: { title: string; orders
   );
 }
 function HeldOrders({ onClose, onPick }: { onClose: () => void; onPick: (id: string) => void }) {
-  const { data, isLoading } = useQuery<Order[]>({ queryKey: ['orders', 'held'], queryFn: () => get('/orders', { status: 'held' }) });
+  const { data, isLoading } = useQuery<Order[]>({ queryKey: ['orders', 'held'], queryFn: () => get('/orders', { status: 'held', mine: '1' }) });
   return (
     <Modal open onClose={onClose} title="Held orders">
       {isLoading ? <Skeleton className="h-20" /> : !data?.length ? <Empty title="No held orders" /> : (

@@ -5,6 +5,8 @@
 export const PERMISSIONS = {
   // POS & orders
   ORDERS_VIEW: 'orders.view',
+  /** See everyone's open orders on the POS (without it: only the orders you took). */
+  ORDERS_VIEW_ALL: 'orders.view_all',
   ORDERS_CREATE: 'orders.create',
   ORDERS_UPDATE: 'orders.update',
   ORDERS_VOID_ITEM: 'orders.void_item',
@@ -104,7 +106,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
     name: 'Branch Manager',
     description: 'Manages one or more assigned branches; approves voids, discounts and adjustments',
     permissions: [
-      P.ORDERS_VIEW, P.ORDERS_CREATE, P.ORDERS_UPDATE, P.ORDERS_VOID_ITEM, P.ORDERS_VOID_SENT_ITEM, P.ORDERS_VOID,
+      P.ORDERS_VIEW, P.ORDERS_VIEW_ALL, P.ORDERS_CREATE, P.ORDERS_UPDATE, P.ORDERS_VOID_ITEM, P.ORDERS_VOID_SENT_ITEM, P.ORDERS_VOID,
       P.ORDERS_DISCOUNT, P.ORDERS_DISCOUNT_APPROVE, P.ORDERS_TRANSFER, P.ORDERS_MERGE, P.ORDERS_COMPLIMENTARY,
       P.PAYMENTS_RECEIVE, P.PAYMENTS_MANUAL_CONFIRM, P.PAYMENTS_REFUND, P.PAYMENTS_CREDIT_SALE, P.RECEIPTS_REPRINT,
       P.KITCHEN_VIEW, P.KITCHEN_UPDATE, P.BAR_VIEW, P.BAR_UPDATE, P.TABLES_VIEW, P.TABLES_MANAGE,

@@ -11,7 +11,8 @@ m.route({ method: 'get', path: '', summary: 'Floor plan: areas, tables and their
   const [areas, tables, orders] = await Promise.all([
     DiningArea.find({ tenantId: ctx.tenantId, branchId: ctx.branchId }).sort({ sortOrder: 1 }).lean(),
     Table.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, active: true }).sort({ number: 1 }).lean(),
-    Order.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, status: { $in: ['open', 'held'] } }, { number: 1, tableId: 1, status: 1, waiterName: 1, totals: 1, items: 1, createdAt: 1, type: 1, guests: 1, outlet: 1 }).lean(),
+    // Staff without orders.view_all only see the orders they took (tables still show as occupied).
+    Order.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, status: { $in: ['open', 'held'] }, ...(ctx.permissions.has(P.ORDERS_VIEW_ALL) ? {} : { waiterId: ctx.userId }) }, { number: 1, tableId: 1, status: 1, waiterName: 1, totals: 1, items: 1, createdAt: 1, type: 1, guests: 1, outlet: 1 }).lean(),
   ]);
   return {
     areas,

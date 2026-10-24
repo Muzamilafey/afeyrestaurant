@@ -3,6 +3,7 @@ import { env, isProd } from './config/env';
 import { connectDb, disconnectDb, ensureIndexes } from './db/connect';
 import { getCapabilities, transactionsHelp } from './db/capabilities';
 import { upgradeOfflinePaymentSettings } from './services/offlineMpesa';
+import { runUpgrades } from './services/upgrades';
 import { createApp } from './app';
 import { attachRealtime } from './realtime/socket';
 import { startScheduler } from './jobs/scheduler';
@@ -18,6 +19,7 @@ async function main() {
   }
   await ensureIndexes();
   await upgradeOfflinePaymentSettings();
+  await runUpgrades();
   const app = createApp();
   const server = http.createServer(app);
   const io = attachRealtime(server);
