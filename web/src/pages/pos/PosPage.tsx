@@ -11,6 +11,7 @@ import { cacheCatalog, cachedCatalog, queueOfflineOrder, terminalId } from '@/li
 import { printReceipt, type ReceiptDoc } from '@/lib/printing';
 import { useOnline } from '@/lib/connectivity';
 import { OfflinePayDialog, type OfflinePayment } from './OfflinePayDialog';
+import { AssignRiderDialog, type DeliveryDetails } from './AssignRiderDialog';
 import { ProductCard } from './ProductCard';
 import { ModifierDialog } from './ModifierDialog';
 import { PaymentDialog, ReceiptPanel } from './PaymentDialog';
@@ -107,6 +108,8 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   const [dialog, setDialog] = useState<null | 'transfer' | 'merge' | 'split' | 'held' | 'customer'>(null);
   /** Dine-in without a table: ask for one, then carry on with the action that was pressed. */
   const [pickTableFor, setPickTableFor] = useState<null | 'send' | 'pay'>(null);
+  /** Delivery: confirm the address and assign a rider before the order is placed. */
+  const [pickRiderFor, setPickRiderFor] = useState<null | 'send' | 'pay'>(null);
   const [offlineReceipt, setOfflineReceipt] = useState<Order | null>(null);
   // Phones: the order panel is a full-screen sheet opened from a floating button.
   const [showCart, setShowCart] = useState(false);
@@ -236,13 +239,15 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
 
   /** Create the order on the server from the draft (idempotent by clientId). */
   const draftClientId = useRef(uuid());
-  async function createFromDraft(send: boolean, table = tableId): Promise<Order | null> {
+  async function createFromDraft(send: boolean, table = tableId, delivery?: DeliveryDetails): Promise<Order | null> {
     if (mode === 'dine_in' && !table) {
       toast('Select a table for dine-in orders', 'error');
       return null;
     }
     const items = draft.map((d) => ({ productId: d.productId, qty: d.qty, variant: d.variant, modifiers: d.modifiers.map(({ groupId, optionId }) => ({ groupId, optionId })), notes: d.notes, lineId: d.lineId, ageCheckConfirmed: d.ageCheckConfirmed }));
-    const body = { clientId: draftClientId.current, type: mode, outlet, tableId: mode === 'dine_in' ? table : undefined, customerName: customerName || undefined, customerPhone: customerPhone || undefined, delivery: mode === 'delivery' ? { address: deliveryAddress } : undefined, items, sendToStations: send };
+    const name = delivery?.customerName ?? customerName;
+    const phone = delivery?.customerPhone ?? customerPhone;
+    const body = { clientId: draftClientId.current, type: mode, outlet, tableId: mode === 'dine_in' ? table : undefined, customerName: name || undefined, customerPhone: phone || undefined, delivery: mode === 'delivery' ? { address: delivery?.address ?? deliveryAddress, riderId: delivery?.riderId } : undefined, items, sendToStations: send };
     const o = await withApproval((approval) => post<Order>('/orders', { ...body, approval }));
     draftClientId.current = uuid();
     resetDraft();
@@ -253,15 +258,17 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   }
 
   const needsTable = () => !order && online && mode === 'dine_in' && !tableId;
+  const needsRider = (delivery?: DeliveryDetails) => !order && online && mode === 'delivery' && !delivery;
 
-  async function placeOrder(table = tableId) {
+  async function placeOrder(table = tableId, delivery?: DeliveryDetails) {
     if (table === tableId && needsTable()) return setPickTableFor('send');
+    if (needsRider(delivery)) return setPickRiderFor('send');
     setBusy('send');
     try {
       let sent: string | null = null;
       if (!order) {
-        const o = await createFromDraft(true, table);
-        if (o) sent = `Order ${o.number} sent`;
+        const o = await createFromDraft(true, table, delivery);
+        if (o) sent = `Order ${o.number} sent${o.delivery?.riderName ? ` · rider ${o.delivery.riderName}` : ''}`;
       } else {
         const r = await post<{ order: Order; tickets: unknown[] }>(`/orders/${order._id}/send`, { submissionKey: uuid() });
         qc.setQueryData(['order', order._id], (old: { order: Order } | undefined) => ({ ...(old ?? {}), order: r.order }));
@@ -282,13 +289,14 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
     }
   }
 
-  async function startPayment(table = tableId) {
+  async function startPayment(table = tableId, delivery?: DeliveryDetails) {
     if (!online) return payOffline();
     if (table === tableId && needsTable()) return setPickTableFor('pay');
+    if (needsRider(delivery)) return setPickRiderFor('pay');
     if (!order) {
       setBusy('pay');
       try {
-        const o = await createFromDraft(true, table);
+        const o = await createFromDraft(true, table, delivery);
         if (o) setPaying(true);
       } catch (e) {
         // The connection dropped before the till noticed: carry on as an offline sale instead of failing.
@@ -680,6 +688,22 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
             setPickTableFor(null);
             setMode('takeaway');
             toast('Switched to takeaway — press the button again to continue', 'info');
+          }}
+        />
+      )}
+      {pickRiderFor && (
+        <AssignRiderDialog
+          action={pickRiderFor}
+          initial={{ address: deliveryAddress, customerName, customerPhone }}
+          onClose={() => setPickRiderFor(null)}
+          onConfirm={(d) => {
+            const action = pickRiderFor;
+            setPickRiderFor(null);
+            setDeliveryAddress(d.address);
+            setCustomerName(d.customerName);
+            setCustomerPhone(d.customerPhone);
+            if (action === 'pay') void startPayment(tableId, d);
+            else void placeOrder(tableId, d);
           }}
         />
       )}

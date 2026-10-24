@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import mongoose, { Types, type ClientSession } from 'mongoose';
-import { Order, type OrderDoc, Product, Category, ModifierGroup, TaxRate, Branch, Tenant, Table, KitchenTicket, Customer, Coupon, Printer, PrintJob } from '../models';
+import { Order, type OrderDoc, Product, Category, ModifierGroup, TaxRate, Branch, Tenant, Table, KitchenTicket, Customer, Coupon, Printer, PrintJob, Rider } from '../models';
 import type { BranchContext } from '../http/context';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors';
 import { PERMISSIONS as P } from '../auth/permissions';
@@ -183,7 +183,7 @@ export interface CreateOrderInput {
   notes?: string;
   priority?: boolean;
   items?: ItemInput[];
-  delivery?: { address: string; landmark?: string; contactPhone?: string; zoneId?: string };
+  delivery?: { address: string; landmark?: string; contactPhone?: string; zoneId?: string; riderId?: string };
   approval?: ApprovalInput;
   overrideStockReason?: string;
 }
@@ -212,6 +212,9 @@ export async function createOrder(ctx: BranchContext, input: CreateOrderInput) {
     if (!customer) throw notFound('Customer');
   }
   if (input.type === 'delivery' && !input.delivery?.address) throw badRequest('Delivery address is required');
+  // A delivery rider can be chosen while placing the order (any active rider of this branch).
+  const rider = input.type === 'delivery' && input.delivery?.riderId ? await Rider.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: input.delivery.riderId, active: true }).lean() : null;
+  if (input.delivery?.riderId && input.type === 'delivery' && !rider) throw badRequest('That delivery rider is not available');
   const lines = input.items?.length ? await buildLines(ctx, input.items, input) : [];
   const number = await nextNumber(ctx.tenantId, branch.settings?.orderPrefix ?? 'ORD', branch.code);
   const phone = input.customerPhone ? normalizeKePhone(input.customerPhone) ?? undefined : customer?.phone ?? undefined;
@@ -233,7 +236,7 @@ export async function createOrder(ctx: BranchContext, input: CreateOrderInput) {
     notes: input.notes,
     priority: !!input.priority,
     items: lines,
-    delivery: input.type === 'delivery' ? { ...input.delivery, status: 'pending', trackingCode: randomUUID().slice(0, 8).toUpperCase() } : undefined,
+    delivery: input.type === 'delivery' ? { ...input.delivery, riderId: rider?._id, riderName: rider?.name, status: rider ? 'assigned' : 'pending', assignedAt: rider ? new Date() : undefined, trackingCode: randomUUID().slice(0, 8).toUpperCase() } : undefined,
     totals: { deliveryFee: input.type === 'delivery' ? branch.settings?.deliveryFee ?? 0 : 0 },
   });
   await recalc(order);

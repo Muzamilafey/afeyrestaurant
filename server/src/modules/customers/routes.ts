@@ -173,7 +173,10 @@ m.route({ method: 'patch', path: '/reservations/:id', summary: 'Edit reservation
 });
 
 // ── Delivery ──
-m.route({ method: 'get', path: '/delivery', summary: 'Active delivery orders', permission: P.DELIVERY_VIEW }, async ({ ctx }) => Order.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, type: { $in: ['delivery', 'online'] }, 'delivery.status': { $nin: ['delivered', 'cancelled'] }, status: { $ne: 'voided' } }).sort({ createdAt: 1 }).limit(200).lean());
+m.route({ method: 'get', path: '/delivery', summary: 'Active delivery orders (done=1: delivered in the last 24 hours)', permission: [P.DELIVERY_VIEW, P.ORDERS_VIEW], query: z.object({ done: z.enum(['0', '1']).optional() }) }, async ({ ctx, query }) =>
+  query.done === '1'
+    ? Order.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, type: { $in: ['delivery', 'online'] }, 'delivery.status': 'delivered', 'delivery.deliveredAt': { $gte: new Date(Date.now() - 24 * 3600_000) } }).sort({ 'delivery.deliveredAt': -1 }).limit(200).lean()
+    : Order.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, type: { $in: ['delivery', 'online'] }, 'delivery.status': { $nin: ['delivered', 'cancelled'] }, status: { $ne: 'voided' } }).sort({ createdAt: 1 }).limit(200).lean());
 m.route({ method: 'post', path: '/delivery/:orderId', summary: 'Assign rider / update delivery status', permission: P.DELIVERY_MANAGE, body: z.object({ riderId: zId.optional(), status: z.enum(['pending', 'assigned', 'picked_up', 'delivered', 'failed', 'cancelled']).optional(), estimatedReadyAt: z.coerce.date().optional() }) }, async ({ ctx, params, body }) => {
   const rider = body.riderId ? await Rider.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: body.riderId, active: true }).lean() : null;
   if (body.riderId && !rider) throw notFound('Rider');
@@ -181,7 +184,8 @@ m.route({ method: 'post', path: '/delivery/:orderId', summary: 'Assign rider / u
   if (!o) throw notFound('Delivery order');
   if (rider) o.set({ 'delivery.riderId': rider._id, 'delivery.riderName': rider.name, 'delivery.status': body.status ?? 'assigned' });
   if (body.status) o.set('delivery.status', body.status);
-  if (body.status === 'delivered') o.set('delivery.deliveredAt', new Date());
+  if (rider) o.set('delivery.assignedAt', new Date());
+  if (body.status === 'delivered') o.set({ 'delivery.deliveredAt': new Date(), 'delivery.deliveredBy': ctx.userName });
   if (body.estimatedReadyAt) o.set('delivery.estimatedReadyAt', body.estimatedReadyAt);
   await o.save();
   if (body.status && o.customerPhone) {
@@ -193,8 +197,49 @@ m.route({ method: 'post', path: '/delivery/:orderId', summary: 'Assign rider / u
 });
 m.route({ method: 'get', path: '/delivery-zones', summary: 'Delivery zones', permission: P.DELIVERY_VIEW }, async ({ ctx }) => DeliveryZone.find({ tenantId: ctx.tenantId, branchId: ctx.branchId }).lean());
 m.route({ method: 'post', path: '/delivery-zones', summary: 'Create delivery zone', permission: P.DELIVERY_MANAGE, body: z.object({ name: z.string().min(1).max(60), fee: zMoney, minOrder: zMoney.optional(), etaMinutes: z.number().int().min(5).max(240).optional() }), status: 201 }, async ({ ctx, body }) => DeliveryZone.create({ ...body, tenantId: ctx.tenantId, branchId: ctx.branchId }));
-m.route({ method: 'get', path: '/riders', summary: 'Riders', permission: P.DELIVERY_VIEW }, async ({ ctx }) => Rider.find({ tenantId: ctx.tenantId, branchId: ctx.branchId }).lean());
-m.route({ method: 'post', path: '/riders', summary: 'Add rider', permission: P.DELIVERY_MANAGE, body: z.object({ name: z.string().min(1).max(60), phone: z.string().max(20).optional() }), status: 201 }, async ({ ctx, body }) => Rider.create({ ...body, tenantId: ctx.tenantId, branchId: ctx.branchId }));
+/**
+ * Any signed-in user can confirm a delivery (the cashier when the rider returns, a waiter, the rider on a shared till).
+ * Who confirmed it and when is kept on the order and in the audit log.
+ */
+m.route({ method: 'post', path: '/delivery/:orderId/delivered', summary: 'Mark a delivery order delivered (any user)', body: z.object({ note: z.string().max(200).optional() }) }, async ({ ctx, params, body, req }) => {
+  const o = await Order.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: params.orderId, type: { $in: ['delivery', 'online'] }, status: { $ne: 'voided' } });
+  if (!o) throw notFound('Delivery order');
+  if (o.delivery?.status === 'delivered') return o;
+  if (o.delivery?.status === 'cancelled') throw badRequest('This delivery was cancelled');
+  o.set({ 'delivery.status': 'delivered', 'delivery.deliveredAt': new Date(), 'delivery.deliveredBy': ctx.userName });
+  await o.save();
+  await audit(ctx, { action: 'delivery.delivered', entity: 'Order', entityId: o._id, after: { rider: o.delivery?.riderName, note: body.note } }, req);
+  if (o.customerPhone) await notify(ctx.tenantId, { event: 'delivery_update', channel: 'sms', to: o.customerPhone, vars: { customer_name: o.customerName ?? 'there', order_number: o.number, delivery_status: 'delivered', tracking_code: o.delivery?.trackingCode }, dedupeKey: `delivery:${o._id}:delivered` }).catch(() => undefined);
+  emitBranch(ctx.tenantId, ctx.branchId, 'order.updated', { id: String(o._id) });
+  return o;
+});
+
+// ── Delivery riders (agents) ──
+const zRider = z.object({ name: z.string().trim().min(2).max(60), phone: z.string().max(20).optional(), vehicle: z.string().max(40).optional(), plate: z.string().max(20).optional(), notes: z.string().max(200).optional(), active: z.boolean().optional() });
+/** Riders are listed for anyone placing orders (to assign one) as well as delivery managers. */
+m.route({ method: 'get', path: '/riders', summary: 'Delivery riders', permission: [P.DELIVERY_VIEW, P.ORDERS_CREATE] }, async ({ ctx }) => {
+  const [riders, busy] = await Promise.all([
+    Rider.find({ tenantId: ctx.tenantId, branchId: ctx.branchId }).sort({ active: -1, name: 1 }).lean(),
+    Order.aggregate([{ $match: { tenantId: ctx.tenantId, branchId: ctx.branchId, 'delivery.status': { $in: ['assigned', 'picked_up'] }, status: { $ne: 'voided' } } }, { $group: { _id: '$delivery.riderId', n: { $sum: 1 } } }]),
+  ]);
+  const load = new Map(busy.map((b) => [String(b._id), b.n as number]));
+  return riders.map((r) => ({ ...r, activeDeliveries: load.get(String(r._id)) ?? 0 }));
+});
+m.route({ method: 'post', path: '/riders', summary: 'Register a delivery rider', permission: P.DELIVERY_MANAGE, body: zRider, status: 201 }, async ({ ctx, body, req }) => {
+  const phone = body.phone ? normalizeKePhone(body.phone) ?? body.phone : undefined;
+  const r = await Rider.create({ ...body, phone, tenantId: ctx.tenantId, branchId: ctx.branchId });
+  await audit(ctx, { action: 'rider.created', entity: 'Rider', entityId: r._id, after: { name: r.name, phone: r.phone } }, req);
+  return r;
+});
+m.route({ method: 'patch', path: '/riders/:id', summary: 'Update or deactivate a delivery rider', permission: P.DELIVERY_MANAGE, body: zRider.partial() }, async ({ ctx, params, body, req }) => {
+  const r = await Rider.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: params.id });
+  if (!r) throw notFound('Rider');
+  const phone = body.phone ? normalizeKePhone(body.phone) ?? body.phone : body.phone;
+  r.set({ ...body, ...(body.phone !== undefined ? { phone } : {}) });
+  await r.save();
+  await audit(ctx, { action: 'rider.updated', entity: 'Rider', entityId: r._id, after: body }, req);
+  return r;
+});
 
 // ── Public: online menu & order tracking (no auth, minimal data) ──
 const pub = createModule('/public', 'Public');

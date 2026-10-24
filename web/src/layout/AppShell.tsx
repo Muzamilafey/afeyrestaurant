@@ -25,7 +25,7 @@ const NAV = [
   { to: '/kitchen', label: 'Kitchen Orders', icon: ChefHat, perms: ['kitchen.view'] },
   { to: '/bar', label: 'Bar Orders', icon: Wine, perms: ['bar.view'] },
   { to: '/reservations', label: 'Reservations', icon: CalendarDays, perms: ['reservations.view'] },
-  { to: '/delivery', label: 'Delivery', icon: Bike, perms: ['delivery.view'] },
+  { to: '/delivery', label: 'Delivery', icon: Bike, perms: ['delivery.view', 'orders.view'] },
   { to: '/inventory', label: 'Inventory', icon: Boxes, perms: ['inventory.view'] },
   { to: '/recipes', label: 'Recipes & Stock', icon: BookOpenText, perms: ['recipes.manage', 'inventory.view'] },
   { to: '/purchasing', label: 'Purchasing', icon: Truck, perms: ['procurement.view'] },

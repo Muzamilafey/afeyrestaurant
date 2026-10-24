@@ -17,6 +17,6 @@ export interface Order {
   discount?: { type: string; value: number; amount: number; reason?: string };
   totals: { subtotal: number; discount: number; serviceCharge: number; taxInclusive: number; taxExclusive: number; deliveryFee: number; total: number; paid: number; refunded: number; balance: number };
   taxBreakdown?: Array<{ code: string; rateBps: number; inclusive: boolean; amount: number }>;
-  delivery?: { address?: string; status?: string; trackingCode?: string };
+  delivery?: { address?: string; status?: string; trackingCode?: string; riderId?: string; riderName?: string; deliveredAt?: string; deliveredBy?: string };
 }
 export interface DraftLine { lineId: string; productId: string; name: string; qty: number; unitPrice: number; variant?: string; modifiers: Array<{ groupId: string; optionId: string; name: string; priceDelta: number }>; notes?: string; ageCheckConfirmed?: boolean; station: string }

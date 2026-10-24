@@ -98,6 +98,8 @@ const orderSchema = new Schema(
       status: { type: String, enum: ['pending', 'assigned', 'picked_up', 'delivered', 'failed', 'cancelled'] },
       estimatedReadyAt: Date,
       deliveredAt: Date,
+      deliveredBy: String,
+      assignedAt: Date,
       trackingCode: String,
     },
     mergedInto: Schema.Types.ObjectId,

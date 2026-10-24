@@ -50,7 +50,7 @@ m.route(
     body: z.object({
       clientId: z.uuid().optional(), type: z.enum(ORDER_TYPES), outlet: z.enum(['restaurant', 'bar']).optional(), tableId: zId.optional(), guests: z.number().int().min(1).max(100).optional(),
       customerId: zId.optional(), customerName: z.string().max(80).optional(), customerPhone: z.string().max(20).optional(), notes: z.string().max(500).optional(), priority: z.boolean().optional(),
-      items: z.array(zItem).max(100).optional(), delivery: z.object({ address: z.string().min(3).max(300), landmark: z.string().max(200).optional(), contactPhone: z.string().max(20).optional(), zoneId: zId.optional() }).optional(),
+      items: z.array(zItem).max(100).optional(), delivery: z.object({ address: z.string().min(3).max(300), landmark: z.string().max(200).optional(), contactPhone: z.string().max(20).optional(), zoneId: zId.optional(), riderId: zId.optional() }).optional(),
       approval: zApproval, overrideStockReason: z.string().max(200).optional(), sendToStations: z.boolean().optional(),
     }),
   },
