@@ -12,7 +12,7 @@ export interface OrderLine {
   modifiers: Array<{ groupName?: string; name: string; priceDelta: number }>; notes?: string; status: string; voided: boolean; complimentary?: boolean; variant?: string; ageRestricted?: boolean;
 }
 export interface Order {
-  _id: string; number: string; clientId: string; type: string; status: string; paymentStatus: string; tableId?: string; tableNumber?: string; guests: number; waiterName?: string;
+  _id: string; number: string; clientId: string; type: string; outlet?: 'restaurant' | 'bar'; status: string; paymentStatus: string; tableId?: string; tableNumber?: string; guests: number; waiterName?: string;
   customerId?: string; customerName?: string; customerPhone?: string; items: OrderLine[]; notes?: string; receiptNumber?: string; source?: string;
   discount?: { type: string; value: number; amount: number; reason?: string };
   totals: { subtotal: number; discount: number; serviceCharge: number; taxInclusive: number; taxExclusive: number; deliveryFee: number; total: number; paid: number; refunded: number; balance: number };

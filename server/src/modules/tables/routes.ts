@@ -11,7 +11,7 @@ m.route({ method: 'get', path: '', summary: 'Floor plan: areas, tables and their
   const [areas, tables, orders] = await Promise.all([
     DiningArea.find({ tenantId: ctx.tenantId, branchId: ctx.branchId }).sort({ sortOrder: 1 }).lean(),
     Table.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, active: true }).sort({ number: 1 }).lean(),
-    Order.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, status: { $in: ['open', 'held'] } }, { number: 1, tableId: 1, status: 1, waiterName: 1, totals: 1, items: 1, createdAt: 1, type: 1, guests: 1 }).lean(),
+    Order.find({ tenantId: ctx.tenantId, branchId: ctx.branchId, status: { $in: ['open', 'held'] } }, { number: 1, tableId: 1, status: 1, waiterName: 1, totals: 1, items: 1, createdAt: 1, type: 1, guests: 1, outlet: 1 }).lean(),
   ]);
   return {
     areas,
@@ -19,9 +19,9 @@ m.route({ method: 'get', path: '', summary: 'Floor plan: areas, tables and their
       const os = orders.filter((o) => String(o.tableId) === String(t._id));
       const items = os.flatMap((o) => o.items.filter((i) => !i.voided));
       const done = items.filter((i) => ['ready', 'served'].includes(i.status)).length;
-      return { ...t, orders: os.map((o) => ({ id: String(o._id), number: o.number, status: o.status, waiterName: o.waiterName, total: o.totals?.total ?? 0, itemCount: o.items.filter((i) => !i.voided).length })), itemCount: items.length, progress: items.length ? done / items.length : 0 };
+      return { ...t, orders: os.map((o) => ({ id: String(o._id), number: o.number, outlet: o.outlet ?? (o.type === 'bar_counter' ? 'bar' : 'restaurant'), status: o.status, waiterName: o.waiterName, total: o.totals?.total ?? 0, itemCount: o.items.filter((i) => !i.voided).length })), itemCount: items.length, progress: items.length ? done / items.length : 0 };
     }),
-    takeaway: orders.filter((o) => !o.tableId).map((o) => ({ id: String(o._id), number: o.number, type: o.type, status: o.status, waiterName: o.waiterName, total: o.totals?.total ?? 0, itemCount: o.items.filter((i) => !i.voided).length, progress: (() => { const it = o.items.filter((i) => !i.voided); return it.length ? it.filter((i) => ['ready', 'served'].includes(i.status)).length / it.length : 0; })() })),
+    takeaway: orders.filter((o) => !o.tableId).map((o) => ({ id: String(o._id), number: o.number, type: o.type, outlet: o.outlet ?? (o.type === 'bar_counter' ? 'bar' : 'restaurant'), status: o.status, waiterName: o.waiterName, total: o.totals?.total ?? 0, itemCount: o.items.filter((i) => !i.voided).length, progress: (() => { const it = o.items.filter((i) => !i.voided); return it.length ? it.filter((i) => ['ready', 'served'].includes(i.status)).length / it.length : 0; })() })),
   };
 });
 

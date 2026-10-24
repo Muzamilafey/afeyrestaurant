@@ -66,6 +66,21 @@ describe('table order → kitchen/bar → payment', () => {
     expect(again.body.data._id).toBe(orderId);
   });
 
+  it('keeps the restaurant and bar POS orders apart (outlet)', async () => {
+    const bar = await cashier.as(api().post('/api/v1/orders').send({ clientId: uuid(), type: 'takeaway', outlet: 'bar', items: [{ productId: ids.coke, qty: 1 }] }));
+    expect(bar.status).toBe(201);
+    expect(bar.body.data.outlet).toBe('bar');
+    const counter = await cashier.as(api().post('/api/v1/orders').send({ clientId: uuid(), type: 'bar_counter', items: [{ productId: ids.coke, qty: 1 }] }));
+    expect(counter.body.data.outlet).toBe('bar'); // bar-counter orders default to the bar
+    const food = await cashier.as(api().post('/api/v1/orders').send({ clientId: uuid(), type: 'takeaway', items: [{ productId: ids.wine, qty: 1, ageCheckConfirmed: true }] }));
+    expect(food.status, JSON.stringify(food.body)).toBe(201);
+    expect(food.body.data.outlet).toBe('restaurant');
+    const open = (await cashier.as(api().get('/api/v1/tables'))).body.data.takeaway as Array<{ id: string; outlet: string }>;
+    expect(open.find((o) => o.id === bar.body.data._id)?.outlet).toBe('bar');
+    expect(open.find((o) => o.id === food.body.data._id)?.outlet).toBe('restaurant');
+    for (const o of [bar, counter, food]) await manager.as(api().post(`/api/v1/orders/${o.body.data._id}/void`).send({ reason: 'test cleanup' }));
+  });
+
   it('routes food to the kitchen and drinks to the bar exactly once', async () => {
     const key = uuid();
     const s1 = await cashier.as(api().post(`/api/v1/orders/${orderId}/send`).send({ submissionKey: key }));

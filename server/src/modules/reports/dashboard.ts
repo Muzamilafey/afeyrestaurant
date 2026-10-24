@@ -83,7 +83,7 @@ m.route(
     const bucket = p.hourly ? { $hour: { date: '$paidAt', timezone: tz } } : { $dateToString: { format: '%Y-%m-%d', date: '$paidAt', timezone: tz } };
     const series = (from: Date, to: Date) => Order.aggregate<{ _id: number | string; revenue: number; orders: number }>([{ $match: paid(from, to) }, { $group: { _id: bucket, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }]);
 
-    const [cur, prev, curSeries, prevSeries, hourly, payments, byType, topItems, staff, refunds, voids] = await Promise.all([
+    const [cur, prev, curSeries, prevSeries, hourly, payments, byType, topItems, staff, refunds, voids, byOutlet] = await Promise.all([
       summary(p.from, p.to),
       summary(p.prevFrom, p.prevTo),
       series(p.from, p.to),
@@ -99,6 +99,7 @@ m.route(
       Order.aggregate([{ $match: { ...paid(p.from, p.to), waiterName: { $ne: null } } }, { $group: { _id: '$waiterId', name: { $first: '$waiterName' }, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $sort: { revenue: -1 } }, { $limit: 5 }]),
       Refund.aggregate([{ $match: { ...base, createdAt: { $gte: p.from, $lt: p.to } } }, { $group: { _id: null, amount: { $sum: '$amount' }, count: { $sum: 1 } } }]),
       Order.aggregate([{ $match: { ...base, updatedAt: { $gte: p.from, $lt: p.to } } }, { $unwind: '$items' }, { $match: { 'items.voided': true } }, { $group: { _id: null, count: { $sum: 1 }, value: { $sum: { $multiply: ['$items.qty', '$items.unitPrice'] } } } }]),
+      Order.aggregate([{ $match: paid(p.from, p.to) }, { $group: { _id: { $ifNull: ['$outlet', { $cond: [{ $eq: ['$type', 'bar_counter'] }, 'bar', 'restaurant'] }] }, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $sort: { revenue: -1 } }]),
     ]);
 
     // Align current and previous buckets by position (hour 0–23, or day 1..n of the period).
@@ -145,6 +146,7 @@ m.route(
       hourly: hourly.map((h) => ({ hour: h._id as number, revenue: h.revenue, orders: h.orders })),
       payments: payments.map((x) => ({ method: x._id as string, amount: x.amount, count: x.count })),
       byType: byType.map((x) => ({ type: x._id as string, revenue: x.revenue, orders: x.orders })),
+      byOutlet: byOutlet.map((x) => ({ outlet: x._id as string, revenue: x.revenue, orders: x.orders })),
       topItems: topItems.map((x) => ({ name: x.name, qty: x.qty, revenue: x.revenue })),
       staff: staff.map((x) => ({ name: x.name, revenue: x.revenue, orders: x.orders })),
       live: {

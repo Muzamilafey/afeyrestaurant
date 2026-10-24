@@ -51,6 +51,8 @@ const orderSchema = new Schema(
     clientId: { type: String, required: true },
     source: { type: String, enum: ['pos', 'offline', 'online', 'api'], default: 'pos' },
     type: { type: String, enum: ORDER_TYPES, default: 'dine_in' },
+    /** Which POS took the order: the restaurant or the bar (separate screens, open-order lists and sales figures). */
+    outlet: { type: String, enum: ['restaurant', 'bar'], default: 'restaurant' },
     status: { type: String, enum: ['open', 'held', 'paid', 'voided', 'merged'], default: 'open', index: true },
     paymentStatus: { type: String, enum: ['unpaid', 'partial', 'paid', 'refunded', 'partially_refunded'], default: 'unpaid' },
     tableId: { type: Schema.Types.ObjectId, ref: 'Table' },

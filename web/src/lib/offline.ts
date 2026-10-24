@@ -19,6 +19,7 @@ export interface OfflineOrderPayload {
   terminalId: string;
   createdAt: string;
   type: 'dine_in' | 'takeaway' | 'bar_counter';
+  outlet?: 'restaurant' | 'bar';
   tableId?: string;
   customerName?: string;
   notes?: string;

@@ -174,6 +174,7 @@ async function buildLines(ctx: BranchContext, items: ItemInput[], opts: { approv
 export interface CreateOrderInput {
   clientId?: string;
   type: 'dine_in' | 'takeaway' | 'delivery' | 'room_service' | 'bar_counter' | 'online';
+  outlet?: 'restaurant' | 'bar';
   tableId?: string;
   guests?: number;
   customerId?: string;
@@ -220,6 +221,7 @@ export async function createOrder(ctx: BranchContext, input: CreateOrderInput) {
     number,
     clientId,
     type: input.type,
+    outlet: input.outlet ?? (input.type === 'bar_counter' ? 'bar' : 'restaurant'),
     tableId: table?._id,
     tableNumber: table?.number,
     guests: input.guests ?? 1,

@@ -15,6 +15,7 @@ export interface OfflineOrder {
   terminalId: string;
   createdAt: Date;
   type: 'dine_in' | 'takeaway' | 'bar_counter';
+  outlet?: 'restaurant' | 'bar';
   tableId?: string;
   customerName?: string;
   notes?: string;
@@ -47,7 +48,7 @@ export async function syncOfflineOrder(ctx: BranchContext, o: OfflineOrder): Pro
     const result = await withTransaction(async (session) => {
       const number = await nextNumber(ctx.tenantId, branch?.settings?.orderPrefix ?? 'ORD', branch?.code ?? 'BR', session);
       const order = new Order({
-        tenantId: ctx.tenantId, branchId: ctx.branchId, number, clientId: o.clientId, source: 'offline', type: o.type, tableId: table?._id, tableNumber: table?.number,
+        tenantId: ctx.tenantId, branchId: ctx.branchId, number, clientId: o.clientId, source: 'offline', type: o.type, outlet: o.outlet ?? (o.type === 'bar_counter' ? 'bar' : 'restaurant'), tableId: table?._id, tableNumber: table?.number,
         waiterId: ctx.userId, waiterName: ctx.userName, cashierId: ctx.userId, customerName: o.customerName, notes: o.notes, items: lines,
         offline: { createdAt: o.createdAt, terminalId: o.terminalId, syncedAt: new Date(), priceConflicts: conflicts },
       });

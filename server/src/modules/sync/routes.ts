@@ -13,7 +13,7 @@ m.route(
     method: 'post', path: '/orders', summary: 'Synchronise offline orders in creation order (idempotent)', permission: P.ORDERS_CREATE,
     body: z.object({
       orders: z.array(z.object({
-        clientId: z.uuid(), terminalId: z.string().max(60), createdAt: z.coerce.date(), type: z.enum(['dine_in', 'takeaway', 'bar_counter']), tableId: zId.optional(),
+        clientId: z.uuid(), terminalId: z.string().max(60), createdAt: z.coerce.date(), type: z.enum(['dine_in', 'takeaway', 'bar_counter']), outlet: z.enum(['restaurant', 'bar']).optional(), tableId: zId.optional(),
         customerName: z.string().max(80).optional(), notes: z.string().max(500).optional(),
         items: z.array(z.object({ lineId: z.uuid(), productId: zId, qty: z.number().positive().max(999), variant: z.string().max(40).optional(), modifiers: z.array(z.object({ groupId: zId, optionId: zId })).optional(), notes: z.string().max(300).optional(), unitPrice: zMoney })).min(1).max(100),
         payments: z.array(z.object({

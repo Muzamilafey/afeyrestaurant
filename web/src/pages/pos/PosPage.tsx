@@ -39,9 +39,17 @@ function CategoryIcon({ name, className }: { name: string; className?: string })
   return <I className={className} />;
 }
 
-interface TablesResp { tables: Array<{ _id: string; number: string; status: string; capacity: number; orders: Array<{ id: string; number: string; waiterName?: string; total: number; itemCount: number }>; itemCount: number; progress: number }>; takeaway: Array<{ id: string; number: string; type: string; status: string; waiterName?: string; total: number; itemCount: number; progress: number }> }
+export type Outlet = 'restaurant' | 'bar';
+/** Service modes offered on each POS (further limited by the branch's enabled modes). The first one is the default. */
+const OUTLET_MODES: Record<Outlet, string[]> = { restaurant: ['dine_in', 'takeaway', 'delivery'], bar: ['bar_counter', 'dine_in', 'takeaway'] };
 
-export default function PosPage() {
+interface TablesResp { tables: Array<{ _id: string; number: string; status: string; capacity: number; orders: Array<{ id: string; number: string; outlet?: Outlet; waiterName?: string; total: number; itemCount: number }>; itemCount: number; progress: number }>; takeaway: Array<{ id: string; number: string; type: string; outlet?: Outlet; status: string; waiterName?: string; total: number; itemCount: number; progress: number }> }
+
+/**
+ * Point of sale. The restaurant and the bar each have their own POS (/pos and /bar-pos): its own part of the menu,
+ * service modes and open orders. Orders remember which POS took them, for the open-order lists and sales reports.
+ */
+export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) {
   const { branch, session, can } = useAuth();
   const { toast, handleError, withApproval, confirm , prompt } = useFeedback();
   const qc = useQueryClient();
@@ -74,7 +82,17 @@ export default function PosPage() {
   const orderId = params.get('order');
   const orderQ = useQuery<{ order: Order }>({ queryKey: ['order', orderId], queryFn: () => get(`/orders/${orderId}`), enabled: !!orderId });
   const order = orderQ.data?.order ?? null;
-  const [mode, setMode] = useState<string>('dine_in');
+  const modes = useMemo(() => {
+    const enabled = (branch?.settings?.enabledModes as string[] | undefined) ?? ['dine_in', 'takeaway', 'delivery', 'bar_counter'];
+    const list = OUTLET_MODES[outlet].filter((m) => enabled.includes(m));
+    return list.length ? list : ['takeaway'];
+  }, [branch, outlet]);
+  const [mode, setMode] = useState<string>(() => modes[0]);
+  // Switching between the restaurant and bar POS (same page component): reset to that POS's default mode.
+  useEffect(() => { setMode(modes[0]); }, [outlet]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Off: only this POS's part of the menu (bar = categories prepared at the bar). On: the whole menu. */
+  const [fullMenu, setFullMenu] = useState(false);
+  useEffect(() => { setFullMenu(false); setCategory('all'); setKind('all'); }, [outlet]);
   const [tableId, setTableId] = useState<string>(params.get('table') ?? '');
   const [draft, setDraft] = useState<DraftLine[]>([]);
   const [customerName, setCustomerName] = useState('');
@@ -112,17 +130,21 @@ export default function PosPage() {
   }, [params, orderId]);
 
   const categoriesById = useMemo(() => new Map(catalog?.categories.map((c) => [c._id, c]) ?? []), [catalog]);
+  const inOutlet = (categoryId: string) => (categoriesById.get(categoryId)?.station === 'bar') === (outlet === 'bar');
+  const outletProducts = useMemo(() => (catalog?.products ?? []).filter((p) => fullMenu || inOutlet(p.categoryId)), [catalog, fullMenu, outlet, categoriesById]); // eslint-disable-line react-hooks/exhaustive-deps
+  const outletCategories = useMemo(() => (catalog?.categories ?? []).filter((c) => outletProducts.some((p) => p.categoryId === c._id)), [catalog, outletProducts]);
+  const kindFilters = KIND_FILTERS.filter((k) => k.id === 'all' || outletProducts.some((p) => { const ck = categoriesById.get(p.categoryId)?.kind ?? ''; return k.id === 'alcohol' ? ALCOHOL.includes(ck) : ck === k.id; }));
   const products = useMemo(() => {
     if (!catalog) return [];
     const term = q.trim().toLowerCase();
-    return catalog.products.filter((p) => {
+    return outletProducts.filter((p) => {
       const c = categoriesById.get(p.categoryId);
       if (category !== 'all' && p.categoryId !== category) return false;
       if (kind !== 'all' && !(kind === 'alcohol' ? ALCOHOL.includes(c?.kind ?? '') : c?.kind === kind)) return false;
       if (term && !(p.name.toLowerCase().includes(term) || p.sku?.toLowerCase() === term || p.barcode === term || p.plu === term)) return false;
       return true;
     });
-  }, [catalog, category, kind, q, categoriesById]);
+  }, [outletProducts, category, kind, q, categoriesById]);
 
   const setOrder = (id: string | null) => {
     const next = new URLSearchParams(params);
@@ -220,7 +242,7 @@ export default function PosPage() {
       return null;
     }
     const items = draft.map((d) => ({ productId: d.productId, qty: d.qty, variant: d.variant, modifiers: d.modifiers.map(({ groupId, optionId }) => ({ groupId, optionId })), notes: d.notes, lineId: d.lineId, ageCheckConfirmed: d.ageCheckConfirmed }));
-    const body = { clientId: draftClientId.current, type: mode, tableId: mode === 'dine_in' ? table : undefined, customerName: customerName || undefined, customerPhone: customerPhone || undefined, delivery: mode === 'delivery' ? { address: deliveryAddress } : undefined, items, sendToStations: send };
+    const body = { clientId: draftClientId.current, type: mode, outlet, tableId: mode === 'dine_in' ? table : undefined, customerName: customerName || undefined, customerPhone: customerPhone || undefined, delivery: mode === 'delivery' ? { address: deliveryAddress } : undefined, items, sendToStations: send };
     const o = await withApproval((approval) => post<Order>('/orders', { ...body, approval }));
     draftClientId.current = uuid();
     resetDraft();
@@ -297,7 +319,7 @@ export default function PosPage() {
     const type = mode === 'bar_counter' ? 'bar_counter' : mode === 'dine_in' && tableId ? 'dine_in' : 'takeaway';
     const tableNo = tables.find((t) => t._id === tableId)?.number;
     await queueOfflineOrder(branchId, {
-      clientId, terminalId: terminalId(), createdAt, type, tableId: mode === 'dine_in' ? tableId || undefined : undefined, customerName: customerName || undefined,
+      clientId, terminalId: terminalId(), createdAt, type, outlet, tableId: mode === 'dine_in' ? tableId || undefined : undefined, customerName: customerName || undefined,
       items: draft.map((d) => ({ lineId: d.lineId, productId: d.productId, qty: d.qty, variant: d.variant, modifiers: d.modifiers.map(({ groupId, optionId }) => ({ groupId, optionId })), notes: d.notes, unitPrice: d.unitPrice, name: d.name })),
       payments: [{ clientPaymentId: uuid(), method: p.method, amount: total, tendered: p.tendered, reference: p.reference, phone: p.phone }],
     });
@@ -412,7 +434,9 @@ export default function PosPage() {
   const estService = mode === 'dine_in' && (branch?.settings?.serviceChargeModes as string[] | undefined ?? ['dine_in']).includes('dine_in') ? Math.round((draftTotal * svcBps) / 10000) : 0;
   const hasNew = order ? order.items.some((i) => i.status === 'new' && !i.voided) : draft.length > 0;
   const tables = tablesQ.data?.tables ?? [];
-  const activeChips = [...tables.filter((t) => t.orders.length).flatMap((t) => t.orders.map((o) => ({ ...o, table: t.number, progress: t.progress }))), ...(tablesQ.data?.takeaway ?? []).map((o) => ({ ...o, table: o.type === 'delivery' ? 'DLV' : o.type === 'bar_counter' ? 'BAR' : 'TA' }))];
+  // Only this POS's open orders (the restaurant and the bar each see their own).
+  const activeChips = [...tables.filter((t) => t.orders.length).flatMap((t) => t.orders.map((o) => ({ ...o, table: t.number, progress: t.progress }))), ...(tablesQ.data?.takeaway ?? []).map((o) => ({ ...o, table: o.type === 'delivery' ? 'DLV' : o.type === 'bar_counter' ? 'BAR' : 'TA' }))]
+    .filter((o) => (o.outlet ?? 'restaurant') === outlet);
   const locked = order && !['open', 'held'].includes(order.status);
 
   return (
@@ -427,17 +451,23 @@ export default function PosPage() {
               <ScanBarcode className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-soft" />
             </div>
             <div className="scroll-thin flex gap-1 overflow-x-auto">
-              {KIND_FILTERS.map((k) => (
+              <span className={cx('inline-flex items-center gap-1 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-bold', outlet === 'bar' ? 'bg-info-pale text-info' : 'bg-brand-pale text-brand-dark')}>
+                {outlet === 'bar' ? <Martini className="h-3.5 w-3.5" /> : <UtensilsCrossed className="h-3.5 w-3.5" />} {outlet === 'bar' ? 'Bar POS' : 'Restaurant POS'}
+              </span>
+              {kindFilters.map((k) => (
                 <button key={k.id} onClick={() => setKind(k.id)} className={cx('whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold', kind === k.id ? 'bg-ink text-card' : 'bg-page text-ink-soft hover:text-ink')}>{k.label}</button>
               ))}
+              <button onClick={() => { setFullMenu(!fullMenu); setCategory('all'); setKind('all'); }} aria-pressed={fullMenu} title={outlet === 'bar' ? 'Also show food and other items' : 'Also show drinks made at the bar'} className={cx('whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold', fullMenu ? 'border-ink bg-ink text-card' : 'border-line text-ink-soft hover:text-ink')}>
+                {fullMenu ? 'Full menu ✓' : 'Full menu'}
+              </button>
             </div>
           </div>
           {usingCache && (
             <div className="flex items-center gap-2 bg-warn-pale px-4 py-2 text-xs text-warn-ink"><CloudOff className="h-4 w-4" /> Showing the menu cached at {new Date(offlineCatalog!.savedAt).toLocaleString()}. Prices and stock may have changed.</div>
           )}
           <div className="scroll-thin flex gap-3 overflow-x-auto px-4 py-3">
-            <CategoryCard active={category === 'all'} onClick={() => setCategory('all')} icon="layout-grid" name="All items" count={catalog?.products.length ?? 0} />
-            {catalog?.categories.map((c) => <CategoryCard key={c._id} active={category === c._id} onClick={() => setCategory(c._id)} icon={c.icon} name={c.name} count={catalog.products.filter((p) => p.categoryId === c._id).length} />)}
+            <CategoryCard active={category === 'all'} onClick={() => setCategory('all')} icon="layout-grid" name="All items" count={outletProducts.length} />
+            {outletCategories.map((c) => <CategoryCard key={c._id} active={category === c._id} onClick={() => setCategory(c._id)} icon={c.icon} name={c.name} count={outletProducts.filter((p) => p.categoryId === c._id).length} />)}
           </div>
           <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 pb-4">
             {!catalog ? (
@@ -480,7 +510,7 @@ export default function PosPage() {
             {!order ? (
               <div className="mt-3 space-y-2">
                 <div className="grid grid-cols-4 gap-1 rounded-xl bg-page p-1">
-                  {MODES.filter((m) => (branch?.settings?.enabledModes as string[] | undefined ?? ['dine_in', 'takeaway', 'delivery', 'bar_counter']).includes(m.id)).map((m) => (
+                  {modes.map((id) => MODES.find((m) => m.id === id)!).map((m) => (
                     <button key={m.id} onClick={() => setMode(m.id)} className={cx('flex flex-col items-center gap-0.5 rounded-lg py-1.5 text-[11px] font-semibold', mode === m.id ? 'bg-card text-brand-dark shadow-soft' : 'text-ink-soft')}>
                       <m.icon className="h-4 w-4" /> {m.label}
                     </button>
@@ -614,7 +644,7 @@ export default function PosPage() {
       {/* ── Bottom service bar: active tables & orders ── */}
       <div className="scroll-thin flex shrink-0 gap-2 overflow-x-auto border-t border-line bg-card px-4 py-2.5">
         {activeChips.length === 0 ? (
-          <p className="py-1.5 text-sm text-ink-soft">{online ? 'No active tables or orders.' : 'Offline — active orders unavailable.'}</p>
+          <p className="py-1.5 text-sm text-ink-soft">{online ? `No open ${outlet === 'bar' ? 'bar' : 'restaurant'} orders.` : 'Offline — active orders unavailable.'}</p>
         ) : (
           activeChips.map((c) => (
             <button key={c.id} onClick={() => setOrder(c.id)} title={`${c.number} · ${c.table.length <= 3 ? `Table ${c.table}` : c.table}`} className={cx('flex min-w-[170px] max-w-[230px] shrink-0 flex-col gap-1 rounded-xl border-2 px-3 py-2 text-left', orderId === c.id ? 'border-brand bg-brand-50' : 'border-line hover:border-brand/40')}>

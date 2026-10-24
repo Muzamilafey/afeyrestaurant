@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import {
-  LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList, Eye,
+  LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList, Eye, Martini,
 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, patch } from '@/lib/api';
@@ -18,7 +18,8 @@ import { useTheme } from '@/lib/theme';
 
 const NAV = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perms: ['reports.sales'] },
-  { to: '/pos', label: 'POS / Menu', icon: LayoutGrid, perms: ['orders.create'] },
+  { to: '/pos', label: 'Restaurant POS', icon: LayoutGrid, perms: ['orders.create'] },
+  { to: '/bar-pos', label: 'Bar POS', icon: Martini, perms: ['orders.create'] },
   { to: '/orders', label: 'Orders', icon: ClipboardList, perms: ['orders.view'] },
   { to: '/tables', label: 'Table Services', icon: Armchair, perms: ['tables.view'] },
   { to: '/kitchen', label: 'Kitchen Orders', icon: ChefHat, perms: ['kitchen.view'] },
@@ -129,7 +130,7 @@ export function AppShell() {
   useRealtime(branch?.id ?? null, stations);
   if (!session) return null;
   const items = NAV.filter((n) => can(...n.perms));
-  const isPos = loc.pathname.startsWith('/pos');
+  const isPos = loc.pathname.startsWith('/pos') || loc.pathname.startsWith('/bar-pos');
 
   // The desktop sidebar can be collapsed to icons; the mobile slide-out menu always shows the full names.
   const renderNav = (collapsed: boolean) => (

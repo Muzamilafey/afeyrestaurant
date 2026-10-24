@@ -21,6 +21,7 @@ interface Dashboard {
   hourly: Array<{ hour: number; revenue: number; orders: number }>;
   payments: Array<{ method: string; amount: number; count: number }>;
   byType: Array<{ type: string; revenue: number; orders: number }>;
+  byOutlet?: Array<{ outlet: string; revenue: number; orders: number }>;
   topItems: Array<{ name: string; qty: number; revenue: number }>;
   staff: Array<{ name: string; revenue: number; orders: number }>;
   live: { openOrders: number; openOrdersValue: number; tables: { total: number; occupied: number }; kitchen: number; bar: number; delayedTickets: number; delayMinutes: number; openDrawers: number; pendingMpesa: number };
@@ -411,6 +412,20 @@ export default function DashboardPage() {
               />
             </Card>
             <Card title="Sales by service">
+              {(data.byOutlet?.length ?? 0) > 0 && (
+                <div className="mb-4 grid grid-cols-2 gap-2">
+                  {(['restaurant', 'bar'] as const).map((o) => {
+                    const r = data.byOutlet!.find((x) => x.outlet === o);
+                    return (
+                      <div key={o} className="rounded-xl border border-line p-3">
+                        <p className="text-xs font-semibold uppercase text-ink-soft">{o === 'bar' ? 'Bar POS' : 'Restaurant POS'}</p>
+                        <p className="text-lg font-bold tabular-nums">{money(r?.revenue ?? 0)}</p>
+                        <p className="text-xs text-ink-soft">{r?.orders ?? 0} order{r?.orders === 1 ? '' : 's'}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <BarList
                 empty="No paid orders in this period"
                 rows={data.byType.map((t) => {

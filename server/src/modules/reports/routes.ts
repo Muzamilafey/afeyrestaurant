@@ -10,9 +10,12 @@ import { lowStockItems } from '../inventory/routes';
 
 const m = createModule('/reports', 'Reports');
 
+/** An order's outlet (restaurant or bar POS); older orders without one count by type. */
+const OUTLET = { $ifNull: ['$outlet', { $cond: [{ $eq: ['$type', 'bar_counter'] }, 'bar', 'restaurant'] }] };
+
 const zFilter = z.object({
   from: z.coerce.date().optional(), to: z.coerce.date().optional(), branchId: z.string().optional(), // a branch id or "all"
-  cashierId: z.string().optional(), waiterId: z.string().optional(), categoryId: z.string().optional(), method: z.string().optional(), format: z.enum(['json', 'csv']).optional(),
+  cashierId: z.string().optional(), waiterId: z.string().optional(), categoryId: z.string().optional(), method: z.string().optional(), outlet: z.enum(['restaurant', 'bar']).optional(), format: z.enum(['json', 'csv']).optional(),
 });
 type Filter = z.infer<typeof zFilter>;
 
@@ -40,9 +43,11 @@ m.route({ method: 'get', path: '/sales', summary: 'Sales dashboard: revenue, tre
   const match: Record<string, unknown> = { tenantId: s.tenantId, branchId: { $in: s.branchIds }, status: 'paid', paidAt: { $gte: s.from, $lte: s.to } };
   if (oid(query.cashierId)) match.cashierId = oid(query.cashierId);
   if (oid(query.waiterId)) match.waiterId = oid(query.waiterId);
+  // Orders from before outlets existed count as bar when they were bar-counter orders, otherwise restaurant.
+  if (query.outlet) match.$expr = { $eq: [OUTLET, query.outlet] };
   const days = (s.to.getTime() - s.from.getTime()) / 86400_000;
   const [summary] = await Order.aggregate([{ $match: match }, { $group: { _id: null, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 }, discounts: { $sum: '$totals.discount' }, serviceCharge: { $sum: '$totals.serviceCharge' }, taxInclusive: { $sum: '$totals.taxInclusive' }, taxExclusive: { $sum: '$totals.taxExclusive' }, refunded: { $sum: '$totals.refunded' }, guests: { $sum: '$guests' } } }]);
-  const [trend, byBranch, byCashier, byWaiter, byType, items, voids] = await Promise.all([
+  const [trend, byBranch, byCashier, byWaiter, byType, items, voids, byOutlet] = await Promise.all([
     Order.aggregate([{ $match: match }, { $group: { _id: { $dateToString: { format: days > 2 ? '%Y-%m-%d' : '%Y-%m-%d %H:00', date: '$paidAt', timezone: tz } }, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $sort: { _id: 1 } }]),
     Order.aggregate([{ $match: match }, { $group: { _id: '$branchId', revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }]),
     Order.aggregate([{ $match: match }, { $group: { _id: '$cashierId', revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'u' } }, { $project: { revenue: 1, orders: 1, name: { $first: '$u.name' } } }, { $sort: { revenue: -1 } }]),
@@ -54,6 +59,7 @@ m.route({ method: 'get', path: '/sales', summary: 'Sales dashboard: revenue, tre
       { $lookup: { from: 'categories', localField: '_id.category', foreignField: '_id', as: 'c' } }, { $project: { name: 1, qty: 1, revenue: 1, comps: 1, category: { $first: '$c.name' } } }, { $sort: { revenue: -1 } },
     ]),
     Order.aggregate([{ $match: { tenantId: s.tenantId, branchId: { $in: s.branchIds }, updatedAt: { $gte: s.from, $lte: s.to } } }, { $unwind: '$items' }, { $match: { 'items.voided': true, 'items.voidReason': { $exists: true } } }, { $group: { _id: null, count: { $sum: 1 }, value: { $sum: { $multiply: ['$items.qty', '$items.unitPrice'] } } } }]),
+    Order.aggregate([{ $match: match }, { $group: { _id: OUTLET, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $sort: { revenue: -1 } }]),
   ]);
   const payMatch: Record<string, unknown> = { tenantId: s.tenantId, branchId: { $in: s.branchIds }, receivedAt: { $gte: s.from, $lte: s.to } };
   if (query.method) payMatch.method = query.method;
@@ -73,16 +79,16 @@ m.route({ method: 'get', path: '/sales', summary: 'Sales dashboard: revenue, tre
   return {
     range: { from: s.from, to: s.to },
     summary: { revenue: rev, orders: summary?.orders ?? 0, averageOrderValue: summary?.orders ? Math.round(rev / summary.orders) : 0, discounts: summary?.discounts ?? 0, serviceCharge: summary?.serviceCharge ?? 0, tax: (summary?.taxInclusive ?? 0) + (summary?.taxExclusive ?? 0), refunded: summary?.refunded ?? 0, netSales: rev - (summary?.taxExclusive ?? 0) - (summary?.taxInclusive ?? 0) - (summary?.serviceCharge ?? 0), guests: summary?.guests ?? 0, voids: voids[0] ?? { count: 0, value: 0 } },
-    trend, hourly, byBranch, byCashier, byWaiter, byType, topItems: items.slice(0, 20), allItems: items, categories, payments, refunds,
+    trend, hourly, byBranch, byCashier, byWaiter, byType, byOutlet: byOutlet.map((x) => ({ outlet: x._id as string, revenue: x.revenue, orders: x.orders })), topItems: items.slice(0, 20), allItems: items, categories, payments, refunds,
   };
 });
 
 m.route({ method: 'get', path: '/sales/export', summary: 'Export paid orders as CSV', auth: 'tenant', permission: P.REPORTS_SALES, query: zFilter, raw: true }, async ({ ctx, query, res }) => {
   const s = scope(ctx, query);
-  const orders = await Order.find({ tenantId: s.tenantId, branchId: { $in: s.branchIds }, status: 'paid', paidAt: { $gte: s.from, $lte: s.to } }).sort({ paidAt: 1 }).limit(50000).lean();
+  const orders = await Order.find({ tenantId: s.tenantId, branchId: { $in: s.branchIds }, status: 'paid', paidAt: { $gte: s.from, $lte: s.to }, ...(query.outlet ? { $expr: { $eq: [OUTLET, query.outlet] } } : {}) }).sort({ paidAt: 1 }).limit(50000).lean();
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="sales-${s.from.toISOString().slice(0, 10)}.csv"`);
-  res.send(toCsv(orders.map((o) => ({ receipt: o.receiptNumber, order: o.number, paidAt: o.paidAt, type: o.type, table: o.tableNumber, waiter: o.waiterName, subtotal: (o.totals!.subtotal / 100).toFixed(2), discount: (o.totals!.discount / 100).toFixed(2), service: (o.totals!.serviceCharge / 100).toFixed(2), tax: ((o.totals!.taxInclusive + o.totals!.taxExclusive) / 100).toFixed(2), total: (o.totals!.total / 100).toFixed(2), refunded: (o.totals!.refunded / 100).toFixed(2), source: o.source }))));
+  res.send(toCsv(orders.map((o) => ({ receipt: o.receiptNumber, order: o.number, paidAt: o.paidAt, outlet: o.outlet ?? (o.type === 'bar_counter' ? 'bar' : 'restaurant'), type: o.type, table: o.tableNumber, waiter: o.waiterName, subtotal: (o.totals!.subtotal / 100).toFixed(2), discount: (o.totals!.discount / 100).toFixed(2), service: (o.totals!.serviceCharge / 100).toFixed(2), tax: ((o.totals!.taxInclusive + o.totals!.taxExclusive) / 100).toFixed(2), total: (o.totals!.total / 100).toFixed(2), refunded: (o.totals!.refunded / 100).toFixed(2), source: o.source }))));
 });
 
 m.route({ method: 'get', path: '/reconciliation', summary: 'Payment reconciliation: cash, M-Pesa, card, split', auth: 'tenant', permission: [P.REPORTS_FINANCIAL, P.ACCOUNTING_VIEW], query: zFilter }, async ({ ctx, query }) => {
