@@ -11,8 +11,13 @@ callbacks, reconciliation. Sandbox and production are separate settings.
    Sandbox: short code `174379` and the sandbox passkey from the Daraja portal.
 3. **Transaction type**: Paybill (`CustomerPayBillOnline`) or Buy Goods (`CustomerBuyGoodsOnline` — enter the Till
    number as *Till number*; the short code is the store/HO number).
-4. **Callback base URL** must be public HTTPS (your `PUBLIC_API_URL`). Callbacks go to
-   `/api/v1/mpesa/callback/stk/<attempt>/<one-time token>`.
+4. **Callback base URL** must be public HTTPS (your `PUBLIC_API_URL`), not a local address such as `192.168.x.x`,
+   `172.16–31.x.x` or `10.x.x.x`. Callbacks go to `/api/v1/payhooks/callback/stk/<attempt>/<one-time token>` and
+   `/api/v1/payhooks/c2b/<id>/<key>/{validation,confirmation}`. Safaricom refuses URLs that contain the words
+   *M-Pesa*, *Safaricom*, *exec*, *cmd*, *SQL* or *query*, so the paths avoid them (the old `/api/v1/mpesa/...`
+   callback paths still work). **Register C2B URLs** checks the address first and says what is wrong.
+   Without a public address, STK payments still complete: the server asks Safaricom for the status every few
+   seconds and records the sale as soon as it is paid (the M-Pesa code is added if a callback arrives later).
 5. **Test Daraja authentication**, then make a small real payment. Production requires Safaricom go-live approval.
 6. Optional: **Register C2B URLs** to receive direct Till/Paybill payments, which cashiers can apply to orders under
    the payment dialog (verified by Safaricom’s confirmation, not by the cashier).
@@ -37,8 +42,9 @@ Amounts must be whole shillings. **Refunds**: reverse the transaction in the M-P
 the refund with the reversal reference (manager approval, audited). Automated Daraja Reversal API calls require
 initiator credentials and are not enabled.
 
-**Manual M-Pesa codes** (customer paid outside the prompt): requires `payments.manual_confirm` or a manager PIN,
-a reason, and is audited and shown separately in reconciliation.
+**Manual M-Pesa** (customer paid to the Till/Paybill directly, outside the prompt): the cashier picks *Manual M-Pesa*
+and completes the sale — no code, reason or approval needed. The payment records who confirmed it, is audited, and is
+shown as manual in reconciliation, so check those against the M-Pesa statement at cash-up.
 
 **Development**: the *Simulated* provider (non-production only) lets you complete the full flow with
 *Simulate success/cancel* buttons; results are labelled SIMULATED.

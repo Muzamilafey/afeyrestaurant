@@ -21,7 +21,7 @@ import orders from './modules/orders/routes';
 import kitchen from './modules/kitchen/routes';
 import inventory from './modules/inventory/routes';
 import cash from './modules/cash/routes';
-import mpesa from './modules/mpesa/routes';
+import mpesa, { callbacks as paymentCallbacks } from './modules/mpesa/routes';
 import integrations from './modules/integrations/routes';
 import staff, { bridgeModule } from './modules/attendance/routes';
 import crm, { publicModule } from './modules/customers/routes';
@@ -57,7 +57,7 @@ export function createApp() {
   app.use(liveCopyGuard);
   app.use('/api/v1', healthRouter);
   app.use('/api/v1', manifestRouter);
-  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, integrations, staff, bridgeModule, crm, publicModule, reports, dashboard, sync, live]) {
+  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, paymentCallbacks, integrations, staff, bridgeModule, crm, publicModule, reports, dashboard, sync, live]) {
     app.use(`/api/v1${mod.basePath}`, mod.router);
   }
   const spec = buildOpenApi();

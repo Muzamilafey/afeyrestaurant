@@ -9,7 +9,8 @@ import { handleStkCallback, applyStkResult, finalizePaidOrder, emitTicketsClosed
 import { AppError, badRequest, conflict, forbidden, notFound } from '../../lib/errors';
 import { env, mocksAllowed } from '../../config/env';
 import { logger } from '../../lib/logger';
-import { sha256, randomToken } from '../../lib/crypto';
+import { randomBytes } from 'node:crypto';
+import { sha256 } from '../../lib/crypto';
 import { withTransaction } from '../../db/connect';
 import { getMpesa } from '../../integrations/factory';
 import { audit } from '../../services/audit';
@@ -17,6 +18,13 @@ import { recordIntegrationResult } from '../../services/integrations';
 import { emitBranch } from '../../realtime/bus';
 
 const m = createModule('/mpesa', 'M-Pesa');
+/**
+ * Public Safaricom callbacks live under a neutral path: Daraja refuses to register C2B URLs that contain words such as
+ * "M-Pesa", "Safaricom", "exec", "cmd", "SQL" or "query". The old /mpesa/... paths keep working for callbacks already
+ * registered or in flight.
+ */
+export const CALLBACK_PREFIX = '/payhooks';
+export const callbacks = createModule(CALLBACK_PREFIX, 'Payment callbacks');
 
 function checkCallbackIp(req: Request) {
   const list = env.MPESA_CALLBACK_IP_ALLOWLIST.split(',').map((s) => s.trim()).filter(Boolean);
@@ -26,27 +34,33 @@ function checkCallbackIp(req: Request) {
   }
 }
 
-/** Daraja STK callback. Always answers 200 with ResultCode 0 once the payload is authenticated, so Safaricom does not retry forever. */
-m.route({ method: 'post', path: '/callback/stk/:attemptId/:token', summary: 'Daraja STK Push callback (public, token-authenticated)', auth: 'public', raw: true }, async ({ params, body, req, res }) => {
-  checkCallbackIp(req);
-  if (!Types.ObjectId.isValid(params.attemptId)) throw notFound('Callback');
-  try {
-    const r = await handleStkCallback(params.attemptId, params.token, body);
-    res.json({ ResultCode: 0, ResultDesc: r.accepted ? 'Accepted' : 'Received; pending verification' });
-  } catch (e) {
-    if (e instanceof AppError && e.status === 404) throw e;
-    logger.error({ err: e, attemptId: params.attemptId }, 'STK callback processing failed');
-    // Non-2xx lets Daraja retry delivery; processing is idempotent.
-    res.status(500).json({ ResultCode: 1, ResultDesc: 'Temporary error' });
-  }
-});
+function registerCallbacks(m: ReturnType<typeof createModule>) {
+  /** Daraja STK callback. Always answers 200 with ResultCode 0 once the payload is authenticated, so Safaricom does not retry forever. */
+  m.route({ method: 'post', path: '/callback/stk/:attemptId/:token', summary: 'Daraja STK Push callback (public, token-authenticated)', auth: 'public', raw: true }, async ({ params, body, req, res }) => {
+    checkCallbackIp(req);
+    if (!Types.ObjectId.isValid(params.attemptId)) throw notFound('Callback');
+    try {
+      const r = await handleStkCallback(params.attemptId, params.token, body);
+      res.json({ ResultCode: 0, ResultDesc: r.accepted ? 'Accepted' : 'Received; pending verification' });
+    } catch (e) {
+      if (e instanceof AppError && e.status === 404) throw e;
+      logger.error({ err: e, attemptId: params.attemptId }, 'STK callback processing failed');
+      // Non-2xx lets Daraja retry delivery; processing is idempotent.
+      res.status(500).json({ ResultCode: 1, ResultDesc: 'Temporary error' });
+    }
+  });
 
-/** C2B validation: accept by default (configurable rejection of unknown bill references could be added per tenant). */
-m.route({ method: 'post', path: '/c2b/:integrationId/:key/validation', summary: 'Daraja C2B validation (public)', auth: 'public', raw: true }, async ({ params, req, res }) => {
-  checkCallbackIp(req);
-  await c2bIntegration(params.integrationId, params.key);
-  res.json({ ResultCode: '0', ResultDesc: 'Accepted' });
-});
+  /** C2B validation: accept by default (configurable rejection of unknown bill references could be added per tenant). */
+  m.route({ method: 'post', path: '/c2b/:integrationId/:key/validation', summary: 'Daraja C2B validation (public)', auth: 'public', raw: true }, async ({ params, req, res }) => {
+    checkCallbackIp(req);
+    await c2bIntegration(params.integrationId, params.key);
+    res.json({ ResultCode: '0', ResultDesc: 'Accepted' });
+  });
+
+  m.route({ method: 'post', path: '/c2b/:integrationId/:key/confirmation', summary: 'Daraja C2B confirmation (public)', auth: 'public', raw: true }, c2bConfirmation);
+}
+registerCallbacks(m);
+registerCallbacks(callbacks);
 
 async function c2bIntegration(id: string, key: string) {
   if (!Types.ObjectId.isValid(id)) throw notFound('Callback');
@@ -55,7 +69,7 @@ async function c2bIntegration(id: string, key: string) {
   return integ;
 }
 
-m.route({ method: 'post', path: '/c2b/:integrationId/:key/confirmation', summary: 'Daraja C2B confirmation (public)', auth: 'public', raw: true }, async ({ params, body, req, res }) => {
+async function c2bConfirmation({ params, body, req, res }: { params: Record<string, string>; body: unknown; req: Request; res: import('express').Response }) {
   checkCallbackIp(req);
   const integ = await c2bIntegration(params.integrationId, params.key);
   const b = body as Record<string, string>;
@@ -71,7 +85,7 @@ m.route({ method: 'post', path: '/c2b/:integrationId/:key/confirmation', summary
   await confirmOfflineMpesa(integ.tenantId as Types.ObjectId, String(b.TransID)).catch(() => undefined);
   await recordIntegrationResult(integ.tenantId as Types.ObjectId, 'mpesa', { ok: true, action: 'c2b_confirmation', message: `C2B ${b.TransID} received` });
   res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
-});
+}
 
 m.route({ method: 'get', path: '/c2b', summary: 'Unmatched/matched C2B (Till/Paybill) transactions', permission: P.PAYMENTS_RECEIVE, query: z.object({ status: z.enum(['unmatched', 'matched', 'ignored']).default('unmatched') }) }, async ({ ctx, query }) =>
   MpesaC2BTransaction.find({ tenantId: ctx.tenantId, status: query.status, $or: [{ branchId: ctx.branchId }, { branchId: null }, { branchId: { $exists: false } }] }, { raw: 0 }).sort({ createdAt: -1 }).limit(100).lean(),
@@ -105,14 +119,37 @@ m.route({ method: 'post', path: '/c2b/:id/match', summary: 'Apply a C2B transact
   return r;
 });
 
+/** Words Daraja refuses anywhere in a C2B URL (any letter case). */
+const BLOCKED_URL_WORDS = /m-?pesa|safaricom|exe|cmd|sql|query/i;
+
+/** Catch the problems Safaricom would reject (or never reach) before calling it, with an explanation. */
+export function checkCallbackBase(base: string) {
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    throw badRequest('Set "Callback base URL" to the public https address of this server, e.g. https://pos.myrestaurant.co.ke');
+  }
+  if (u.protocol !== 'https:') throw badRequest('The callback base URL must start with https:// — Safaricom only calls secure addresses');
+  const h = u.hostname;
+  if (h === 'localhost' || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(h) || h.endsWith('.local')) {
+    throw badRequest(`${h} is a private/local address that Safaricom cannot reach. Use the public https address of this server (a domain pointing to it, a VPS, or a tunnel such as Tailscale Funnel / Cloudflare Tunnel).`);
+  }
+  const word = BLOCKED_URL_WORDS.exec(base);
+  if (word) throw badRequest(`Safaricom refuses callback URLs containing "${word[0]}". Change the callback base URL (domain or path) so it doesn't contain it.`);
+}
+
 /** Register C2B URLs with Daraja using a freshly generated callback key. */
 m.route({ method: 'post', path: '/c2b/register', summary: 'Register C2B confirmation/validation URLs with Daraja', auth: 'tenant', permission: P.INTEGRATIONS_MANAGE, body: z.object({ responseType: z.enum(['Completed', 'Cancelled']).default('Completed') }) }, async ({ ctx, body, req }) => {
   const integ = await IntegrationConfiguration.findOne({ tenantId: ctx.tenantId, kind: 'mpesa', branchId: null });
   if (!integ) throw notFound('M-Pesa configuration');
   const mp = await getMpesa(ctx.tenantId, null);
   if (mp.mode !== 'daraja') throw badRequest('C2B registration requires real Daraja credentials');
-  const key = randomToken(24);
-  const base = `${(mp.settings.callbackBaseUrl as string) || env.PUBLIC_API_URL}/api/v1/mpesa/c2b/${integ._id}/${key}`;
+  // Hex keys can't spell any of the words Safaricom blocks (exe, cmd, sql, query, mpesa…).
+  const key = randomBytes(24).toString('hex');
+  const publicBase = ((mp.settings.callbackBaseUrl as string) || env.PUBLIC_API_URL).replace(/\/+$/, '');
+  checkCallbackBase(publicBase);
+  const base = `${publicBase}/api/v1${CALLBACK_PREFIX}/c2b/${integ._id}/${key}`;
   try {
     const r = await mp.client.registerC2BUrls({ confirmationUrl: `${base}/confirmation`, validationUrl: `${base}/validation`, responseType: body.responseType });
     integ.callbackKeyHash = sha256(key);

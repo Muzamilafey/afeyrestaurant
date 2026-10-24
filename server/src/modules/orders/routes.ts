@@ -97,7 +97,7 @@ m.route({ method: 'patch', path: '/:id', summary: 'Update order header (customer
 
 // ── Payments ──
 m.route(
-  { method: 'post', path: '/:id/payments', summary: 'Record a cash/card/QR/account payment or manager-confirmed M-Pesa code', permission: P.PAYMENTS_RECEIVE, body: z.object({ method: z.enum(['cash', 'card', 'qr', 'account', 'mpesa_manual']), amount: zMoney, tendered: zMoney.optional(), reference: z.string().max(40).optional(), customerId: zId.optional(), reason: z.string().max(200).optional(), idempotencyKey: z.string().min(8).max(80), approval: zApproval }) },
+  { method: 'post', path: '/:id/payments', summary: 'Record a cash/card/QR/account payment or a manual M-Pesa payment', permission: P.PAYMENTS_RECEIVE, body: z.object({ method: z.enum(['cash', 'card', 'qr', 'account', 'mpesa_manual']), amount: zMoney, tendered: zMoney.optional(), reference: z.string().max(40).optional(), customerId: zId.optional(), reason: z.string().max(200).optional(), idempotencyKey: z.string().min(8).max(80), approval: zApproval }) },
   async ({ ctx, params, body, res }) => {
     const r = await pay.recordPayment(ctx, params.id, body);
     res.status(r.duplicate ? 200 : 201);

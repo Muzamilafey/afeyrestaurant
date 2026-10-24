@@ -115,3 +115,41 @@ describe('receipt layout', () => {
     expect(docToText(receiptDoc(data, 'duplicate'))).toContain('*** DUPLICATE COPY ***');
   });
 });
+
+describe('Daraja callback URLs', () => {
+  it('rejects addresses Safaricom refuses or cannot reach, with a reason', async () => {
+    const { checkCallbackBase } = await import('../src/modules/mpesa/routes');
+    expect(() => checkCallbackBase('https://172.17.88.153')).toThrow(/private\/local address/);
+    expect(() => checkCallbackBase('https://localhost')).toThrow(/private\/local address/);
+    expect(() => checkCallbackBase('http://pos.example.co.ke')).toThrow(/https/);
+    expect(() => checkCallbackBase('https://mpesa.example.co.ke')).toThrow(/containing "mpesa"/);
+    expect(() => checkCallbackBase('https://pos.example.co.ke/M-Pesa')).toThrow(/containing "M-Pesa"/);
+    expect(() => checkCallbackBase('https://pos.example.co.ke')).not.toThrow();
+    expect(() => checkCallbackBase('https://afey.taile3d401.ts.net')).not.toThrow();
+  });
+});
+
+describe('Daraja STK status query', () => {
+  const realFetch = globalThis.fetch;
+  const answer = (status: number, body: unknown) => {
+    globalThis.fetch = (async (url: string) => (String(url).includes('oauth') ? new Response(JSON.stringify({ access_token: 't', expires_in: '3599' }), { status: 200 }) : new Response(JSON.stringify(body), { status }))) as typeof fetch;
+  };
+  it('treats "still under processing" (any form) and throttling as pending, and final codes as final', async () => {
+    const { DarajaClient } = await import('../src/integrations/mpesa/daraja');
+    const c = new DarajaClient({ environment: 'sandbox', consumerKey: 'k', consumerSecret: 's', shortCode: '174379', passkey: 'p', transactionType: 'CustomerPayBillOnline' });
+    try {
+      answer(200, { ResponseCode: '0', ResultCode: '4999', ResultDesc: 'The transaction is still under processing' });
+      expect((await c.stkQuery('ws_CO_1')).pending).toBe(true);
+      answer(500, { errorCode: '500.001.1001', errorMessage: 'The transaction is being processed' });
+      expect((await c.stkQuery('ws_CO_1')).pending).toBe(true);
+      answer(500, { errorCode: '500.003.02', errorMessage: 'Spike arrest violation' });
+      expect((await c.stkQuery('ws_CO_1')).pending).toBe(true);
+      answer(200, { ResponseCode: '0', ResultCode: '0', ResultDesc: 'The service request is processed successfully.' });
+      expect(await c.stkQuery('ws_CO_1')).toMatchObject({ pending: false, resultCode: 0 });
+      answer(200, { ResponseCode: '0', ResultCode: '1032', ResultDesc: 'Request cancelled by user' });
+      expect(await c.stkQuery('ws_CO_1')).toMatchObject({ pending: false, resultCode: 1032 });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});

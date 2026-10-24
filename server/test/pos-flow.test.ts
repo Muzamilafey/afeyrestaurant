@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { Types } from 'mongoose';
 import { setupDb, teardownDb, api, login, uuid, approval, type Session } from './helpers';
-import { Product, Table, ModifierGroup, StockBalance, StockLedger, Ingredient, KitchenTicket, Payment, Order, Receipt, Branch } from '../src/models';
+import { Product, Table, ModifierGroup, StockBalance, StockLedger, Ingredient, KitchenTicket, Payment, Order, Receipt, Branch, IntegrationConfiguration, MpesaC2BTransaction } from '../src/models';
+import { sha256 } from '../src/lib/crypto';
 import { MockSmsProvider } from '../src/integrations/sms/provider';
 import { processNotificationQueue } from '../src/services/notify';
 
@@ -292,7 +294,56 @@ describe('M-Pesa (simulated provider)', () => {
     const body = { Body: { stkCallback: { MerchantRequestID: a.body.data.merchantRequestId, CheckoutRequestID: a.body.data.checkoutRequestId, ResultCode: 0, ResultDesc: 'ok', CallbackMetadata: { Item: [{ Name: 'Amount', Value: o.totals.total / 100 }, { Name: 'MpesaReceiptNumber', Value: 'FORGED0001' }] } } } };
     const forged = await api().post(`/api/v1/mpesa/callback/stk/${attemptId}/not-the-token`).send(body);
     expect(forged.status).toBe(404);
+    // Same on the neutral path Safaricom is given now (no "mpesa" in the URL).
+    const forged2 = await api().post(`/api/v1/payhooks/callback/stk/${attemptId}/not-the-token`).send(body);
+    expect(forged2.status).toBe(404);
     expect((await Order.findOne({ tenantId: seed.tenantId, _id: o._id }).lean())!.status).toBe('open');
+  });
+});
+
+describe('M-Pesa completion without a callback', () => {
+  it('completes the sale when the status query says paid, and adds the code if the callback comes later', async () => {
+    const { applyStkResult } = await import('../src/services/payments');
+    const r = await cashier.as(api().post('/api/v1/orders').send({ clientId: uuid(), type: 'takeaway', items: [{ productId: ids.coke, qty: 1 }] }));
+    const o = r.body.data as { _id: string; totals: { total: number } };
+    const a = await cashier.as(api().post(`/api/v1/orders/${o._id}/mpesa`).send({ phone: '0712345678', amount: o.totals.total, idempotencyKey: uuid() }));
+    const attempt = a.body.data as { _id: string; checkoutRequestId: string; merchantRequestId: string };
+    const res = await applyStkResult(new Types.ObjectId(attempt._id), seed.tenantId, { checkoutRequestId: attempt.checkoutRequestId, merchantRequestId: attempt.merchantRequestId, resultCode: 0, resultDesc: 'The service request is processed successfully.', amount: o.totals.total / 100 }, 'query');
+    expect(res.attempt.status).toBe('succeeded');
+    expect((await Order.findOne({ tenantId: seed.tenantId, _id: o._id }).lean())!.status).toBe('paid');
+    const p = await Payment.findOne({ tenantId: seed.tenantId, orderId: o._id }).lean();
+    expect(p).toMatchObject({ method: 'mpesa', verification: 'stk_query', amount: o.totals.total });
+    // The callback arrives afterwards (e.g. once the server is reachable): the receipt code is filled in, nothing doubles.
+    await applyStkResult(new Types.ObjectId(attempt._id), seed.tenantId, { checkoutRequestId: attempt.checkoutRequestId, merchantRequestId: attempt.merchantRequestId, resultCode: 0, resultDesc: 'ok', amount: o.totals.total / 100, mpesaReceipt: 'TJK8QUERY1', phone: '254712345678' }, 'callback');
+    expect(await Payment.countDocuments({ tenantId: seed.tenantId, orderId: o._id })).toBe(1);
+    expect((await Payment.findOne({ tenantId: seed.tenantId, orderId: o._id }).lean())).toMatchObject({ reference: 'TJK8QUERY1', verification: 'provider' });
+  });
+
+  it('manual M-Pesa completes the sale without a code, reason or approval, and records who confirmed it', async () => {
+    const r = await cashier.as(api().post('/api/v1/orders').send({ clientId: uuid(), type: 'takeaway', items: [{ productId: ids.coke, qty: 1 }] }));
+    const o = r.body.data as { _id: string; totals: { total: number } };
+    const pay = await cashier.as(api().post(`/api/v1/orders/${o._id}/payments`).send({ method: 'mpesa_manual', amount: o.totals.total, idempotencyKey: uuid() }));
+    expect(pay.status).toBe(201);
+    expect(pay.body.data.order.status).toBe('paid');
+    const p = await Payment.findOne({ tenantId: seed.tenantId, orderId: o._id }).lean();
+    expect(p).toMatchObject({ method: 'mpesa', verification: 'manual' });
+    expect(String(p!.manualConfirmation!.by)).toBeTruthy();
+    const bad = await cashier.as(api().post('/api/v1/orders').send({ clientId: uuid(), type: 'takeaway', items: [{ productId: ids.coke, qty: 1 }] }));
+    expect((await cashier.as(api().post(`/api/v1/orders/${bad.body.data._id}/payments`).send({ method: 'mpesa_manual', amount: bad.body.data.totals.total, reference: 'x!', idempotencyKey: uuid() }))).status).toBe(400);
+  });
+});
+
+describe('C2B callbacks on the neutral path', () => {
+  it('accepts a Till/Paybill confirmation at /payhooks (no "mpesa" in the URL)', async () => {
+    const key = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718';
+    const integ = await IntegrationConfiguration.findOneAndUpdate({ tenantId: seed.tenantId, kind: 'mpesa', branchId: null }, { $set: { callbackKeyHash: sha256(key) }, $setOnInsert: { provider: 'mock', enabled: true } }, { upsert: true, new: true });
+    const url = `/api/v1/payhooks/c2b/${integ._id}/${key}`;
+    expect(url).not.toMatch(/m-?pesa|safaricom|exe|cmd|sql|query/i);
+    expect((await api().post(`${url}/validation`).send({})).body).toMatchObject({ ResultCode: '0' });
+    const r = await api().post(`${url}/confirmation`).send({ TransID: 'TPAYHOOK01', TransAmount: '150.00', BillRefNumber: 'X', MSISDN: '254712345678', TransactionType: 'Pay Bill' });
+    expect(r.status).toBe(200);
+    expect(await MpesaC2BTransaction.exists({ tenantId: seed.tenantId, transId: 'TPAYHOOK01' })).toBeTruthy();
+    expect((await api().post(`/api/v1/payhooks/c2b/${integ._id}/wrong-key/confirmation`).send({ TransID: 'X', TransAmount: '1' })).status).toBe(404);
   });
 });
 

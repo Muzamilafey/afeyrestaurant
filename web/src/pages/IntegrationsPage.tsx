@@ -85,7 +85,7 @@ const FIELDS: Record<string, Array<{ key: string; label: string; secret?: boolea
     { key: 'consumerKey', label: 'Consumer key', secret: true },
     { key: 'consumerSecret', label: 'Consumer secret', secret: true },
     { key: 'passkey', label: 'Lipa Na M-Pesa passkey', secret: true },
-    { key: 'callbackBaseUrl', label: 'Callback base URL', hint: 'Public HTTPS URL of this API. Callback: …/api/v1/mpesa/callback/stk/<attempt>/<token>' },
+    { key: 'callbackBaseUrl', label: 'Callback base URL', hint: 'Public HTTPS address of this server (not a 192.168.x / 172.x / 10.x address). Callbacks go to …/api/v1/payhooks/… (Safaricom refuses URLs containing "mpesa"). Without one, payments are still confirmed by status checks every few seconds.' },
     { key: 'accountReferenceFormat', label: 'Account reference format', hint: '{order} is replaced by the order number (max 12 chars)' },
     { key: 'transactionDesc', label: 'Transaction description', hint: 'Max 13 characters' },
     { key: 'verifyCallbackWithQuery', label: 'Verify success callbacks with a status query', options: [['true', 'Yes (recommended)'], ['false', 'No']] },

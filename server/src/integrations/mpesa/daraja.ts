@@ -110,8 +110,12 @@ export class DarajaClient {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ BusinessShortCode: this.cfg.shortCode, Password: stkPassword(this.cfg.shortCode, this.cfg.passkey, ts), Timestamp: ts, CheckoutRequestID: checkoutRequestId }),
     });
-    // While the customer has not responded Daraja returns HTTP 500 with errorCode 500.001.1001 ("The transaction is being processed").
-    if (body?.errorCode === '500.001.1001') return { pending: true, raw: body };
+    // Still waiting for the customer (PIN not entered yet). Daraja says so in several ways: HTTP 500 with errorCode
+    // 500.001.1001, or HTTP 200 with ResultCode 4999 — both "The transaction is (still) under/being processed".
+    // Asking too often gets a spike-arrest/throttling error: that is not an answer either, so keep waiting.
+    const text = `${body?.errorMessage ?? ''} ${body?.ResultDesc ?? ''}`;
+    if (body?.errorCode === '500.001.1001' || String(body?.ResultCode) === '4999' || /under processing|being processed|in progress/i.test(text)) return { pending: true, raw: body };
+    if (status === 429 || /spike arrest|throttl|rate limit/i.test(text)) return { pending: true, raw: body };
     if (status !== 200) throw new ProviderError(`STK query failed: ${body?.errorMessage ?? `HTTP ${status}`}`, status, body, isRetryableStatus(status));
     return { pending: false, resultCode: Number(body.ResultCode), resultDesc: body.ResultDesc, raw: body };
   }

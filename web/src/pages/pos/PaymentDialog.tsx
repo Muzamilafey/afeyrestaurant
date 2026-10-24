@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, Smartphone, CreditCard, UserRound, KeyRound, CheckCircle2, Loader2, Printer, MessageSquare, Mail, XCircle, FlaskConical } from 'lucide-react';
+import { Banknote, Smartphone, CheckCircle2, Loader2, Printer, MessageSquare, Mail, XCircle, FlaskConical } from 'lucide-react';
 import { Button, Field, Input, Modal, Pill, Select, cx } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { api, get, post } from '@/lib/api';
@@ -24,7 +24,6 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
   const [tendered, setTendered] = useState('');
   const [reference, setReference] = useState('');
   const [phone, setPhone] = useState(order.customerPhone ? `0${order.customerPhone.slice(3)}` : '');
-  const [reason, setReason] = useState('');
   const [customerId, setCustomerId] = useState(order.customerId ?? '');
   const [busy, setBusy] = useState(false);
   const [attemptId, setAttemptId] = useState<string | null>(null);
@@ -39,7 +38,7 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
     queryKey: ['attempt', attemptId],
     queryFn: () => get(`/orders/${order._id}/mpesa/${attemptId}`),
     enabled: !!attemptId,
-    refetchInterval: (q) => (['pending', 'initiated'].includes(q.state.data?.status ?? 'pending') ? 3000 : false),
+    refetchInterval: (q) => (['pending', 'initiated'].includes(q.state.data?.status ?? 'pending') ? 2000 : false),
   });
   const { data: customers } = useQuery<Array<{ _id: string; name: string; phone?: string; credit?: { approved: boolean; limit: number; balance: number } }>>({ queryKey: ['credit-customers'], queryFn: () => get('/crm/customers'), enabled: method === 'account' });
 
@@ -75,8 +74,7 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
       }
       const body: Record<string, unknown> = { method, amount: cents, idempotencyKey: idemKey };
       if (method === 'cash') body.tendered = tenderedCents;
-      if (method === 'card' || method === 'mpesa_manual') body.reference = reference.trim();
-      if (method === 'mpesa_manual') body.reason = reason;
+      if (method === 'card') body.reference = reference.trim();
       if (method === 'account') body.customerId = customerId;
       const r = await withApproval((approval) => post<{ order: Order; payment: { change: number } }>(`/orders/${order._id}/payments`, { ...body, approval }));
       setIdemKey(uuid());
@@ -98,9 +96,7 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
   const methods: Array<{ id: Method; label: string; icon: typeof Banknote; show: boolean }> = [
     { id: 'cash', label: 'Cash', icon: Banknote, show: true },
     { id: 'mpesa', label: 'M-Pesa', icon: Smartphone, show: true },
-    { id: 'card', label: 'Card / QR', icon: CreditCard, show: true },
-    { id: 'account', label: 'Credit account', icon: UserRound, show: true },
-    { id: 'mpesa_manual', label: 'M-Pesa code', icon: KeyRound, show: true },
+    { id: 'mpesa_manual', label: 'Manual M-Pesa', icon: CheckCircle2, show: true },
   ];
   const waiting = attempt && ['pending', 'initiated'].includes(attempt.status);
 
@@ -169,14 +165,10 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
             </Field>
           )}
           {method === 'mpesa_manual' && (
-            <>
-              <p className="rounded-xl bg-warn-pale px-3 py-2 text-xs text-warn-ink">Use only when a payment was made outside the STK prompt and verified on the M-Pesa statement. Requires manager approval and is audited.</p>
-              <Field label="M-Pesa transaction code"><Input value={reference} onChange={(e) => setReference(e.target.value.toUpperCase())} maxLength={10} /></Field>
-              <Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
-            </>
+            <p className="rounded-xl bg-brand-pale px-3 py-2 text-sm text-brand-dark">The customer paid to your Till / Paybill number and you have seen the M-Pesa message. Completing the sale records it as M-Pesa under your name.</p>
           )}
-          <Button size="lg" className="w-full" loading={busy} disabled={cents <= 0 || cents > balance || !!waiting || (method === 'cash' && tenderedCents < cents) || (method === 'card' && !reference) || (method === 'account' && !customerId) || (method === 'mpesa_manual' && (reference.length !== 10 || reason.length < 3))} onClick={pay}>
-            {method === 'mpesa' ? (attempt && !waiting ? 'Send prompt again' : 'Send M-Pesa prompt') : `Charge ${money(cents)}`}
+          <Button size="lg" className="w-full" loading={busy} disabled={cents <= 0 || cents > balance || !!waiting || (method === 'cash' && tenderedCents < cents) || (method === 'card' && !reference) || (method === 'account' && !customerId)} onClick={pay}>
+            {method === 'mpesa' ? (attempt && !waiting ? 'Send prompt again' : 'Send M-Pesa prompt') : method === 'mpesa_manual' ? `Complete sale · ${money(cents)}` : `Charge ${money(cents)}`}
           </Button>
         </div>
       </div>

@@ -296,9 +296,9 @@ The tills and the database work without internet. These need internet on the ser
 
 - **SMS (Talk Sasa) and email**: just need outbound internet. Messages queue and send when it returns.
 - **M-Pesa STK push**: Safaricom must reach a **public HTTPS callback URL**, which a local IP is not. Options:
-  run a tunnel (e.g. Cloudflare Tunnel) for `/api/v1/mpesa/*` only and set `PUBLIC_API_URL` to the tunnel address;
-  or rely on Chili POS asking Safaricom for the payment status (automatic, about every 30 seconds after the prompt
-  expires — slower to confirm);
+  run a tunnel (e.g. Cloudflare Tunnel) for `/api/v1/payhooks/*` only and set `PUBLIC_API_URL` to the tunnel address;
+  or rely on Chili POS asking Safaricom for the payment status (automatic, every few seconds while the prompt is
+  open; the sale completes as soon as Safaricom says it is paid);
   or use option B (cloud) if M-Pesa is your main payment method. Till-number (C2B) payments can always be matched
   manually under the order with the M-Pesa code.
 

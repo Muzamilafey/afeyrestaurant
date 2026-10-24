@@ -11,7 +11,17 @@ const G = { skipTenantGuard: true };
 
 /** Re-query M-Pesa attempts whose callback is overdue; expire stale simulated attempts. */
 export async function reconcileMpesa() {
-  const due = await PaymentAttempt.find({ method: 'mpesa', status: { $in: ['pending', 'initiated'] }, expiresAt: { $lt: new Date(Date.now() - 15_000) }, $or: [{ lastQueryAt: null }, { lastQueryAt: { $lt: new Date(Date.now() - 60_000) } }], createdAt: { $gt: new Date(Date.now() - 24 * 3600_000) } }).setOptions(G).limit(50).lean();
+  // Fresh prompts are checked every few seconds (so a sale completes even if the till closed the payment window or
+  // Safaricom's callback can't reach this server); older ones once a minute, for up to a day.
+  const now = Date.now();
+  const due = await PaymentAttempt.find({
+    method: 'mpesa', status: { $in: ['pending', 'initiated'] }, checkoutRequestId: { $type: 'string' }, createdAt: { $gt: new Date(now - 24 * 3600_000), $lt: new Date(now - 6_000) },
+    $or: [
+      { lastQueryAt: null },
+      { createdAt: { $gt: new Date(now - 5 * 60_000) }, lastQueryAt: { $lt: new Date(now - 5_000) } },
+      { lastQueryAt: { $lt: new Date(now - 60_000) } },
+    ],
+  }).setOptions(G).limit(50).lean();
   for (const a of due) {
     try {
       const r = await queryAttempt(a.tenantId as Types.ObjectId, a._id);
@@ -86,7 +96,7 @@ export function startScheduler() {
     );
   };
   every(3_000, 'notifications', () => processNotificationQueue(25));
-  every(30_000, 'mpesa-reconcile', reconcileMpesa);
+  every(5_000, 'mpesa-reconcile', reconcileMpesa);
   every(5 * 60_000, 'reservation-reminders', reservationReminders);
   every(60 * 60_000, 'daily', dailyTasks);
   every(15_000, 'live-sync', () => runLiveSync().catch((e) => logger.warn({ err: e instanceof Error ? e.message : e }, 'Live sync: will retry')));
