@@ -15,7 +15,7 @@ export interface Order {
   _id: string; number: string; clientId: string; type: string; outlet?: 'restaurant' | 'bar'; status: string; paymentStatus: string; tableId?: string; tableNumber?: string; guests: number; waiterName?: string;
   customerId?: string; customerName?: string; customerPhone?: string; items: OrderLine[]; notes?: string; receiptNumber?: string; source?: string;
   discount?: { type: string; value: number; amount: number; reason?: string };
-  totals: { subtotal: number; discount: number; serviceCharge: number; taxInclusive: number; taxExclusive: number; deliveryFee: number; total: number; paid: number; refunded: number; balance: number };
+  totals: { subtotal: number; discount: number; serviceCharge: number; taxInclusive: number; taxExclusive: number; deliveryFee: number; total: number; paid: number; refunded: number; balance: number; tips?: number };
   taxBreakdown?: Array<{ code: string; rateBps: number; inclusive: boolean; amount: number }>;
   delivery?: { address?: string; status?: string; trackingCode?: string; riderId?: string; riderName?: string; deliveredAt?: string; deliveredBy?: string };
 }

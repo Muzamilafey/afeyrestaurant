@@ -1,5 +1,5 @@
 import { Schema, model, InferSchemaType, HydratedDocument } from 'mongoose';
-import { schemaOpts, tenantRef, money } from './common';
+import { schemaOpts, tenantRef, branchRef, money } from './common';
 
 const branchSchema = new Schema(
   {
@@ -150,3 +150,26 @@ const counterSchema = new Schema({
 });
 counterSchema.index({ tenantId: 1, key: 1 }, { unique: true });
 export const Counter = model('Counter', counterSchema);
+
+/**
+ * A customer-facing display (a tablet or screen facing the customer) paired with a till. The display gets its own
+ * token that can only read this display's screen — it never sees anything else.
+ */
+const displayPairingSchema = new Schema(
+  {
+    tenantId: tenantRef,
+    branchId: branchRef,
+    name: { type: String, default: 'Customer display' },
+    createdBy: Schema.Types.ObjectId,
+    code: String,
+    codeExpiresAt: Date,
+    tokenHash: String,
+    pairedAt: Date,
+    lastSeenAt: Date,
+    active: { type: Boolean, default: true },
+  },
+  schemaOpts,
+);
+displayPairingSchema.index({ code: 1 }, { unique: true, partialFilterExpression: { code: { $type: 'string' } } });
+displayPairingSchema.index({ tokenHash: 1 }, { unique: true, partialFilterExpression: { tokenHash: { $type: 'string' } } });
+export const DisplayPairing = model('DisplayPairing', displayPairingSchema);

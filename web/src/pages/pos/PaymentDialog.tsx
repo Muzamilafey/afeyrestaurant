@@ -10,6 +10,7 @@ import { ReceiptPaper } from '@/components/ReceiptPaper';
 import { pickReceiptPrinter } from '@/lib/till';
 import { useAuth } from '@/auth/AuthContext';
 import type { Order } from './types';
+import { publishDisplay } from '@/lib/customerDisplay';
 
 type Method = 'cash' | 'mpesa' | 'card' | 'account' | 'mpesa_manual';
 interface Attempt { _id: string; status: string; resultDesc?: string; mpesaReceipt?: string; provider: string; error?: string }
@@ -94,6 +95,17 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
       setBusy(false);
     }
   }
+
+  // Customer-facing display: amount to pay, the M-Pesa prompt, then "thank you".
+  useEffect(() => {
+    const o = paidOrder ?? order;
+    const live = o.items.filter((i) => !i.voided);
+    const lines = live.filter((i) => !i.parentLineId).map((i) => ({ name: i.name, qty: i.qty, total: i.lineTotal, parts: live.filter((x) => x.parentLineId === i.lineId).map((x) => x.name) }));
+    const base = { orderNumber: o.number, lines, subtotal: o.totals.subtotal, total: o.totals.total, paid: o.totals.paid, balance: o.totals.total - o.totals.paid };
+    if (paidOrder) publishDisplay({ ...base, stage: 'paid', tip: paidOrder.totals.tips || undefined, receiptNumber: paidOrder.receiptNumber });
+    else if (method === 'mpesa' && attempt && ['pending', 'initiated'].includes(attempt.status)) publishDisplay({ ...base, stage: 'mpesa', tip: tipCents || undefined, message: `Enter your M-Pesa PIN on ${phone.replace(/^(\d{4})\d+(\d{3})$/, '$1 *** $2')} to pay ${money(Math.round((cents + tipCents) / 100) * 100)}` });
+    else publishDisplay({ ...base, stage: 'pay', tip: tipCents || undefined, message: method === 'mpesa_manual' ? 'Pay to our Till / Paybill by M-Pesa' : method === 'cash' ? 'Paying by cash' : undefined });
+  }, [paidOrder, order, method, attempt?.status, tipCents, cents, phone]);
 
   if (paidOrder) return <ReceiptPanel order={paidOrder} onClose={onClose} />;
 

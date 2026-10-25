@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { KeyRound, MonitorSmartphone, Lock, Download, Printer } from 'lucide-react';
+import { KeyRound, MonitorSmartphone, Lock, Download, Printer, Tv } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button, Field, Input, Modal, Pill, Select } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
 import { get, post } from '@/lib/api';
 import { getTillReceiptPrinter, setTillReceiptPrinter } from '@/lib/till';
+import { getDisplayPairing, setDisplayPairing } from '@/lib/customerDisplay';
 import { useInstallPrompt } from '@/components/pwa';
 
 /** Available to every signed-in user: change own PIN; managers can also register the device as a PIN terminal. */
@@ -20,6 +21,18 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
   const printers = useQuery<Array<{ _id: string; name: string; role: string; connection: string; active: boolean }>>({ queryKey: ['printers'], queryFn: () => get('/integrations/printers'), enabled: can('orders.view') });
   const [tillPrinter, setTillPrinter] = useState(getTillReceiptPrinter);
   const digits = (v: string) => v.replace(/\D/g, '').slice(0, 6);
+  const [display, setDisplay] = useState(getDisplayPairing);
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const pairTablet = async () => {
+    try {
+      const r = await post<{ pairingId: string; code: string }>('/display/pair', { name: `Display · ${session?.user.name ?? 'till'}` });
+      setDisplayPairing({ id: r.pairingId, name: 'Customer display' });
+      setDisplay({ id: r.pairingId, name: 'Customer display' });
+      setPairCode(r.code);
+    } catch (e) {
+      handleError(e);
+    }
+  };
 
   const changePin = async () => {
     if (pin.next !== pin.confirm) return toast('The new PINs do not match', 'error');
@@ -93,6 +106,19 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
               <option value="browser">This computer’s print dialog</option>
               {(printers.data ?? []).filter((p) => p.active && p.connection !== 'browser').map((p) => <option key={p._id} value={p._id}>{p.name} · {p.role}</option>)}
             </Select>
+          </section>
+        )}
+        {can('orders.create') && (
+          <section className="space-y-3 border-t border-line pt-4">
+            <p className="flex items-center gap-2 font-semibold"><Tv className="h-4 w-4 text-brand" /> Customer display</p>
+            <p className="text-xs text-ink-soft">Shows the customer their order, the amount to pay, the M-Pesa prompt and “thank you”.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" onClick={() => window.open('/display', 'chili-customer-display', 'popup,width=1280,height=800')}>Open on a second screen</Button>
+              <Button size="sm" variant="secondary" onClick={pairTablet}>{display ? 'Pair another tablet' : 'Pair a tablet'}</Button>
+              {display && <Button size="sm" variant="ghost" onClick={() => { setDisplayPairing(null); setDisplay(null); setPairCode(null); toast('This till no longer sends to the tablet'); }}>Stop sending to tablet</Button>}
+            </div>
+            {pairCode && <p className="rounded-xl bg-brand-pale p-3 text-sm text-brand-dark">On the tablet open <b>{window.location.origin}/display</b> and enter <b className="text-lg tracking-widest">{pairCode}</b> (valid 10 minutes).</p>}
+            {display && !pairCode && <p className="text-xs text-ink-soft">This till sends its screen to a paired tablet.</p>}
           </section>
         )}
         {can('terminals.manage') && (

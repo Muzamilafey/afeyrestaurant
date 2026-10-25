@@ -207,7 +207,7 @@ m.route(
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** What still works on a read-only live copy: signing in and out, and the link itself. */
-const ALLOWED_ON_COPY = /^\/api\/v1\/(auth\/(login|refresh|logout|pin-login)|live\/(link|push|compare|uploads\/[^/]+))$/;
+const ALLOWED_ON_COPY = /^\/api\/v1\/(auth\/(login|refresh|logout|pin-login)|live\/(link|push|compare|uploads\/[^/]+)|display\/claim)$/;
 
 /** On a live copy, every change must be made on the restaurant's server (it would be overwritten otherwise). */
 export async function liveCopyGuard(req: Request, _res: Response, next: NextFunction) {

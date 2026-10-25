@@ -13,6 +13,7 @@ import { useOnline } from '@/lib/connectivity';
 import { OfflinePayDialog, type OfflinePayment } from './OfflinePayDialog';
 import { AssignRiderDialog, type DeliveryDetails } from './AssignRiderDialog';
 import { SoldOutDialog } from '@/components/SoldOutDialog';
+import { publishDisplay } from '@/lib/customerDisplay';
 import { ProductCard } from './ProductCard';
 import { ModifierDialog } from './ModifierDialog';
 import { PaymentDialog, ReceiptPanel } from './PaymentDialog';
@@ -442,6 +443,17 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   const lines = order ? order.items.filter((i) => !i.voided) : draft;
   const draftTotal = draft.reduce((s, d) => s + d.unitPrice * d.qty, 0);
   const svcBps = (branch?.settings?.serviceChargeBps as number) ?? 0;
+  // Customer-facing display: show the order being rung up (the payment window takes over while paying).
+  useEffect(() => {
+    if (paying) return;
+    const live = order ? order.items.filter((i) => !i.voided) : [];
+    const lines = order
+      ? live.filter((i) => !i.parentLineId).map((i) => ({ name: i.name, qty: i.qty, total: i.lineTotal, parts: live.filter((x) => x.parentLineId === i.lineId).map((x) => x.name) }))
+      : draft.map((d) => ({ name: d.name, qty: d.qty, total: d.unitPrice * d.qty }));
+    const total = order ? order.totals.total : draft.reduce((s, d) => s + d.unitPrice * d.qty, 0);
+    const paid = order?.totals.paid ?? 0;
+    publishDisplay({ stage: lines.length ? 'order' : 'idle', orderNumber: order?.number, lines, subtotal: order?.totals.subtotal ?? total, total, paid, balance: total - paid });
+  }, [order, draft, paying]);
   const estService = mode === 'dine_in' && (branch?.settings?.serviceChargeModes as string[] | undefined ?? ['dine_in']).includes('dine_in') ? Math.round((draftTotal * svcBps) / 10000) : 0;
   const hasNew = order ? order.items.some((i) => i.status === 'new' && !i.voided) : draft.length > 0;
   const tables = tablesQ.data?.tables ?? [];
