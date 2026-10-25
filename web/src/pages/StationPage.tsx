@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, BellOff, Flame, AlertTriangle, Timer, Receipt } from 'lucide-react';
+import { Ban, Bell, BellOff, Flame, AlertTriangle, Timer, Receipt } from 'lucide-react';
 import { get, post } from '@/lib/api';
 import { elapsed, time } from '@/lib/format';
 import { Button, Empty, PageHeader, Pill, Skeleton, StatusPill, Tabs, cx } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { onSocket } from '@/lib/socket';
 import { useAuth } from '@/auth/AuthContext';
+import { SoldOutDialog } from '@/components/SoldOutDialog';
 
 interface Ticket { _id: string; orderNumber: string; tableNumber?: string; orderType: string; waiterName?: string; priority: boolean; status: string; completedVia?: 'station' | 'payment'; createdAt: string; ageSeconds: number; items: Array<{ lineId: string; name: string; qty: number; modifiers: string[]; notes?: string; status: string; ageRestricted?: boolean }> }
 const NEXT: Record<string, { status: string; label: string }> = { pending: { status: 'accepted', label: 'Accept' }, accepted: { status: 'preparing', label: 'Start' }, preparing: { status: 'ready', label: 'Ready' }, ready: { status: 'completed', label: 'Served' } };
@@ -36,6 +37,7 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
   const { handleError } = useFeedback();
   const qc = useQueryClient();
   const [view, setView] = useState<'active' | 'recent'>('active');
+  const [soldOut, setSoldOut] = useState(false);
   const [sound, setSound] = useState(() => localStorage.getItem(`chili.sound.${station}`) !== 'off');
   const [now, setNow] = useState(Date.now());
   const { data, isLoading, dataUpdatedAt } = useQuery<{ delayMinutes: number; tickets: Ticket[] }>({ queryKey: ['tickets', station, view, branch?.id], queryFn: () => get(`/stations/${station}/tickets`, { include: view }), refetchInterval: 20_000 });
@@ -59,7 +61,7 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
       <PageHeader
         title={station === 'kitchen' ? 'Kitchen display' : 'Bar display'}
         subtitle={`${tickets.length} ${view === 'active' ? 'active' : 'recent'} tickets${delayed ? ` · ${delayed} delayed` : ''}`}
-        actions={<Button variant="secondary" icon={sound ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />} onClick={() => { setSound(!sound); if (!sound) chime(); }}>{sound ? 'Sound on' : 'Sound off'}</Button>}
+        actions={<><Button variant="secondary" icon={<Ban className="h-4 w-4" />} onClick={() => setSoldOut(true)}>Sold out items</Button><Button variant="secondary" icon={sound ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />} onClick={() => { setSound(!sound); if (!sound) chime(); }}>{sound ? 'Sound on' : 'Sound off'}</Button></>}
       />
       <Tabs tabs={[{ id: 'active', label: 'Active' }, { id: 'recent', label: 'Completed' }]} value={view} onChange={setView} />
       {isLoading ? <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-60" />)}</div> : tickets.length === 0 ? <Empty title="No tickets" hint={view === 'active' ? 'New orders appear here instantly.' : undefined} /> : (
@@ -105,6 +107,7 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
           })}
         </div>
       )}
+      {soldOut && <SoldOutDialog station={station} onClose={() => setSoldOut(false)} />}
     </div>
   );
 }

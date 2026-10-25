@@ -97,6 +97,7 @@ async function buildLines(ctx: BranchContext, items: ItemInput[], opts: { approv
   const now = localParts(tenant?.settings?.timezone ?? 'Africa/Nairobi');
   const productIds = [...new Set(items.map((i) => i.productId))];
   if (productIds.some((id) => !Types.ObjectId.isValid(id))) throw badRequest('Invalid product id');
+  await Product.updateMany({ tenantId: ctx.tenantId, _id: { $in: productIds }, status: 'sold_out', soldOutUntil: { $lte: new Date() } }, { $set: { status: 'available' }, $unset: { soldOutUntil: 1, soldOutBy: 1, soldOutAt: 1 } });
   const products = await Product.find({ tenantId: ctx.tenantId, _id: { $in: productIds } }).lean();
   const categories = await Category.find({ tenantId: ctx.tenantId, _id: { $in: products.map((p) => p.categoryId) } }).lean();
   const groupIds = products.flatMap((p) => p.modifierGroupIds ?? []);

@@ -68,6 +68,10 @@ const productSchema = new Schema(
     allergens: [String],
     ageRestricted: { type: Boolean, default: false },
     status: { type: String, enum: ['available', 'sold_out', 'seasonal', 'archived'], default: 'available', index: true },
+    /** Sold out from the POS / kitchen ("86"): back on sale automatically at this time (null = until switched back). */
+    soldOutUntil: Date,
+    soldOutBy: String,
+    soldOutAt: Date,
     availability: {
       branchIds: [Schema.Types.ObjectId], // empty = all branches
       days: [Number], // 0=Sun..6, empty = every day

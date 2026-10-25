@@ -10,6 +10,8 @@ import { audit } from '../../services/audit';
 import { AppError, badRequest, notFound } from '../../lib/errors';
 import { env } from '../../config/env';
 import { localParts, resolvePrice, inWindow } from '../../services/pricing';
+import { dayRange, localDate } from '../../lib/time';
+import { emitBranch } from '../../realtime/bus';
 
 const m = createModule('/menu', 'Menu');
 
@@ -51,6 +53,7 @@ const zProduct = z.object({
 
 /** POS catalogue: products with current price, availability and stock warnings for the active branch. */
 m.route({ method: 'get', path: '/catalog', summary: 'POS catalogue for the active branch', permission: P.MENU_VIEW }, async ({ ctx }) => {
+  await restoreExpiredSoldOut(ctx.tenantId);
   const [tenant, branch, categories, products, groups, taxes] = await Promise.all([
     Tenant.findById(ctx.tenantId).lean(),
     Branch.findOne({ tenantId: ctx.tenantId, _id: ctx.branchId }).lean(),
@@ -87,6 +90,38 @@ m.route({ method: 'get', path: '/catalog', summary: 'POS catalogue for the activ
     });
   return { categories, products: out, modifierGroups: groups, taxes, serverTime: new Date().toISOString() };
 });
+
+/** Items marked sold out "for today" come back on sale once that time has passed. */
+export async function restoreExpiredSoldOut(tenantId: unknown) {
+  await Product.updateMany({ tenantId, status: 'sold_out', soldOutUntil: { $lte: new Date() } }, { $set: { status: 'available' }, $unset: { soldOutUntil: 1, soldOutBy: 1, soldOutAt: 1 } });
+}
+
+/**
+ * Sold out ("86") / back on sale in one tap, from the POS or the kitchen/bar screen. By default an item is sold out
+ * until the end of the business day; every till updates immediately.
+ */
+m.route(
+  {
+    method: 'post', path: '/products/:id/sold-out', summary: 'Mark a product sold out / back on sale', permission: [P.MENU_MANAGE, P.KITCHEN_UPDATE, P.BAR_UPDATE, P.ORDERS_UPDATE],
+    body: z.object({ soldOut: z.boolean(), until: z.enum(['end_of_day', 'manual']).default('end_of_day') }),
+  },
+  async ({ ctx, params, body, req }) => {
+    const p = await Product.findOne({ tenantId: ctx.tenantId, _id: params.id, status: { $in: ['available', 'sold_out'] } });
+    if (!p) throw notFound('Product');
+    if (body.soldOut) {
+      const tenant = await Tenant.findById(ctx.tenantId).select('settings.timezone').lean();
+      const tz = tenant?.settings?.timezone ?? 'Africa/Nairobi';
+      p.set({ status: 'sold_out', soldOutBy: ctx.userName, soldOutAt: new Date(), soldOutUntil: body.until === 'end_of_day' ? dayRange(localDate(tz), tz).end : undefined });
+    } else {
+      p.set({ status: 'available', soldOutUntil: undefined, soldOutBy: undefined, soldOutAt: undefined });
+    }
+    await p.save();
+    await audit(ctx, { action: body.soldOut ? 'menu.sold_out' : 'menu.back_on_sale', entity: 'Product', entityId: p._id, meta: { name: p.name, until: p.soldOutUntil } }, req);
+    const branches = await Branch.find({ tenantId: ctx.tenantId }).select('_id').lean();
+    for (const b of branches) emitBranch(ctx.tenantId, b._id, 'menu.updated', { productId: String(p._id), status: p.status });
+    return { _id: p._id, name: p.name, status: p.status, soldOutUntil: p.soldOutUntil, soldOutBy: p.soldOutBy };
+  },
+);
 
 m.route({ method: 'get', path: '/products', summary: 'List/search products (name, SKU, barcode, PLU)', permission: P.MENU_VIEW, query: z.object({ q: z.string().max(60).optional(), categoryId: zId.optional(), status: z.string().optional() }) }, async ({ ctx, query }) => {
   const f: Record<string, unknown> = { tenantId: ctx.tenantId };

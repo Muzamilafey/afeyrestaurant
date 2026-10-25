@@ -12,6 +12,7 @@ import { printReceipt, type ReceiptDoc } from '@/lib/printing';
 import { useOnline } from '@/lib/connectivity';
 import { OfflinePayDialog, type OfflinePayment } from './OfflinePayDialog';
 import { AssignRiderDialog, type DeliveryDetails } from './AssignRiderDialog';
+import { SoldOutDialog } from '@/components/SoldOutDialog';
 import { ProductCard } from './ProductCard';
 import { ModifierDialog } from './ModifierDialog';
 import { PaymentDialog, ReceiptPanel } from './PaymentDialog';
@@ -93,6 +94,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   useEffect(() => { setMode(modes[0]); }, [outlet]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Off: only this POS's part of the menu (bar = categories prepared at the bar). On: the whole menu. */
   const [fullMenu, setFullMenu] = useState(false);
+  const [soldOutOpen, setSoldOutOpen] = useState(false);
   useEffect(() => { setFullMenu(false); setCategory('all'); setKind('all'); }, [outlet]);
   const [tableId, setTableId] = useState<string>(params.get('table') ?? '');
   const [draft, setDraft] = useState<DraftLine[]>([]);
@@ -136,6 +138,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   const inOutlet = (categoryId: string) => (categoriesById.get(categoryId)?.station === 'bar') === (outlet === 'bar');
   const outletProducts = useMemo(() => (catalog?.products ?? []).filter((p) => fullMenu || inOutlet(p.categoryId)), [catalog, fullMenu, outlet, categoriesById]); // eslint-disable-line react-hooks/exhaustive-deps
   const outletCategories = useMemo(() => (catalog?.categories ?? []).filter((c) => outletProducts.some((p) => p.categoryId === c._id)), [catalog, outletProducts]);
+  const soldOutCount = (catalog?.products ?? []).filter((p) => p.status === 'sold_out').length;
   const kindFilters = KIND_FILTERS.filter((k) => k.id === 'all' || outletProducts.some((p) => { const ck = categoriesById.get(p.categoryId)?.kind ?? ''; return k.id === 'alcohol' ? ALCOHOL.includes(ck) : ck === k.id; }));
   const products = useMemo(() => {
     if (!catalog) return [];
@@ -465,6 +468,11 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
               {kindFilters.map((k) => (
                 <button key={k.id} onClick={() => setKind(k.id)} className={cx('whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold', kind === k.id ? 'bg-ink text-card' : 'bg-page text-ink-soft hover:text-ink')}>{k.label}</button>
               ))}
+              {can('menu.manage', 'kitchen.update', 'bar.update', 'orders.update') && (
+                <button onClick={() => setSoldOutOpen(true)} title="Mark items sold out / back on sale" className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft hover:text-ink">
+                  <Ban className="h-3.5 w-3.5" /> Sold out{soldOutCount ? ` · ${soldOutCount}` : ''}
+                </button>
+              )}
               <button onClick={() => { setFullMenu(!fullMenu); setCategory('all'); setKind('all'); }} aria-pressed={fullMenu} title={outlet === 'bar' ? 'Also show food and other items' : 'Also show drinks made at the bar'} className={cx('whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold', fullMenu ? 'border-ink bg-ink text-card' : 'border-line text-ink-soft hover:text-ink')}>
                 {fullMenu ? 'Full menu ✓' : 'Full menu'}
               </button>
@@ -691,6 +699,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
           }}
         />
       )}
+      {soldOutOpen && <SoldOutDialog onClose={() => setSoldOutOpen(false)} />}
       {pickRiderFor && (
         <AssignRiderDialog
           action={pickRiderFor}

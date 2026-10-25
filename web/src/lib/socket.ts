@@ -25,12 +25,14 @@ export function useRealtime(branchId: string | null, stations: string[] = []) {
     const onTable = invalidate([['tables']]);
     const onPayment = invalidate([['order'], ['orders'], ['attempt']]);
     const onReservation = invalidate([['reservations']]);
+    const onMenu = invalidate([['catalog']]);
     socket.on('order.updated', onOrder);
     socket.on('ticket.created', onTicket);
     socket.on('ticket.updated', onTicket);
     socket.on('table.updated', onTable);
     socket.on('payment.updated', onPayment);
     socket.on('reservation.updated', onReservation);
+    socket.on('menu.updated', onMenu);
     return () => {
       socket?.off('connect', join);
       socket?.off('order.updated', onOrder);
@@ -39,6 +41,7 @@ export function useRealtime(branchId: string | null, stations: string[] = []) {
       socket?.off('table.updated', onTable);
       socket?.off('payment.updated', onPayment);
       socket?.off('reservation.updated', onReservation);
+      socket?.off('menu.updated', onMenu);
     };
   }, [branchId, stations.join(','), qc]);
 }
