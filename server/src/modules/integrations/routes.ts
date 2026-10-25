@@ -3,7 +3,7 @@ import { createModule, zId } from '../../http/route';
 import { IntegrationConfiguration, IntegrationLog, NotificationJob, NotificationTemplate, SMSLog, EmailLog, Printer, PrintJob, BridgeAgent, BiometricDevice, INTEGRATION_KINDS, NOTIFICATION_EVENTS } from '../../models';
 import { PERMISSIONS as P } from '../../auth/permissions';
 import { saveIntegration, redact, recordIntegrationResult, type IntegrationKind, SECRET_KEYS } from '../../services/integrations';
-import { getEmailProvider, getMpesa, getSmsProvider } from '../../integrations/factory';
+import { getEmailProvider, getMpesa, getSmsProvider, getWhatsAppProvider } from '../../integrations/factory';
 import { audit } from '../../services/audit';
 import { notify, retryNotification } from '../../services/notify';
 import { renderTemplate, smsSegments, templateVariables } from '../../lib/template';
@@ -19,6 +19,7 @@ const m = createModule('/integrations', 'Integrations');
 const SETUP: Record<string, string> = {
   mpesa: 'Create an app on developer.safaricom.co.ke, enable "M-Pesa Express" (and C2B for Till/Paybill confirmations), then paste the Consumer Key/Secret, Business Short Code and Lipa Na M-Pesa passkey. Use the sandbox (short code 174379) until Safaricom approves your production go-live. Callback URLs must be public HTTPS.',
   sms: 'Log in to bulksms.talksasa.com → Developers/API to create an API token. Use your approved Sender ID. Confirm the API base URL and endpoints in your Talk Sasa dashboard documentation before going live — this integration has not been verified against a live Talk Sasa account.',
+  whatsapp: 'Meta WhatsApp Cloud API: in Meta Business Suite create a WhatsApp Business app, add your business number, and copy the Phone number ID and a permanent System User access token. Messages you start must use an approved template: create a Utility template (e.g. chili_message, language English) with the body "Message from {{1}}:\\n\\n{{2}}" and enter its name here. Free text only works within 24 hours of the customer messaging you.',
   email: 'Use your provider SMTP details (Zoho: smtp.zoho.com:587 STARTTLS; Brevo: smtp-relay.brevo.com:587; Google Workspace: smtp.gmail.com:587 with an app password). Publish SPF, DKIM and DMARC records for your sending domain — see docs/integrations/email.md.',
   receipt_printer: 'Install the Chili Bridge on the till PC, then add ESC/POS printers by IP (port 9100) under Printers. Browser printing is used as a fallback.',
   kitchen_printer: 'Add kitchen/bar printers under Printers and assign them the kitchen or bar role.',
@@ -61,7 +62,7 @@ const zSave = z.object({
   settings: z.record(z.string(), z.union([z.string().max(4000), z.number(), z.boolean(), z.null()])).optional(), // 4000: a pasted certificate
   secrets: z.record(z.string(), z.string().max(2000).nullable()).optional(),
 });
-const PROVIDERS: Record<string, string[]> = { mpesa: ['daraja', 'mock'], sms: ['talksasa', 'mock'], email: ['smtp', 'mock'], online_ordering: ['none'], accounting_export: ['csv'] };
+const PROVIDERS: Record<string, string[]> = { mpesa: ['daraja', 'mock'], sms: ['talksasa', 'mock'], whatsapp: ['meta', 'mock'], email: ['smtp', 'mock'], online_ordering: ['none'], accounting_export: ['csv'] };
 
 m.route({ method: 'put', path: '/:kind', summary: 'Save integration settings (secrets write-only)', auth: 'tenant', permission: P.INTEGRATIONS_MANAGE, body: zSave }, async ({ ctx, params, body, req }) => {
   const kind = params.kind as IntegrationKind;
@@ -104,6 +105,12 @@ m.route({ method: 'post', path: '/:kind/test', summary: 'Run a real connection t
         /* balance endpoint optional */
       }
       result = { ok: true, simulated: r.simulated, message: r.simulated ? 'SIMULATED send — no SMS left this server.' : `Submitted to Talk Sasa (id ${r.messageId ?? 'n/a'}, status ${r.status}). Delivery is confirmed by the delivery report, not by this test.`, detail: { balance } };
+    } else if (kind === 'whatsapp') {
+      const to = body.to ? normalizeKePhone(body.to) : null;
+      if (!to) throw badRequest('Enter a valid WhatsApp number to receive the test message');
+      const { provider } = await getWhatsAppProvider(ctx.tenantId);
+      const r = await provider.send(to, 'This is a test message from Chili POS. Your WhatsApp integration works.');
+      result = { ok: true, simulated: r.simulated, message: r.simulated ? 'SIMULATED send — nothing left this server.' : `Accepted by WhatsApp (id ${r.messageId}). Delivery shows on the phone; a template that isn't approved fails here instead.` };
     } else if (kind === 'email') {
       if (!body.to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.to)) throw badRequest('Enter a test recipient email');
       const { provider } = await getEmailProvider(ctx.tenantId);

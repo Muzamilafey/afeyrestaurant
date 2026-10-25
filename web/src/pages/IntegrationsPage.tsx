@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Smartphone, MessageSquare, Mail, Printer, ChefHat, Fingerprint, Usb, Globe, FileSpreadsheet, FlaskConical, KeyRound, RotateCcw, Copy, Plus } from 'lucide-react';
+import { Smartphone, MessageSquare, MessageCircle, Mail, Printer, ChefHat, Fingerprint, Usb, Globe, FileSpreadsheet, FlaskConical, KeyRound, RotateCcw, Copy, Plus } from 'lucide-react';
 import { get, post, put } from '@/lib/api';
 import { dateTime } from '@/lib/format';
 import { Button, Card, DataTable, Field, Input, Modal, PageHeader, Pill, Select, StatusPill, Tabs, Toggle, Textarea, Skeleton } from '@/components/ui';
@@ -17,7 +17,7 @@ interface IntegrationView {
 interface Overview { mocksAllowed: boolean; publicApiUrl: string; integrations: IntegrationView[]; bridges: Array<{ _id: string; name: string; lastSeenAt?: string; version?: string; active: boolean; tokenHint?: string }> }
 
 const META: Record<string, { title: string; icon: typeof Smartphone }> = {
-  mpesa: { title: 'M-Pesa Daraja', icon: Smartphone }, sms: { title: 'Talk Sasa SMS', icon: MessageSquare }, email: { title: 'SMTP email', icon: Mail },
+  mpesa: { title: 'M-Pesa Daraja', icon: Smartphone }, sms: { title: 'Talk Sasa SMS', icon: MessageSquare }, whatsapp: { title: 'WhatsApp', icon: MessageCircle }, email: { title: 'SMTP email', icon: Mail },
   receipt_printer: { title: 'Receipt printers', icon: Printer }, kitchen_printer: { title: 'Kitchen & bar printers', icon: ChefHat }, zkteco: { title: 'ZKTeco devices', icon: Fingerprint },
   secugen: { title: 'SecuGen readers', icon: Usb }, online_ordering: { title: 'Online ordering', icon: Globe }, accounting_export: { title: 'Accounting exports', icon: FileSpreadsheet },
 };
@@ -61,7 +61,7 @@ export default function IntegrationsPage() {
                   {i.derived && Object.entries(i.derived).filter(([, v]) => v !== null).map(([k2, v]) => <p key={k2}>{k2}: <b className="text-ink">{String(v)}</b></p>)}
                 </div>
                 <div className="flex flex-wrap gap-2 border-t border-line p-4">
-                  {['mpesa', 'sms', 'email'].includes(i.kind) ? <Button size="sm" onClick={() => setEdit(i)}>Configure & test</Button> : <Button size="sm" variant="secondary" onClick={() => setEdit(i)}>Setup guide</Button>}
+                  {['mpesa', 'sms', 'whatsapp', 'email'].includes(i.kind) ? <Button size="sm" onClick={() => setEdit(i)}>Configure & test</Button> : <Button size="sm" variant="secondary" onClick={() => setEdit(i)}>Setup guide</Button>}
                 </div>
               </Card>
             );
@@ -95,6 +95,15 @@ const FIELDS: Record<string, Array<{ key: string; label: string; secret?: boolea
     { key: 'initiatorPassword', label: 'Initiator password', secret: true, hint: 'Used with the certificate below when no security credential is given' },
     { key: 'certificate', label: 'Safaricom certificate (PEM)', hint: 'Paste the sandbox or production certificate from the Daraja portal' },
   ],
+  whatsapp: [
+    { key: 'phoneNumberId', label: 'Phone number ID', hint: 'Meta Business → WhatsApp → API setup (not the phone number itself)' },
+    { key: 'accessToken', label: 'Access token', secret: true, hint: 'A permanent System User token with whatsapp_business_messaging' },
+    { key: 'mode', label: 'Message type', options: [['template', 'Approved template (recommended)'], ['text', 'Free text (only within 24 h of the customer writing)']] },
+    { key: 'templateName', label: 'Template name', hint: 'Utility template with body "Message from {{1}}:\n\n{{2}}" — e.g. chili_message' },
+    { key: 'templateLanguage', label: 'Template language code', hint: 'e.g. en, en_US — as approved in WhatsApp Manager' },
+    { key: 'useFor', label: 'Use for customer messages', options: [['off', 'Only when chosen (receipts)'], ['instead_of_sms', 'Instead of SMS'], ['with_sms', 'As well as SMS']], hint: 'Order ready, delivery updates, reservations, payment confirmations…' },
+    { key: 'apiVersion', label: 'Graph API version', hint: 'Default v21.0' },
+  ],
   sms: [
     { key: 'baseUrl', label: 'API base URL', hint: 'Default https://bulksms.talksasa.com/api/v3 — confirm in your Talk Sasa dashboard' },
     { key: 'apiKey', label: 'API token', secret: true },
@@ -118,7 +127,7 @@ function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: Integra
   const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
   const fields = FIELDS[i.kind];
-  const realProvider = { mpesa: 'daraja', sms: 'talksasa', email: 'smtp' }[i.kind] ?? 'none';
+  const realProvider = { mpesa: 'daraja', sms: 'talksasa', whatsapp: 'meta', email: 'smtp' }[i.kind] ?? 'none';
   const [provider, setProvider] = useState(i.config?.provider ?? realProvider);
   const [enabled, setEnabled] = useState(i.config?.enabled ?? false);
   const [environment, setEnv] = useState(i.config?.environment === 'production' ? 'production' : 'sandbox');
@@ -187,7 +196,7 @@ function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: Integra
         <div className="rounded-xl border border-line p-4">
           <p className="mb-2 text-sm font-semibold">Test connection</p>
           <div className="flex flex-wrap gap-2">
-            {i.kind !== 'mpesa' && <Input className="max-w-xs" placeholder={i.kind === 'sms' ? 'Phone to receive test SMS' : 'Email to receive test'} value={testTo} onChange={(e) => setTestTo(e.target.value)} />}
+            {i.kind !== 'mpesa' && <Input className="max-w-xs" placeholder={i.kind === 'sms' ? 'Phone to receive test SMS' : i.kind === 'whatsapp' ? 'WhatsApp number for the test' : 'Email to receive test'} value={testTo} onChange={(e) => setTestTo(e.target.value)} />}
             <Button onClick={test} loading={busy}>{i.kind === 'mpesa' ? 'Test Daraja authentication' : 'Send test'}</Button>
             {i.kind === 'mpesa' && provider === 'daraja' && <Button variant="secondary" onClick={() => post('/mpesa/c2b/register', {}).then(() => toast('C2B URLs registered with Daraja')).catch(handleError)}>Register C2B URLs</Button>}
             {i.kind === 'sms' && provider === 'talksasa' && <Button variant="secondary" icon={<KeyRound className="h-4 w-4" />} onClick={() => post<{ url: string }>('/integrations/sms/webhook-key').then((r) => { navigator.clipboard?.writeText(r.url); toast('Delivery-report URL copied (shown once)'); prompt({ title: 'Delivery-report URL', label: 'Paste this into Talk Sasa', defaultValue: r.url, readOnly: true, hint: 'Shown once — copy it now.' }); }).catch(handleError)}>Delivery-report URL</Button>}

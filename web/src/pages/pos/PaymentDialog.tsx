@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, Smartphone, CheckCircle2, Loader2, Printer, MessageSquare, Mail, XCircle, FlaskConical } from 'lucide-react';
+import { Banknote, Smartphone, CheckCircle2, MessageCircle, Loader2, Printer, MessageSquare, Mail, XCircle, FlaskConical } from 'lucide-react';
 import { Button, Field, Input, Modal, Pill, Select, cx } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { api, get, post } from '@/lib/api';
@@ -239,10 +239,10 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
       handleError(e);
     }
   }
-  async function send(channel: 'sms' | 'email') {
+  async function send(channel: 'sms' | 'email' | 'whatsapp') {
     try {
       const job = await post<{ status: string; lastError?: string }>(`/orders/${order._id}/receipt/send`, { channel, to });
-      toast(job.status === 'skipped' ? `Not sent: ${job.lastError}` : `Receipt queued for ${channel.toUpperCase()}`, job.status === 'skipped' ? 'error' : 'success');
+      toast(job.status === 'skipped' ? `Not sent: ${job.lastError}` : `Receipt queued for ${channel === 'whatsapp' ? 'WhatsApp' : channel.toUpperCase()}`, job.status === 'skipped' ? 'error' : 'success');
     } catch (e) {
       handleError(e);
     }
@@ -267,6 +267,7 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
         <div className="flex gap-2">
           <Input placeholder="Phone or email" value={to} onChange={(e) => setTo(e.target.value)} />
           <Button variant="secondary" icon={<MessageSquare className="h-4 w-4" />} onClick={() => send('sms')} disabled={!to || to.includes('@')}>SMS</Button>
+          <Button variant="secondary" icon={<MessageCircle className="h-4 w-4" />} onClick={() => send('whatsapp')} disabled={!to || to.includes('@')}>WhatsApp</Button>
           <Button variant="secondary" icon={<Mail className="h-4 w-4" />} onClick={() => send('email')} disabled={!to.includes('@')}>Email</Button>
         </div>
       </div>

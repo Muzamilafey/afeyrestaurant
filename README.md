@@ -97,6 +97,6 @@ needs credentials or hardware, and what is unverified.
 - [Production deployment (Nginx, PM2, Let's Encrypt, backups)](docs/DEPLOYMENT.md)
 - [Several tills sharing one server and database (Windows server PC, HTTPS, step by step)](docs/MULTI-TILL.md)
 - [MongoDB on Windows: enable transactions](docs/MONGODB-WINDOWS.md)
-- [M-Pesa Daraja](docs/integrations/mpesa.md) · [Talk Sasa SMS](docs/integrations/sms.md) · [SMTP email](docs/integrations/email.md)
+- [M-Pesa Daraja](docs/integrations/mpesa.md) · [Talk Sasa SMS](docs/integrations/sms.md) · [WhatsApp](docs/integrations/whatsapp.md) · [SMTP email](docs/integrations/email.md)
 - [Printers](docs/integrations/printers.md) · [Biometric devices & attendance](docs/integrations/biometrics.md) · [Fingerprint device setup, step by step](docs/FINGERPRINT-DEVICES.md) · [Chili Bridge](bridge/README.md)
 - [Security notes](docs/SECURITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)

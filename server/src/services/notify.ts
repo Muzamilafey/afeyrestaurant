@@ -3,14 +3,14 @@ import { NotificationJob, NotificationTemplate, Tenant, SMSLog, EmailLog, Custom
 import { renderTemplate, smsSegments } from '../lib/template';
 import { normalizeKePhone } from '../lib/phone';
 import { DEFAULT_TEMPLATES } from './notificationDefaults';
-import { getEmailProvider, getSmsProvider, IntegrationUnavailable } from '../integrations/factory';
+import { getEmailProvider, getSmsProvider, getWhatsAppProvider, IntegrationUnavailable } from '../integrations/factory';
 import { ProviderError } from '../integrations/http';
 import { recordIntegrationResult } from './integrations';
 import { logger } from '../lib/logger';
 
 export interface NotifyInput {
   event: string;
-  channel: 'sms' | 'email';
+  channel: 'sms' | 'email' | 'whatsapp';
   to: string;
   vars: Record<string, unknown>;
   /** Unique key: the same logical notification is never queued twice. */
@@ -46,7 +46,23 @@ export function emailHtml(brand: { name: string; color?: string; logoUrl?: strin
 }
 
 /** Queue a notification. Returns the job (existing job if the dedupe key was already used). */
+/** Messages for staff/management — never redirected to the customer WhatsApp channel. */
+const INTERNAL_EVENTS = new Set(['manager_sales_summary', 'low_stock_alert', 'integration_failure', 'staff_attendance', 'subscription_expiry', 'test', 'password_reset', 'login_alert']);
+
 export async function notify(tenantId: Types.ObjectId, input: NotifyInput) {
+  // Customer SMS can go by WhatsApp instead of, or as well as, SMS (Integrations → WhatsApp → "Use for customer messages").
+  if (input.channel === 'sms' && !INTERNAL_EVENTS.has(input.event)) {
+    const wa = await IntegrationConfiguration.findOne({ tenantId, kind: 'whatsapp', enabled: true }, { settings: 1 }).lean();
+    const useFor = (wa?.settings as Record<string, unknown> | undefined)?.useFor;
+    if (wa && (useFor === 'instead_of_sms' || useFor === 'with_sms')) {
+      const waJob = await queueNotification(tenantId, { ...input, channel: 'whatsapp', dedupeKey: `${input.dedupeKey}:wa` });
+      if (useFor === 'instead_of_sms') return waJob;
+    }
+  }
+  return queueNotification(tenantId, input);
+}
+
+async function queueNotification(tenantId: Types.ObjectId, input: NotifyInput) {
   const existing = await NotificationJob.findOne({ tenantId, dedupeKey: input.dedupeKey }).lean();
   if (existing) return existing;
   const tenant = await Tenant.findById(tenantId).lean();
@@ -59,7 +75,7 @@ export async function notify(tenantId: Types.ObjectId, input: NotifyInput) {
     const ok = input.channel === 'sms' ? c?.consent?.marketingSms : c?.consent?.marketingEmail;
     if (!ok) skipReason = 'Customer has not opted in to marketing messages';
   }
-  if (input.channel === 'sms') {
+  if (input.channel === 'sms' || input.channel === 'whatsapp') {
     const n = normalizeKePhone(to, tenant?.settings?.countryCode ?? '254');
     if (!n) skipReason = `Invalid phone number: ${to}`;
     else to = n;
@@ -68,7 +84,8 @@ export async function notify(tenantId: Types.ObjectId, input: NotifyInput) {
   const custom = await NotificationTemplate.findOne({ tenantId, event: input.event, channel: input.channel }).lean();
   if (custom && !custom.enabled) skipReason ??= 'Template disabled';
   const def = DEFAULT_TEMPLATES[input.event];
-  const bodyTpl = custom?.body ?? (input.channel === 'sms' ? def?.sms : def?.email?.body);
+  // WhatsApp has room for the longer email text (e.g. the full receipt), else the SMS text.
+  const bodyTpl = custom?.body ?? (input.channel === 'sms' ? def?.sms : input.channel === 'whatsapp' ? def?.email?.body ?? def?.sms : def?.email?.body);
   const subjectTpl = custom?.subject ?? def?.email?.subject;
   if (!bodyTpl) skipReason ??= `No ${input.channel} template for ${input.event}`;
   const body = bodyTpl ? renderTemplate(bodyTpl, vars).text : '(none)';
@@ -105,6 +122,12 @@ async function deliver(job: InstanceType<typeof NotificationJob>) {
       job.status = 'sent';
       job.providerMessageId = r.messageId;
       await recordIntegrationResult(tenantId, 'sms', { ok: true, action: `send:${job.event}`, message: r.simulated ? 'Simulated send' : `Submitted (${r.messageId ?? 'no id'})`, simulated: r.simulated, isTest: job.event === 'test' });
+    } else if (job.channel === 'whatsapp') {
+      const { provider } = await getWhatsAppProvider(tenantId);
+      const r = await provider.send(job.to, job.subject ? `${job.subject}\n\n${job.body}` : job.body);
+      job.status = 'sent';
+      job.providerMessageId = r.messageId;
+      await recordIntegrationResult(tenantId, 'whatsapp', { ok: true, action: `send:${job.event}`, message: r.simulated ? 'Simulated send' : `Accepted by WhatsApp (${r.messageId})`, simulated: r.simulated, isTest: job.event === 'test' });
     } else {
       const { provider } = await getEmailProvider(tenantId);
       const r = await provider.send({ to: job.to, subject: job.subject ?? '(no subject)', text: job.body, html: job.html ?? undefined, attachments: job.attachments?.map((a) => ({ filename: a.filename!, content: a.content!, contentType: a.contentType ?? undefined })) });
@@ -119,8 +142,8 @@ async function deliver(job: InstanceType<typeof NotificationJob>) {
     const retryable = e instanceof IntegrationUnavailable ? false : e instanceof ProviderError ? e.retryable : true;
     job.lastError = (e as Error).message.slice(0, 500);
     if (job.channel === 'sms') await SMSLog.create({ tenantId, jobId: job._id, to: job.to, status: 'failed', error: job.lastError });
-    else await EmailLog.create({ tenantId, jobId: job._id, to: job.to, subject: job.subject, status: 'failed', error: job.lastError });
-    await recordIntegrationResult(tenantId, job.channel as 'sms' | 'email', { ok: false, action: `send:${job.event}`, message: job.lastError, isTest: job.event === 'test' });
+    else if (job.channel === 'email') await EmailLog.create({ tenantId, jobId: job._id, to: job.to, subject: job.subject, status: 'failed', error: job.lastError });
+    await recordIntegrationResult(tenantId, job.channel as 'sms' | 'email' | 'whatsapp', { ok: false, action: `send:${job.event}`, message: job.lastError, isTest: job.event === 'test' });
     if (retryable && job.attempts < job.maxAttempts) {
       job.status = 'queued';
       job.runAt = new Date(Date.now() + backoffMs(job.attempts));

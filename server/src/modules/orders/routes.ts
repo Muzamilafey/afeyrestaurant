@@ -145,7 +145,7 @@ m.route({ method: 'post', path: '/:id/receipt/print', summary: 'Record a receipt
   const r = await pay.buildReceipt(ctx.tenantId, order._id);
   return { copy, doc: receiptDoc(r, copy), text: pay.receiptText(r, copy), receipt: r };
 });
-m.route({ method: 'post', path: '/:id/receipt/send', summary: 'Send the receipt by SMS or email', permission: P.ORDERS_VIEW, body: z.object({ channel: z.enum(['sms', 'email']), to: z.string().min(5).max(120) }) }, async ({ ctx, params, body }) => {
+m.route({ method: 'post', path: '/:id/receipt/send', summary: 'Send the receipt by SMS, WhatsApp or email', permission: P.ORDERS_VIEW, body: z.object({ channel: z.enum(['sms', 'email', 'whatsapp']), to: z.string().min(5).max(120) }) }, async ({ ctx, params, body }) => {
   const order = await svc.loadOrder(ctx, params.id);
   if (order.status !== 'paid') throw badRequest('Order is not paid');
   const r = await pay.buildReceipt(ctx.tenantId, order._id);

@@ -1,7 +1,9 @@
 import type { Types } from 'mongoose';
 import { mocksAllowed } from '../config/env';
+import { Tenant } from '../models';
 import { loadIntegration } from '../services/integrations';
 import { DarajaClient, securityCredential, type DarajaConfig } from './mpesa/daraja';
+import { MetaWhatsAppProvider, MockWhatsAppProvider, type WhatsAppProvider } from './whatsapp/provider';
 import { logger } from '../lib/logger';
 import { MockSmsProvider, TalkSasaProvider, type SmsProvider } from './sms/provider';
 import { MockEmailProvider, SmtpProvider, type EmailProvider } from './email/provider';
@@ -25,6 +27,22 @@ export async function getSmsProvider(tenantId: Types.ObjectId): Promise<{ provid
   return {
     provider: new TalkSasaProvider({ baseUrl: s.baseUrl || 'https://bulksms.talksasa.com/api/v3', apiKey: cfg.secrets.apiKey, senderId: s.senderId, sendPath: s.sendPath, balancePath: s.balancePath }),
     settings: cfg.settings,
+  };
+}
+
+export async function getWhatsAppProvider(tenantId: Types.ObjectId): Promise<{ provider: WhatsAppProvider; settings: Record<string, any> }> {
+  const cfg = await loadIntegration(tenantId, 'whatsapp');
+  if (!cfg || !cfg.enabled) throw new IntegrationUnavailable('whatsapp', 'WhatsApp is not enabled. Configure it under Integrations → WhatsApp.');
+  if (cfg.provider === 'mock') {
+    if (!mocksAllowed) throw new IntegrationUnavailable('whatsapp', 'The simulated WhatsApp provider is disabled in production.');
+    return { provider: new MockWhatsAppProvider(), settings: cfg.settings };
+  }
+  const s = cfg.settings as Record<string, any>;
+  if (!cfg.secrets.accessToken || !s.phoneNumberId) throw new IntegrationUnavailable('whatsapp', 'WhatsApp needs the access token and the phone number ID from Meta.');
+  const tenant = await Tenant.findById(tenantId).select('name').lean();
+  return {
+    provider: new MetaWhatsAppProvider({ accessToken: cfg.secrets.accessToken, phoneNumberId: String(s.phoneNumberId), apiVersion: s.apiVersion, mode: s.mode === 'text' ? 'text' : 'template', templateName: s.templateName, templateLanguage: s.templateLanguage, businessName: tenant?.name ?? 'Chili POS' }),
+    settings: s,
   };
 }
 
