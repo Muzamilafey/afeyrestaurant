@@ -52,7 +52,7 @@ const zBranch = z.object({
   settings: z.object({
     serviceChargeBps: z.number().int().min(0).max(3000).optional(), serviceChargeModes: z.array(z.string()).optional(), receiptPrefix: z.string().max(6).optional(), orderPrefix: z.string().max(6).optional(),
     enabledModes: z.array(z.enum(['dine_in', 'takeaway', 'delivery', 'room_service', 'bar_counter', 'online'])).optional(), roomServiceEnabled: z.boolean().optional(), deliveryFee: z.number().int().min(0).optional(),
-    openingTime: z.string().optional(), closingTime: z.string().optional(), kitchenDelayMinutes: z.number().int().min(1).max(240).optional(), cashDrawerMode: z.enum(['per_user', 'shared']).optional(),
+    openingTime: z.string().optional(), closingTime: z.string().optional(), kitchenDelayMinutes: z.number().int().min(1).max(240).optional(), cashDrawerMode: z.enum(['per_user', 'shared']).optional(), qrOrdering: z.object({ enabled: z.boolean(), requireAccept: z.boolean(), payByMpesa: z.boolean() }).partial().optional(),
     happyHours: z.array(z.object({ days: z.array(z.number().int().min(0).max(6)), start: z.string().regex(/^\d{2}:\d{2}$/), end: z.string().regex(/^\d{2}:\d{2}$/), discountBps: z.number().int().min(0).max(10000).optional(), categoryIds: z.array(zId).optional() })).max(10).optional(),
   }).optional(),
 });

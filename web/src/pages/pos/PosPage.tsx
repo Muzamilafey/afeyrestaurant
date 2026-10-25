@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Utensils, Beef, Salad, Sandwich, CupSoda, Beer, Martini as MartiniIcon, Wine, Pizza, Coffee, IceCream, Fish, Soup, Cake, Croissant, Drumstick, Egg, Apple, Citrus, GlassWater, LayoutGrid, Users, type LucideIcon, Search, ScanBarcode, Trash2, Minus, Plus, Send, PauseCircle, PlayCircle, ArrowRightLeft, Merge, Split, Printer, Percent, Ban, UtensilsCrossed, ShoppingBag, Bike, Martini, ChefHat, StickyNote, UserRound, CloudOff } from 'lucide-react';
+import { Utensils, Beef, Salad, Sandwich, CupSoda, Beer, Martini as MartiniIcon, Wine, Pizza, Coffee, IceCream, Fish, Soup, Cake, Croissant, Drumstick, Egg, Apple, Citrus, GlassWater, LayoutGrid, Users, type LucideIcon, Search, ScanBarcode, Trash2, Minus, Plus, Send, PauseCircle, PlayCircle, ArrowRightLeft, Merge, Split, Printer, Percent, Ban, UtensilsCrossed, ShoppingBag, Bike, Martini, ChefHat, StickyNote, UserRound, CloudOff, QrCode } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { useFeedback } from '@/components/feedback';
 import { Button, Input, Modal, Pill, Select, Skeleton, StatusPill, cx, Empty, Field } from '@/components/ui';
@@ -46,7 +46,7 @@ export type Outlet = 'restaurant' | 'bar';
 /** Service modes offered on each POS (further limited by the branch's enabled modes). The first one is the default. */
 const OUTLET_MODES: Record<Outlet, string[]> = { restaurant: ['dine_in', 'takeaway', 'delivery'], bar: ['bar_counter', 'dine_in', 'takeaway'] };
 
-interface TablesResp { tables: Array<{ _id: string; number: string; status: string; capacity: number; orders: Array<{ id: string; number: string; outlet?: Outlet; waiterName?: string; total: number; itemCount: number }>; itemCount: number; progress: number }>; takeaway: Array<{ id: string; number: string; type: string; outlet?: Outlet; status: string; waiterName?: string; total: number; itemCount: number; progress: number }> }
+interface TablesResp { tables: Array<{ _id: string; number: string; status: string; capacity: number; orders: Array<{ id: string; number: string; outlet?: Outlet; waiterName?: string; total: number; itemCount: number; qr?: boolean; qrPending?: boolean }>; itemCount: number; progress: number }>; takeaway: Array<{ id: string; number: string; type: string; outlet?: Outlet; status: string; waiterName?: string; total: number; itemCount: number; progress: number }> }
 
 /**
  * Point of sale. The restaurant and the bar each have their own POS (/pos and /bar-pos): its own part of the menu,
@@ -564,6 +564,14 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
                 <span>Waiter: {order.waiterName}</span>
                 {order.customerName && <span>Customer: {order.customerName}</span>}
                 {order.source === 'offline' && <Pill color="yellow">offline sale</Pill>}
+                {order.source === 'qr' && <Pill color="blue">ordered by QR</Pill>}
+              </div>
+            )}
+            {order?.qrPending && (
+              <div className="mt-3 flex items-center gap-3 rounded-xl bg-warn-pale p-3 text-sm text-warn-ink">
+                <QrCode className="h-5 w-5 shrink-0" />
+                <span className="flex-1">The guest ordered from the table QR code. Check the items, then accept to send them to the kitchen/bar.</span>
+                <Button size="sm" onClick={() => action('accept', () => post(`/qr/orders/${order._id}/accept`), `${order.number} accepted and sent`)}>Accept</Button>
               </div>
             )}
           </div>
@@ -684,7 +692,10 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
         ) : (
           activeChips.map((c) => (
             <button key={c.id} onClick={() => setOrder(c.id)} title={`${c.number} · ${c.table.length <= 3 ? `Table ${c.table}` : c.table}`} className={cx('flex min-w-[170px] max-w-[230px] shrink-0 flex-col gap-1 rounded-xl border-2 px-3 py-2 text-left', orderId === c.id ? 'border-brand bg-brand-50' : 'border-line hover:border-brand/40')}>
-              <span className="truncate text-sm font-bold tabular-nums">{c.number}</span>
+              <span className="flex items-center justify-between gap-2">
+                <span className="truncate text-sm font-bold tabular-nums">{c.number}</span>
+                {'qrPending' in c && c.qrPending ? <span className="whitespace-nowrap rounded-md bg-warn-pale px-1.5 py-0.5 text-[10px] font-bold text-warn-ink">QR · accept</span> : 'qr' in c && c.qr ? <span className="rounded-md bg-info-pale px-1.5 py-0.5 text-[10px] font-bold text-info">QR</span> : null}
+              </span>
               <div className="flex items-center justify-between gap-2 text-xs text-ink-soft">
                 <span className="rounded-md bg-page px-1.5 py-0.5 font-semibold text-ink">{c.table.length <= 3 ? `T-${c.table}` : c.table}</span>
                 <span>{c.itemCount} {c.itemCount === 1 ? 'item' : 'items'}</span>

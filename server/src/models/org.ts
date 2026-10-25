@@ -12,6 +12,12 @@ const branchSchema = new Schema(
     active: { type: Boolean, default: true },
     settings: {
       serviceChargeBps: { type: Number, default: 0 },
+      /** Guests order from a QR code on their table. requireAccept: staff accept before it reaches the kitchen. */
+      qrOrdering: {
+        enabled: { type: Boolean, default: false },
+        requireAccept: { type: Boolean, default: true },
+        payByMpesa: { type: Boolean, default: true },
+      },
       serviceChargeModes: { type: [String], default: ['dine_in'] },
       receiptPrefix: { type: String, default: 'RC' },
       orderPrefix: { type: String, default: 'ORD' },

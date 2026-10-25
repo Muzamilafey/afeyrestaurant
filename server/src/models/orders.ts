@@ -52,7 +52,9 @@ const orderSchema = new Schema(
     number: { type: String, required: true },
     /** Client-generated UUID — guarantees offline sync and retried submissions never duplicate an order. */
     clientId: { type: String, required: true },
-    source: { type: String, enum: ['pos', 'offline', 'online', 'api'], default: 'pos' },
+    source: { type: String, enum: ['pos', 'offline', 'online', 'api', 'qr'], default: 'pos' },
+    /** Placed by a guest from the table's QR code and waiting for staff to accept it (not yet sent to the kitchen). */
+    qrPending: Boolean,
     type: { type: String, enum: ORDER_TYPES, default: 'dine_in' },
     /** Which POS took the order: the restaurant or the bar (separate screens, open-order lists and sales figures). */
     outlet: { type: String, enum: ['restaurant', 'bar'], default: 'restaurant' },

@@ -12,6 +12,7 @@ import { applyDocumentBranding, type AppIcons } from '@/lib/appIcons';
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const PosPage = lazy(() => import('@/pages/pos/PosPage'));
 const CustomerDisplay = lazy(() => import('@/pages/CustomerDisplay'));
+const GuestTable = lazy(() => import('@/pages/GuestTable'));
 const TablesPage = lazy(() => import('@/pages/TablesPage'));
 const OrdersBoard = lazy(() => import('@/pages/OrdersBoard'));
 const StationPage = lazy(() => import('@/pages/StationPage'));
@@ -74,6 +75,7 @@ export default function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/track/:code" element={<TrackOrder />} />
           <Route path="/display" element={<CustomerDisplay />} />
+          <Route path="/t/:token" element={<GuestTable />} />
           <Route element={<Guard><AppShell /></Guard>}>
             <Route index element={<Home />} />
             <Route path="dashboard" element={<Guard perms={['reports.sales']}><DashboardPage /></Guard>} />

@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Users, Sparkles, Move, Check, CalendarDays } from 'lucide-react';
+import { Users, Sparkles, Move, Check, CalendarDays, BellRing } from 'lucide-react';
 import { get, patch, post } from '@/lib/api';
 import { money, time, elapsed } from '@/lib/format';
 import { Button, Card, Empty, Input, Modal, Skeleton, StatusPill, Tabs, cx } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
 
-interface T { _id: string; number: string; capacity: number; status: string; shape: string; areaId?: string; layout?: { x: number; y: number; w: number; h: number }; occupiedSince?: string; orders: Array<{ id: string; number: string; waiterName?: string; total: number; itemCount: number }>; itemCount: number; progress: number }
+interface T { _id: string; number: string; capacity: number; status: string; shape: string; areaId?: string; layout?: { x: number; y: number; w: number; h: number }; occupiedSince?: string; orders: Array<{ id: string; number: string; waiterName?: string; total: number; itemCount: number; qrPending?: boolean }>; itemCount: number; progress: number; call?: { reason: 'waiter' | 'bill'; at: string } }
 interface Resp { areas: Array<{ _id: string; name: string }>; tables: T[] }
 interface Reservation { _id: string; code: string; customerName: string; partySize: number; startsAt: string; status: string; tableIds: string[]; specialRequests?: string }
 
@@ -42,6 +42,7 @@ export default function TablesPage() {
     return { free: seats('available'), reserved: seats('reserved'), checkedIn: seats('occupied'), total, tables: all.length, busyTables: all.filter((t) => t.status === 'occupied').length };
   }, [data]);
 
+  const answer = (t: T) => post(`/qr/tables/${t._id}/call/clear`, {}).then(() => { qc.invalidateQueries({ queryKey: ['tables'] }); setSel({ ...t, call: undefined }); }).catch(handleError);
   const setStatus = (t: T, status: string) => post(`/tables/${t._id}/status`, { status }).then(() => { qc.invalidateQueries({ queryKey: ['tables'] }); setSel(null); toast(`Table ${t.number} is ${LABEL[status]?.toLowerCase() ?? status}`); }).catch(handleError);
   const checkIn = async () => {
     if (!resSel) return;
@@ -143,9 +144,16 @@ export default function TablesPage() {
             {can('orders.create') && <Button onClick={() => nav(`/pos?table=${sel._id}`)}>New order here</Button>}
           </>
         }>
+          {sel.call && (
+            <div className="mb-3 flex items-center gap-3 rounded-xl bg-warn-pale p-3 text-sm text-warn-ink">
+              <BellRing className="h-5 w-5 shrink-0" />
+              <span className="flex-1">{sel.call.reason === 'bill' ? 'The guest asked for the bill' : 'The guest is calling a waiter'} · {time(sel.call.at)}</span>
+              <Button size="sm" onClick={() => answer(sel)}>Answered</Button>
+            </div>
+          )}
           <p className="mb-3 flex items-center gap-2 text-sm text-ink-soft"><Users className="h-4 w-4" /> {sel.capacity} seats · <StatusPill status={sel.status} />{sel.occupiedSince && ` · seated ${elapsed((Date.now() - new Date(sel.occupiedSince).getTime()) / 1000)} ago`}</p>
           {sel.orders.length === 0 ? <p className="text-sm text-ink-soft">No open orders on this table.</p> : (
-            <div className="space-y-2">{sel.orders.map((o) => <Card key={o.id} padded={false} className="flex items-center justify-between px-4 py-3"><div><p className="font-semibold">{o.number}</p><p className="text-xs text-ink-soft">{o.waiterName} · {o.itemCount} items</p></div><div className="flex items-center gap-2"><b>{money(o.total)}</b>{can('orders.create') && <Button size="sm" onClick={() => nav(`/pos?order=${o.id}`)}>Open</Button>}</div></Card>)}</div>
+            <div className="space-y-2">{sel.orders.map((o) => <Card key={o.id} padded={false} className="flex items-center justify-between px-4 py-3"><div><p className="font-semibold">{o.number}</p><p className="text-xs text-ink-soft">{o.waiterName} · {o.itemCount} items{o.qrPending ? ' · QR order waiting to be accepted' : ''}</p></div><div className="flex items-center gap-2"><b>{money(o.total)}</b>{can('orders.create') && <Button size="sm" onClick={() => nav(`/pos?order=${o.id}`)}>Open</Button>}</div></Card>)}</div>
           )}
         </Modal>
       )}
@@ -192,7 +200,7 @@ function TableTile({ t, nextRes, selected, editable, onClick, onMoved }: { t: T;
     >
       <span className={cx('w-1.5 shrink-0', BAR[t.status] ?? BAR.available)} />
       <span className="flex flex-1 flex-col justify-between p-2.5">
-        <span className="flex items-center justify-between"><span className={cx('text-sm font-bold', t.status === 'reserved' && 'text-brand-dark', t.status === 'occupied' && 'text-warn-ink')}>{t.number}</span><span className="flex items-center gap-0.5 text-[11px] text-ink-soft"><Users className="h-3 w-3" />{t.capacity}</span></span>
+        <span className="flex items-center justify-between"><span className={cx('text-sm font-bold', t.status === 'reserved' && 'text-brand-dark', t.status === 'occupied' && 'text-warn-ink')}>{t.number}</span>{t.call || t.orders.some((o) => o.qrPending) ? <span title={t.call ? (t.call.reason === 'bill' ? 'Asking for the bill' : 'Calling a waiter') : 'QR order to accept'} className="flex h-5 w-5 animate-pulse items-center justify-center rounded-full bg-warn text-white"><BellRing className="h-3 w-3" /></span> : <span className="flex items-center gap-0.5 text-[11px] text-ink-soft"><Users className="h-3 w-3" />{t.capacity}</span>}</span>
         <span>
           <span className="block text-[11px] text-ink-soft">{nextRes && t.status === 'available' ? 'Reserved later' : LABEL[t.status]}</span>
           <span className="block text-sm font-semibold tabular-nums">{caption}</span>

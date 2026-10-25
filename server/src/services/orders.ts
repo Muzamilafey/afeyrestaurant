@@ -200,6 +200,11 @@ export interface CreateOrderInput {
   clientId?: string;
   type: 'dine_in' | 'takeaway' | 'delivery' | 'room_service' | 'bar_counter' | 'online';
   outlet?: 'restaurant' | 'bar';
+  /** Set when not the signed-in user (e.g. a guest ordering by QR: the table's waiter, or none yet). */
+  waiterId?: Types.ObjectId | null;
+  waiterName?: string;
+  source?: 'pos' | 'online' | 'qr';
+  qrPending?: boolean;
   tableId?: string;
   guests?: number;
   customerId?: string;
@@ -253,8 +258,10 @@ export async function createOrder(ctx: BranchContext, input: CreateOrderInput) {
     tableId: table?._id,
     tableNumber: table?.number,
     guests: input.guests ?? 1,
-    waiterId: ctx.userId,
-    waiterName: ctx.userName,
+    waiterId: input.waiterId ?? ctx.userId,
+    waiterName: input.waiterName ?? ctx.userName,
+    source: input.source,
+    qrPending: input.qrPending || undefined,
     customerId: customer?._id,
     customerName: input.customerName ?? customer?.name,
     customerPhone: phone,
@@ -380,9 +387,17 @@ export async function applyDiscount(ctx: BranchContext, orderId: string, d: { ty
  * Send new lines to their stations. Food → kitchen, drinks → bar (from product/category routing).
  * The submissionKey makes double-taps and retries idempotent.
  */
+/** The "user" behind orders a guest places from the table QR code, until a waiter accepts them. */
+export const QR_GUEST = new Types.ObjectId('000000000000000000000001');
+
 export async function sendToStations(ctx: BranchContext, orderId: string, submissionKey?: string) {
   const created: Array<{ id: string; station: string }> = [];
   const order = await mutateOrder(ctx, orderId, async (o) => {
+    // Staff sending a guest's QR order to the kitchen/bar is the same as accepting it.
+    if (o.qrPending && String(ctx.userId) !== String(QR_GUEST)) {
+      o.set('qrPending', undefined);
+      if (String(o.waiterId) === String(QR_GUEST)) o.set({ waiterId: ctx.userId, waiterName: ctx.userName });
+    }
     const fresh = o.items.filter((i) => i.status === 'new' && !i.voided);
     if (!fresh.length) return;
     const key = submissionKey ?? createHash('sha256').update(fresh.map((i) => i.lineId).join(',')).digest('hex').slice(0, 32);

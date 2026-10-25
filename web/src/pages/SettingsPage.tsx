@@ -8,6 +8,7 @@ import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
 import { makeAppIcons } from '@/lib/appIcons';
 import { AccountMenu } from '@/layout/AccountMenu';
+import { QrOrderingSettings } from '@/components/QrOrderingSettings';
 
 type TabId = 'live' | 'business' | 'branches' | 'users' | 'roles' | 'menu' | 'taxes' | 'tables' | 'audit' | 'account';
 
@@ -36,7 +37,7 @@ export default function SettingsPage() {
       {tab === 'roles' && <Roles />}
       {tab === 'taxes' && <Taxes />}
       {tab === 'live' && <LiveServer />}
-      {tab === 'tables' && <TablesAdmin />}
+      {tab === 'tables' && <div className="space-y-4"><TablesAdmin /><QrOrderingSettings /></div>}
       {tab === 'audit' && <Audit />}
       {tab === 'account' && <Account />}
     </div>

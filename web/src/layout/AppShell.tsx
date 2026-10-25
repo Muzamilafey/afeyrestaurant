@@ -11,7 +11,8 @@ import { cx } from '@/components/ui';
 import { outbox, syncOutbox } from '@/lib/offline';
 import { useFeedback } from '@/components/feedback';
 import { useOnline } from '@/lib/connectivity';
-import { useRealtime } from '@/lib/socket';
+import { onSocket, useRealtime } from '@/lib/socket';
+import { chime } from '@/lib/chime';
 import { BusinessMark } from '@/pages/Login';
 import { AccountMenu } from './AccountMenu';
 import { useTheme } from '@/lib/theme';
@@ -128,6 +129,21 @@ export function AppShell() {
   useEffect(() => setOpen(false), [loc.pathname]);
   const stations = [can('kitchen.view') ? 'kitchen' : null, can('bar.view') ? 'bar' : null].filter(Boolean) as string[];
   useRealtime(branch?.id ?? null, stations);
+  const { toast: notify } = useFeedback();
+  const floorStaff = can('orders.update', 'tables.view');
+  // Guests ordering from the table QR code, calling a waiter or asking for the bill.
+  useEffect(() => {
+    if (!floorStaff) return;
+    const offOrder = onSocket('qr.order', (e: { number: string; table: string; needsAccept: boolean }) => {
+      chime();
+      notify(e.needsAccept ? `Table ${e.table} ordered by QR (${e.number}) — open it on the POS to accept` : `Table ${e.table} ordered by QR (${e.number}) — sent to the kitchen/bar`, 'info');
+    });
+    const offCall = onSocket('table.call', (e: { table: string; reason: 'waiter' | 'bill' }) => {
+      chime();
+      notify(e.reason === 'bill' ? `Table ${e.table} is asking for the bill` : `Table ${e.table} is calling a waiter`, 'info');
+    });
+    return () => { offOrder(); offCall(); };
+  }, [branch?.id, floorStaff, notify]);
   if (!session) return null;
   const items = NAV.filter((n) => can(...n.perms));
   const isPos = loc.pathname.startsWith('/pos') || loc.pathname.startsWith('/bar-pos');

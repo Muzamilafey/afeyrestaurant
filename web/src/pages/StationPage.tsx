@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, Bell, BellOff, Flame, AlertTriangle, Timer, Receipt } from 'lucide-react';
+import { chime } from '@/lib/chime';
 import { get, post } from '@/lib/api';
 import { elapsed, time } from '@/lib/format';
 import { Button, Empty, PageHeader, Pill, Skeleton, StatusPill, Tabs, cx } from '@/components/ui';
@@ -11,26 +12,6 @@ import { SoldOutDialog } from '@/components/SoldOutDialog';
 
 interface Ticket { _id: string; orderNumber: string; tableNumber?: string; orderType: string; waiterName?: string; priority: boolean; status: string; completedVia?: 'station' | 'payment'; createdAt: string; ageSeconds: number; items: Array<{ lineId: string; name: string; qty: number; modifiers: string[]; notes?: string; status: string; ageRestricted?: boolean }> }
 const NEXT: Record<string, { status: string; label: string }> = { pending: { status: 'accepted', label: 'Accept' }, accepted: { status: 'preparing', label: 'Start' }, preparing: { status: 'ready', label: 'Ready' }, ready: { status: 'completed', label: 'Served' } };
-
-/** A short two-tone chime generated with WebAudio (no audio files to load). */
-function chime() {
-  try {
-    const ctx = new AudioContext();
-    [880, 1320].forEach((f, i) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.frequency.value = f;
-      g.gain.setValueAtTime(0.0001, ctx.currentTime + i * 0.18);
-      g.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + i * 0.18 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + i * 0.18 + 0.25);
-      o.connect(g).connect(ctx.destination);
-      o.start(ctx.currentTime + i * 0.18);
-      o.stop(ctx.currentTime + i * 0.18 + 0.3);
-    });
-  } catch {
-    /* audio unavailable */
-  }
-}
 
 export default function StationPage({ station }: { station: 'kitchen' | 'bar' }) {
   const { can, branch } = useAuth();
