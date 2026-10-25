@@ -34,6 +34,8 @@ export interface PaymentInput {
   reference?: string;
   customerId?: string;
   reason?: string;
+  /** Tip on top of `amount` (cash and manual M-Pesa). */
+  tip?: number;
   idempotencyKey: string;
   approval?: ApprovalInput;
 }
@@ -76,16 +78,18 @@ export async function recordPayment(ctx: BranchContext, orderId: string, input: 
     if (input.amount <= 0) throw badRequest('Amount must be positive');
     if (input.amount > balance) throw badRequest(`Amount exceeds the outstanding balance of ${toMajor(balance).toFixed(2)}`);
 
-    let tendered = input.amount;
+    const tip = Math.max(0, Math.round(input.tip ?? 0));
+    if (tip && !['cash', 'mpesa'].includes(method)) throw badRequest('Tips can be taken with cash or M-Pesa');
+    let tendered = input.amount + tip;
     let change = 0;
     let cashSessionId: Types.ObjectId | undefined;
     if (method === 'cash') {
       const { drawer: cs, mode } = await findOpenDrawer(ctx, session);
       if (!cs) throw new AppError(409, 'NO_CASH_SESSION', noDrawerMessage(mode, 'before accepting cash'));
       cashSessionId = cs._id;
-      tendered = input.tendered ?? input.amount;
-      if (tendered < input.amount) throw badRequest('Cash tendered is less than the amount');
-      change = tendered - input.amount;
+      tendered = input.tendered ?? input.amount + tip;
+      if (tendered < input.amount + tip) throw badRequest(tip ? 'Cash tendered is less than the amount plus tip' : 'Cash tendered is less than the amount');
+      change = tendered - input.amount - tip;
     }
     let customerId: Types.ObjectId | undefined;
     if (method === 'account') {
@@ -100,11 +104,13 @@ export async function recordPayment(ctx: BranchContext, orderId: string, input: 
       [{
         tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, orderNumber: order.number, method, amount: input.amount, tendered, change,
         reference: input.reference, customerId, verification, manualConfirmation: manual, receivedBy: ctx.userId, cashSessionId, idempotencyKey: input.idempotencyKey,
+        tip, tipFor: tip ? { userId: order.waiterId ?? ctx.userId, name: order.waiterName ?? ctx.userName } : undefined,
       }],
       { session },
     );
     order.totals!.paid += input.amount;
     order.totals!.balance = order.totals!.total - order.totals!.paid;
+    if (tip) order.totals!.tips = (order.totals!.tips ?? 0) + tip;
     order.cashierId = ctx.userId;
     order.paymentStatus = order.totals!.balance <= 0 ? 'paid' : 'partial';
     if (order.totals!.balance <= 0) await finalizePaidOrder(order, session);
@@ -241,13 +247,15 @@ async function afterPayment(order: OrderDoc) {
 
 // ───────────────────────────── M-Pesa STK Push ─────────────────────────────
 
-export async function initiateMpesa(ctx: BranchContext, orderId: string, input: { phone: string; amount: number; idempotencyKey: string }) {
+export async function initiateMpesa(ctx: BranchContext, orderId: string, input: { phone: string; amount: number; tip?: number; idempotencyKey: string }) {
   const existing = await PaymentAttempt.findOne({ tenantId: ctx.tenantId, idempotencyKey: input.idempotencyKey }).lean();
   if (existing) return existing;
   const tenant = await Tenant.findById(ctx.tenantId).lean();
   const phone = normalizeKePhone(input.phone, tenant?.settings?.countryCode ?? '254');
   if (!phone) throw badRequest('Enter a valid Safaricom number, e.g. 0712345678');
-  if (input.amount % 100 !== 0) throw badRequest('M-Pesa amounts must be whole shillings');
+  // The prompt asks for bill + tip together; the tip part is kept apart when the payment is recorded.
+  const tip = Math.max(0, Math.round(input.tip ?? 0));
+  if ((input.amount + tip) % 100 !== 0) throw badRequest('M-Pesa amounts must be whole shillings');
   const order = await Order.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: orderId });
   if (!order) throw notFound('Order');
   if (!['open', 'held'].includes(order.status)) throw conflict(`Order is ${order.status}`, 'ORDER_LOCKED');
@@ -262,7 +270,7 @@ export async function initiateMpesa(ctx: BranchContext, orderId: string, input: 
   const token = randomBytes(24).toString('hex');
   const timeout = tenant?.settings?.mpesaTimeoutSeconds ?? 90;
   const attempt = await PaymentAttempt.create({
-    tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, method: 'mpesa', amount: input.amount, phone, idempotencyKey: input.idempotencyKey,
+    tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, method: 'mpesa', amount: input.amount + tip, tip, phone, idempotencyKey: input.idempotencyKey,
     status: 'initiated', provider: mp.mode === 'mock' ? 'mock' : 'daraja', environment: mp.environment, callbackTokenHash: sha256(token),
     expiresAt: new Date(Date.now() + timeout * 1000), initiatedBy: ctx.userId,
   });
@@ -274,7 +282,7 @@ export async function initiateMpesa(ctx: BranchContext, orderId: string, input: 
       attempt.merchantRequestId = `MOCK-MR-${randomUUID().slice(0, 8)}`;
       attempt.checkoutRequestId = `ws_CO_MOCK_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
     } else {
-      const r = await mp.client.stkPush({ phone, amountKes: input.amount / 100, callbackUrl, accountReference: accountRef || order.number.slice(-12), description: String(mp.settings.transactionDesc || 'Payment').slice(0, 13) });
+      const r = await mp.client.stkPush({ phone, amountKes: (input.amount + tip) / 100, callbackUrl, accountReference: accountRef || order.number.slice(-12), description: String(mp.settings.transactionDesc || 'Payment').slice(0, 13) });
       attempt.merchantRequestId = r.merchantRequestId;
       attempt.checkoutRequestId = r.checkoutRequestId;
     }
@@ -351,16 +359,18 @@ export async function applyStkResult(attemptId: Types.ObjectId, tenantId: Types.
     attempt.providerPhone = r.phone;
     attempt.providerTransactionDate = r.transactionDate;
     attempt.status = 'succeeded';
-    const applicable = ['open', 'held'].includes(order.status) ? Math.min(attempt.amount, order.totals!.total - order.totals!.paid) : 0;
+    const tip = attempt.tip ?? 0;
+    const applicable = ['open', 'held'].includes(order.status) ? Math.min(attempt.amount - tip, order.totals!.total - order.totals!.paid) : 0;
     const [payment] = await Payment.create(
       [{
         tenantId, branchId: order.branchId, orderId: order._id, orderNumber: order.number, attemptId: attempt._id, method: 'mpesa', amount: applicable,
-        tendered: attempt.amount, change: 0, reference: r.mpesaReceipt, phone: r.phone ?? attempt.phone, verification: fromQuery ? 'stk_query' : 'provider', receivedBy: attempt.initiatedBy,
+        tendered: attempt.amount, change: 0, tip, tipFor: tip ? { userId: order.waiterId, name: order.waiterName } : undefined, reference: r.mpesaReceipt, phone: r.phone ?? attempt.phone, verification: fromQuery ? 'stk_query' : 'provider', receivedBy: attempt.initiatedBy,
         idempotencyKey: `mpesa:${attempt._id}`,
       }],
       { session },
     );
     attempt.paymentId = payment._id;
+    if (tip) order.totals!.tips = (order.totals!.tips ?? 0) + tip;
     if (applicable > 0) {
       order.totals!.paid += applicable;
       order.totals!.balance = order.totals!.total - order.totals!.paid;
@@ -588,7 +598,7 @@ export async function buildReceipt(tenantId: Types.ObjectId, orderId: Types.Obje
     lines,
     totals: order.totals,
     taxes: order.taxBreakdown,
-    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference ?? p.claimedReference, phone: p.phone, payerName: p.payerName, pending: p.status === 'provisional' })),
+    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference ?? p.claimedReference, phone: p.phone, payerName: p.payerName, tip: p.tip, pending: p.status === 'provisional' })),
   };
 }
 

@@ -39,6 +39,8 @@ const paymentAttemptSchema = new Schema(
     error: String,
     /** Registered M-Pesa name of the payer, from Safaricom's Transaction Status API (DebitPartyName). */
     payerName: String,
+    /** Part of `amount` that is a tip (the prompt asks for bill + tip in one go). */
+    tip: { ...money },
     /** The name lookup: requested -> received | failed | unavailable (not configured / not reachable). */
     nameLookup: {
       status: { type: String, enum: ['requested', 'received', 'failed', 'unavailable'] },
@@ -74,6 +76,9 @@ const paymentSchema = new Schema(
     phone: String,
     /** M-Pesa: the payer's registered name (Transaction Status API or the C2B confirmation). */
     payerName: String,
+    /** Tip given with this payment — not part of the sale (not in `amount`), credited to the waiter. */
+    tip: { ...money },
+    tipFor: { userId: Schema.Types.ObjectId, name: String },
     customerId: Schema.Types.ObjectId,
     status: { type: String, enum: ['confirmed', 'provisional'], default: 'confirmed' },
     /** provider | manual | cash | offline_cash | offline_mpesa (code typed in while offline, confirmed against C2B) */
@@ -132,7 +137,7 @@ const cashSessionSchema = new Schema(
     expectedCash: Number,
     variance: Number,
     denominations: [{ value: Number, count: Number }],
-    totals: { cashSales: Number, cashRefunds: Number, drops: Number, expenses: Number, payIns: Number, mpesa: Number, card: Number, other: Number },
+    totals: { cashSales: Number, cashRefunds: Number, drops: Number, expenses: Number, payIns: Number, mpesa: Number, card: Number, other: Number, cashTips: Number, tips: Number },
     closingNotes: String,
     closedBy: Schema.Types.ObjectId,
   },

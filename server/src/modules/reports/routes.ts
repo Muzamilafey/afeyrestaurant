@@ -47,7 +47,7 @@ m.route({ method: 'get', path: '/sales', summary: 'Sales dashboard: revenue, tre
   if (query.outlet) match.$expr = { $eq: [OUTLET, query.outlet] };
   const days = (s.to.getTime() - s.from.getTime()) / 86400_000;
   const [summary] = await Order.aggregate([{ $match: match }, { $group: { _id: null, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 }, discounts: { $sum: '$totals.discount' }, serviceCharge: { $sum: '$totals.serviceCharge' }, taxInclusive: { $sum: '$totals.taxInclusive' }, taxExclusive: { $sum: '$totals.taxExclusive' }, refunded: { $sum: '$totals.refunded' }, guests: { $sum: '$guests' } } }]);
-  const [trend, byBranch, byCashier, byWaiter, byType, items, voids, byOutlet] = await Promise.all([
+  const [trend, byBranch, byCashier, byWaiter, byType, items, voids, byOutlet, tips] = await Promise.all([
     Order.aggregate([{ $match: match }, { $group: { _id: { $dateToString: { format: days > 2 ? '%Y-%m-%d' : '%Y-%m-%d %H:00', date: '$paidAt', timezone: tz } }, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $sort: { _id: 1 } }]),
     Order.aggregate([{ $match: match }, { $group: { _id: '$branchId', revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }]),
     Order.aggregate([{ $match: match }, { $group: { _id: '$cashierId', revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'u' } }, { $project: { revenue: 1, orders: 1, name: { $first: '$u.name' } } }, { $sort: { revenue: -1 } }]),
@@ -60,7 +60,17 @@ m.route({ method: 'get', path: '/sales', summary: 'Sales dashboard: revenue, tre
     ]),
     Order.aggregate([{ $match: { tenantId: s.tenantId, branchId: { $in: s.branchIds }, updatedAt: { $gte: s.from, $lte: s.to } } }, { $unwind: '$items' }, { $match: { 'items.voided': true, 'items.voidReason': { $exists: true } } }, { $group: { _id: null, count: { $sum: 1 }, value: { $sum: { $multiply: ['$items.qty', '$items.unitPrice'] } } } }]),
     Order.aggregate([{ $match: match }, { $group: { _id: OUTLET, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $sort: { revenue: -1 } }]),
+    // Tips are outside sales: from the payments, credited to the waiter of the order.
+    Payment.aggregate([{ $match: { tenantId: s.tenantId, branchId: { $in: s.branchIds }, receivedAt: { $gte: s.from, $lte: s.to }, tip: { $gt: 0 } } }, { $group: { _id: { user: '$tipFor.userId', method: '$method' }, name: { $first: '$tipFor.name' }, amount: { $sum: '$tip' }, count: { $sum: 1 } } }]),
   ]);
+  const tipsByStaff = Object.values(tips.reduce((acc: Record<string, { userId: string; name: string; cash: number; mpesa: number; total: number; count: number }>, t) => {
+    const k = String(t._id.user ?? 'none');
+    acc[k] ??= { userId: k, name: t.name ?? '—', cash: 0, mpesa: 0, total: 0, count: 0 };
+    acc[k][t._id.method === 'cash' ? 'cash' : 'mpesa'] += t.amount;
+    acc[k].total += t.amount;
+    acc[k].count += t.count;
+    return acc;
+  }, {})).sort((a, b) => b.total - a.total);
   const payMatch: Record<string, unknown> = { tenantId: s.tenantId, branchId: { $in: s.branchIds }, receivedAt: { $gte: s.from, $lte: s.to } };
   if (query.method) payMatch.method = query.method;
   const [payments, refunds] = await Promise.all([
@@ -79,7 +89,7 @@ m.route({ method: 'get', path: '/sales', summary: 'Sales dashboard: revenue, tre
   return {
     range: { from: s.from, to: s.to },
     summary: { revenue: rev, orders: summary?.orders ?? 0, averageOrderValue: summary?.orders ? Math.round(rev / summary.orders) : 0, discounts: summary?.discounts ?? 0, serviceCharge: summary?.serviceCharge ?? 0, tax: (summary?.taxInclusive ?? 0) + (summary?.taxExclusive ?? 0), refunded: summary?.refunded ?? 0, netSales: rev - (summary?.taxExclusive ?? 0) - (summary?.taxInclusive ?? 0) - (summary?.serviceCharge ?? 0), guests: summary?.guests ?? 0, voids: voids[0] ?? { count: 0, value: 0 } },
-    trend, hourly, byBranch, byCashier, byWaiter, byType, byOutlet: byOutlet.map((x) => ({ outlet: x._id as string, revenue: x.revenue, orders: x.orders })), topItems: items.slice(0, 20), allItems: items, categories, payments, refunds,
+    trend, hourly, byBranch, byCashier, byWaiter, byType, byOutlet: byOutlet.map((x) => ({ outlet: x._id as string, revenue: x.revenue, orders: x.orders })), tips: { total: tipsByStaff.reduce((a, t) => a + t.total, 0), byStaff: tipsByStaff }, topItems: items.slice(0, 20), allItems: items, categories, payments, refunds,
   };
 });
 

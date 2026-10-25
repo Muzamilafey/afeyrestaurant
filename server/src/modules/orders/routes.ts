@@ -99,14 +99,14 @@ m.route({ method: 'patch', path: '/:id', summary: 'Update order header (customer
 
 // ── Payments ──
 m.route(
-  { method: 'post', path: '/:id/payments', summary: 'Record a cash/card/QR/account payment or a manual M-Pesa payment', permission: P.PAYMENTS_RECEIVE, body: z.object({ method: z.enum(['cash', 'card', 'qr', 'account', 'mpesa_manual']), amount: zMoney, tendered: zMoney.optional(), reference: z.string().max(40).optional(), customerId: zId.optional(), reason: z.string().max(200).optional(), idempotencyKey: z.string().min(8).max(80), approval: zApproval }) },
+  { method: 'post', path: '/:id/payments', summary: 'Record a cash/card/QR/account payment or a manual M-Pesa payment', permission: P.PAYMENTS_RECEIVE, body: z.object({ method: z.enum(['cash', 'card', 'qr', 'account', 'mpesa_manual']), amount: zMoney, tendered: zMoney.optional(), reference: z.string().max(40).optional(), customerId: zId.optional(), reason: z.string().max(200).optional(), tip: zMoney.optional(), idempotencyKey: z.string().min(8).max(80), approval: zApproval }) },
   async ({ ctx, params, body, res }) => {
     const r = await pay.recordPayment(ctx, params.id, body);
     res.status(r.duplicate ? 200 : 201);
     return r;
   },
 );
-m.route({ method: 'post', path: '/:id/mpesa', summary: 'Send an M-Pesa STK Push prompt', permission: P.PAYMENTS_RECEIVE, body: z.object({ phone: z.string().min(9).max(16), amount: zMoney, idempotencyKey: z.string().min(8).max(80) }) }, async ({ ctx, params, body }) => pay.initiateMpesa(ctx, params.id, body));
+m.route({ method: 'post', path: '/:id/mpesa', summary: 'Send an M-Pesa STK Push prompt', permission: P.PAYMENTS_RECEIVE, body: z.object({ phone: z.string().min(9).max(16), amount: zMoney, tip: zMoney.optional(), idempotencyKey: z.string().min(8).max(80) }) }, async ({ ctx, params, body }) => pay.initiateMpesa(ctx, params.id, body));
 m.route({ method: 'get', path: '/:id/mpesa/:attemptId', summary: 'Check/refresh an M-Pesa attempt status', permission: P.PAYMENTS_RECEIVE }, async ({ ctx, params }) => {
   const a = await PaymentAttempt.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: params.id, _id: params.attemptId }).lean();
   if (!a) throw notFound('Payment attempt');

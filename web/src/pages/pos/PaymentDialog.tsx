@@ -32,7 +32,10 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
 
   useEffect(() => setAmount(fromCents(balance)), [balance]);
   const cents = toCents(amount || 0);
-  const tenderedCents = tendered ? toCents(tendered) : cents;
+  // Tip on top of the bill (cash and M-Pesa). Kept out of sales and credited to the order's waiter.
+  const [tipText, setTipText] = useState('');
+  const tipCents = method === 'cash' || method === 'mpesa' || method === 'mpesa_manual' ? toCents(tipText || 0) : 0;
+  const tenderedCents = tendered ? toCents(tendered) : cents + tipCents;
 
   const { data: attempt } = useQuery<Attempt>({
     queryKey: ['attempt', attemptId],
@@ -67,13 +70,14 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
     setBusy(true);
     try {
       if (method === 'mpesa') {
-        const a = await post<Attempt>(`/orders/${order._id}/mpesa`, { phone, amount: Math.round(cents / 100) * 100, idempotencyKey: idemKey });
+        const a = await post<Attempt>(`/orders/${order._id}/mpesa`, { phone, amount: Math.round(cents / 100) * 100, tip: Math.round(tipCents / 100) * 100 || undefined, idempotencyKey: idemKey });
         setAttemptId(a._id);
         setIdemKey(uuid());
         return;
       }
       const body: Record<string, unknown> = { method, amount: cents, idempotencyKey: idemKey };
       if (method === 'cash') body.tendered = tenderedCents;
+      if (tipCents > 0) body.tip = tipCents;
       if (method === 'card') body.reference = reference.trim();
       if (method === 'account') body.customerId = customerId;
       const r = await withApproval((approval) => post<{ order: Order; payment: { change: number } }>(`/orders/${order._id}/payments`, { ...body, approval }));
@@ -128,7 +132,7 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
                 <Input inputMode="decimal" value={tendered} placeholder={amount} onChange={(e) => setTendered(e.target.value.replace(/[^\d.]/g, ''))} className="h-12 text-lg" />
               </Field>
               <div className="flex flex-wrap gap-2">{quick.map((q) => <button key={q} onClick={() => setTendered(String(q))} className="rounded-xl border border-line px-3 py-2 text-sm font-semibold hover:bg-page">{q.toLocaleString()}</button>)}</div>
-              {tenderedCents > cents && <p className="rounded-xl bg-page px-3 py-2 text-sm">Change: <b>{money(tenderedCents - cents)}</b></p>}
+              {tenderedCents > cents + tipCents && <p className="rounded-xl bg-page px-3 py-2 text-sm">Change: <b>{money(tenderedCents - cents - tipCents)}</b></p>}
             </>
           )}
           {method === 'mpesa' && (
@@ -167,8 +171,22 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
           {method === 'mpesa_manual' && (
             <p className="rounded-xl bg-brand-pale px-3 py-2 text-sm text-brand-dark">The customer paid to your Till / Paybill number and you have seen the M-Pesa message. Completing the sale records it as M-Pesa under your name.</p>
           )}
-          <Button size="lg" className="w-full" loading={busy} disabled={cents <= 0 || cents > balance || !!waiting || (method === 'cash' && tenderedCents < cents) || (method === 'card' && !reference) || (method === 'account' && !customerId)} onClick={pay}>
-            {method === 'mpesa' ? (attempt && !waiting ? 'Send prompt again' : 'Send M-Pesa prompt') : method === 'mpesa_manual' ? `Complete sale · ${money(cents)}` : `Charge ${money(cents)}`}
+          {(method === 'cash' || method === 'mpesa' || method === 'mpesa_manual') && (
+            <div>
+              <p className="label mb-1.5">Tip (optional)</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {[0, 5, 10].map((pct) => {
+                  const v = pct ? Math.round((cents * pct) / 100 / 100) * 100 : 0;
+                  const on = pct ? tipCents === v && v > 0 : !tipCents;
+                  return <button key={pct} type="button" onClick={() => setTipText(v ? String(v / 100) : '')} className={cx('rounded-xl border-2 px-3 py-1.5 text-sm font-semibold', on ? 'border-brand bg-brand-50 text-brand-dark' : 'border-line hover:bg-page')}>{pct ? `${pct}% · ${money(v)}` : 'No tip'}</button>;
+                })}
+                <Input inputMode="decimal" value={tipText} onChange={(e) => setTipText(e.target.value.replace(/[^\d.]/g, ''))} placeholder="Other" className="w-24" aria-label="Tip amount" />
+              </div>
+              {tipCents > 0 && <p className="mt-1 text-xs text-ink-soft">Customer pays <b>{money(cents + tipCents)}</b> · tip {money(tipCents)} goes to {order.waiterName ?? 'the waiter'}</p>}
+            </div>
+          )}
+          <Button size="lg" className="w-full" loading={busy} disabled={cents <= 0 || cents > balance || !!waiting || (method === 'cash' && tenderedCents < cents + tipCents) || (method === 'card' && !reference) || (method === 'account' && !customerId)} onClick={pay}>
+            {method === 'mpesa' ? (attempt && !waiting ? 'Send prompt again' : 'Send M-Pesa prompt') : method === 'mpesa_manual' ? `Complete sale · ${money(cents + tipCents)}` : `Charge ${money(cents + tipCents)}`}
           </Button>
         </div>
       </div>

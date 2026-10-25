@@ -16,17 +16,20 @@ async function sessionTotals(tenantId: unknown, s: { _id: unknown; openingFloat:
   const who = s.shared ? {} : { receivedBy: s.userId };
   const whoRefund = s.shared ? {} : { requestedBy: s.userId };
   const [pays, refunds, moves] = await Promise.all([
-    Payment.aggregate([{ $match: { tenantId, branchId: s.branchId, ...who, receivedAt: { $gte: s.openedAt, ...(s.closedAt ? { $lte: s.closedAt } : {}) } } }, { $group: { _id: '$method', amount: { $sum: '$amount' }, count: { $sum: 1 } } }]),
+    Payment.aggregate([{ $match: { tenantId, branchId: s.branchId, ...who, receivedAt: { $gte: s.openedAt, ...(s.closedAt ? { $lte: s.closedAt } : {}) } } }, { $group: { _id: '$method', amount: { $sum: '$amount' }, tips: { $sum: { $ifNull: ['$tip', 0] } }, count: { $sum: 1 } } }]),
     Refund.aggregate([{ $match: { tenantId, branchId: s.branchId, ...whoRefund, method: 'cash', createdAt: { $gte: s.openedAt, ...(s.closedAt ? { $lte: s.closedAt } : {}) } } }, { $group: { _id: null, amount: { $sum: '$amount' } } }]),
     CashMovement.aggregate([{ $match: { tenantId, sessionId: s._id } }, { $group: { _id: '$type', amount: { $sum: '$amount' } } }]),
   ]);
   const by = (k: string) => pays.find((p) => p._id === k)?.amount ?? 0;
   const mv = (k: string) => moves.find((p) => p._id === k)?.amount ?? 0;
   const cashSales = by('cash');
+  // Cash tips are in the drawer too (kept out of sales; paid out to staff from the drawer or at cash-up).
+  const cashTips = pays.find((p) => p._id === 'cash')?.tips ?? 0;
+  const tips = pays.reduce((a, p) => a + (p.tips ?? 0), 0);
   const cashRefunds = refunds[0]?.amount ?? 0;
-  const expected = s.openingFloat + cashSales - cashRefunds - mv('drop') - mv('expense') - mv('payout') + mv('pay_in');
+  const expected = s.openingFloat + cashSales + cashTips - cashRefunds - mv('drop') - mv('expense') - mv('payout') + mv('pay_in');
   return {
-    totals: { cashSales, cashRefunds, drops: mv('drop'), expenses: mv('expense') + mv('payout'), payIns: mv('pay_in'), mpesa: by('mpesa'), card: by('card') + by('qr'), other: by('account') + by('voucher') },
+    totals: { cashSales, cashRefunds, drops: mv('drop'), expenses: mv('expense') + mv('payout'), payIns: mv('pay_in'), mpesa: by('mpesa'), card: by('card') + by('qr'), other: by('account') + by('voucher'), cashTips, tips },
     byMethod: pays,
     expected,
   };

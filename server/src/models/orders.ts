@@ -86,6 +86,8 @@ const orderSchema = new Schema(
       paid: { ...money },
       refunded: { ...money },
       balance: { ...money },
+      /** Tips received with this order's payments (outside the bill). */
+      tips: { ...money },
     },
     taxBreakdown: [{ code: String, rateBps: Number, inclusive: Boolean, amount: Number }],
     delivery: {
