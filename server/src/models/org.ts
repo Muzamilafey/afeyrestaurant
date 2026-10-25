@@ -123,6 +123,8 @@ const employeeSchema = new Schema(
     email: String,
     jobTitle: String,
     hourlyRate: { type: Number, default: 0 },
+    /** Commission on the net sales of the orders they served (basis points: 250 = 2.5%). */
+    commissionBps: { type: Number, default: 0 },
     /** The user ID/PIN the employee is registered under on biometric terminals. */
     deviceUserCode: String,
     active: { type: Boolean, default: true },

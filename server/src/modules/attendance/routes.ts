@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { payroll } from '../../services/payroll';
 import { Types } from 'mongoose';
 import { createModule, zId } from '../../http/route';
 import { Employee, BiometricDevice, BiometricEnrollmentReference, AttendanceEvent, Shift, ShiftAssignment, BridgeAgent, BridgeCommand, PrintJob, Printer, User, Tenant } from '../../models';
@@ -14,7 +15,7 @@ import { notify } from '../../services/notify';
 const m = createModule('/staff', 'Staff & Attendance');
 
 // ── Employees ──
-const zEmployee = z.object({ employeeNo: z.string().min(1).max(20), name: z.string().min(2).max(80), phone: z.string().max(20).optional(), email: z.email().optional(), jobTitle: z.string().max(60).optional(), hourlyRate: z.number().int().min(0).optional(), deviceUserCode: z.string().regex(/^\d{1,9}$/).optional(), userId: zId.optional(), active: z.boolean().optional() });
+const zEmployee = z.object({ employeeNo: z.string().min(1).max(20), name: z.string().min(2).max(80), phone: z.string().max(20).optional(), email: z.email().optional(), jobTitle: z.string().max(60).optional(), hourlyRate: z.number().int().min(0).optional(), commissionBps: z.number().int().min(0).max(5000).optional(), deviceUserCode: z.string().regex(/^\d{1,9}$/).optional(), userId: zId.optional(), active: z.boolean().optional() });
 m.route({ method: 'get', path: '/employees', summary: 'Employees at the branch', permission: [P.STAFF_VIEW, P.ATTENDANCE_VIEW] }, async ({ ctx }) => Employee.find({ tenantId: ctx.tenantId, branchId: ctx.branchId }).sort({ name: 1 }).lean());
 m.route({ method: 'post', path: '/employees', summary: 'Add employee', permission: P.STAFF_MANAGE, body: zEmployee, status: 201 }, async ({ ctx, body }) => Employee.create({ ...body, tenantId: ctx.tenantId, branchId: ctx.branchId }));
 m.route({ method: 'patch', path: '/employees/:id', summary: 'Update employee', permission: P.STAFF_MANAGE, body: zEmployee.partial() }, async ({ ctx, params, body }) => {
@@ -132,6 +133,26 @@ m.route({ method: 'post', path: '/attendance/corrections/:id/decision', summary:
   await audit(ctx, { action: `attendance.correction_${body.approve ? 'approved' : 'rejected'}`, entity: 'AttendanceEvent', entityId: ev._id, reason: ev.correction?.reason ?? undefined }, req);
   return ev;
 });
+m.route({
+  method: 'get', path: '/payroll', summary: 'Pay per employee: hours, overtime, commission on sales served, tips (JSON or CSV)', permission: [P.REPORTS_STAFF, P.STAFF_MANAGE], raw: true,
+  query: z.object({ from: z.coerce.date(), to: z.coerce.date(), overtimeMultiplier: z.coerce.number().min(1).max(3).default(1.5), format: z.enum(['json', 'csv']).default('json') }),
+}, async ({ ctx, query, res }) => {
+  if (query.to.getTime() - query.from.getTime() > 93 * 86400_000) throw badRequest('Maximum range is 93 days');
+  const r = await payroll(ctx.tenantId, ctx.branchId, query.from, query.to, query.overtimeMultiplier);
+  if (query.format === 'csv') {
+    const kes = (c: number) => (c / 100).toFixed(2);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="payroll-${query.from.toISOString().slice(0, 10)}.csv"`);
+    res.send(toCsv(r.rows.map((x) => ({
+      employee_no: x.employeeNo, name: x.name, job_title: x.jobTitle, days: x.days, hours: x.hours, overtime_hours: x.overtimeHours, hourly_rate: kes(x.hourlyRate),
+      basic_pay: kes(x.basicPay), overtime_pay: kes(x.overtimePay), orders: x.orders, net_sales: kes(x.netSales), commission_pct: x.commissionPct, commission: kes(x.commission),
+      gross_pay: kes(x.grossPay), tips_cash: kes(x.tipsCash), tips_mpesa: kes(x.tipsMpesa), total_with_tips: kes(x.totalWithTips),
+    }))));
+    return;
+  }
+  res.json({ data: r });
+});
+
 m.route({ method: 'get', path: '/attendance/report', summary: 'Daily attendance report (JSON or CSV)', permission: [P.ATTENDANCE_VIEW, P.REPORTS_STAFF], raw: true, query: z.object({ from: z.coerce.date(), to: z.coerce.date(), employeeId: zId.optional(), format: z.enum(['json', 'csv']).default('json') }) }, async ({ ctx, query, res }) => {
   if (query.to.getTime() - query.from.getTime() > 93 * 86400_000) throw badRequest('Maximum range is 93 days');
   const rows = await attendanceReport(ctx.tenantId, ctx.branchId, query.from, query.to, query.employeeId);
