@@ -38,6 +38,9 @@ const orderItemSchema = new Schema(
     addedBy: Schema.Types.ObjectId,
     ageCheckConfirmed: Boolean,
     happyHour: Boolean,
+    /** Combo / set menu: the parts are their own lines (KSh 0) pointing at the priced combo line. */
+    parentLineId: String,
+    isCombo: Boolean,
   },
   { _id: false },
 );

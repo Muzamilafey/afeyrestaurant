@@ -566,6 +566,14 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
                 {lines.map((l) => {
                   const isNew = !order || (l as { status?: string }).status === 'new';
                   const status = (l as { status?: string }).status;
+                  // Combo parts: shown under their combo with their kitchen/bar status; changed through the combo.
+                  if ((l as { parentLineId?: string }).parentLineId) return (
+                    <li key={l.lineId} className="-mt-1 flex items-center gap-2 border-l-2 border-brand/30 py-1 pl-3 text-xs text-ink-soft">
+                      <span className="flex-1">{l.qty} × {l.name}</span>
+                      {order && status && status !== 'new' && <StatusPill status={status} />}
+                      {(l as { station?: string }).station === 'bar' ? <Martini className="h-3.5 w-3.5" /> : <ChefHat className="h-3.5 w-3.5" />}
+                    </li>
+                  );
                   return (
                     <li key={l.lineId} className="py-3">
                       <div className="flex items-start gap-2">
@@ -808,7 +816,7 @@ function HeldOrders({ onClose, onPick }: { onClose: () => void; onPick: (id: str
 function SplitDialog({ order, onClose, onDone }: { order: Order; onClose: () => void; onDone: (id: string) => void }) {
   const { handleError } = useFeedback();
   const [sel, setSel] = useState<Record<string, number>>({});
-  const lines = order.items.filter((i) => !i.voided);
+  const lines = order.items.filter((i) => !i.voided && !i.parentLineId);
   return (
     <Modal open onClose={onClose} title="Split bill by item" footer={<Button disabled={!Object.values(sel).some((v) => v > 0)} onClick={() => post<{ created: Order }>(`/orders/${order._id}/split`, { lines: Object.entries(sel).filter(([, q]) => q > 0).map(([lineId, qty]) => ({ lineId, qty })) }).then((r) => onDone(r.created._id)).catch(handleError)}>Move to new bill</Button>}>
       <p className="mb-3 text-sm text-ink-soft">Choose items (and quantities) to move to a separate bill. To split by amount, take partial payments instead.</p>

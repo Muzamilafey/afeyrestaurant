@@ -590,7 +590,12 @@ export async function buildReceipt(tenantId: Types.ObjectId, orderId: Types.Obje
     Payment.find({ tenantId, orderId: order._id }).sort({ receivedAt: 1 }).lean(),
     order.cashierId ? User.findOne({ tenantId, _id: order.cashierId }, { name: 1 }).lean() : null,
   ]);
-  const lines = order.items.filter((i) => !i.voided).map((i) => ({ name: i.name, qty: i.qty, unitPrice: i.unitPrice, total: i.lineTotal, modifiers: i.modifiers.map((m) => m.name ?? '').filter(Boolean), complimentary: !!i.complimentary }));
+  // Combo parts are listed under their combo ("incl. 1 x Ugali"), not as separate KSh 0 lines.
+  const live = order.items.filter((i) => !i.voided);
+  const lines = live.filter((i) => !i.parentLineId).map((i) => ({
+    name: i.name, qty: i.qty, unitPrice: i.unitPrice, total: i.lineTotal, complimentary: !!i.complimentary,
+    modifiers: [...i.modifiers.map((m) => m.name ?? '').filter(Boolean), ...live.filter((x) => x.parentLineId === i.lineId).map((x) => `incl. ${Math.round((x.qty / i.qty) * 100) / 100} x ${x.name}`)],
+  }));
   return {
     business: { name: tenant?.name, kraPin: tenant?.kraPin, header: tenant?.branding?.receiptHeader, footer: tenant?.branding?.receiptFooter, logoUrl: tenant?.branding?.logoUrl, timezone: tenant?.settings?.timezone },
     branch: { name: branch?.name, address: branch?.address, phone: branch?.phone },

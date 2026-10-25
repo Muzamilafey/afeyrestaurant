@@ -8,7 +8,7 @@ export interface Product {
 }
 export interface Catalog { categories: Category[]; products: Product[]; modifierGroups: ModifierGroup[]; taxes: unknown[]; serverTime: string }
 export interface OrderLine {
-  lineId: string; productId: string; name: string; station: string; qty: number; unitPrice: number; lineTotal: number; discount: number;
+  lineId: string; productId: string; name: string; station: string; qty: number; unitPrice: number; lineTotal: number; discount: number; parentLineId?: string; isCombo?: boolean;
   modifiers: Array<{ groupName?: string; name: string; priceDelta: number }>; notes?: string; status: string; voided: boolean; complimentary?: boolean; variant?: string; ageRestricted?: boolean;
 }
 export interface Order {

@@ -99,6 +99,9 @@ async function buildLines(ctx: BranchContext, items: ItemInput[], opts: { approv
   if (productIds.some((id) => !Types.ObjectId.isValid(id))) throw badRequest('Invalid product id');
   await Product.updateMany({ tenantId: ctx.tenantId, _id: { $in: productIds }, status: 'sold_out', soldOutUntil: { $lte: new Date() } }, { $set: { status: 'available' }, $unset: { soldOutUntil: 1, soldOutBy: 1, soldOutAt: 1 } });
   const products = await Product.find({ tenantId: ctx.tenantId, _id: { $in: productIds } }).lean();
+  // Combo parts are products too (their station, recipe and name are used for the part lines).
+  const partIds = [...new Set(products.flatMap((p) => (p.combo?.isCombo ? (p.combo.items ?? []).map((c) => String(c.productId)) : [])))].filter((id) => !productIds.includes(id));
+  if (partIds.length) products.push(...(await Product.find({ tenantId: ctx.tenantId, _id: { $in: partIds } }).lean()));
   const categories = await Category.find({ tenantId: ctx.tenantId, _id: { $in: products.map((p) => p.categoryId) } }).lean();
   const groupIds = products.flatMap((p) => p.modifierGroupIds ?? []);
   const groups = await ModifierGroup.find({ tenantId: ctx.tenantId, _id: { $in: groupIds } }).lean();
@@ -130,12 +133,19 @@ async function buildLines(ctx: BranchContext, items: ItemInput[], opts: { approv
       if (n < (g.minSelect ?? 0)) throw badRequest(`Choose at least ${g.minSelect} option(s) for "${g.name}" on ${p.name}`);
       if (n > (g.maxSelect ?? 1)) throw badRequest(`Choose at most ${g.maxSelect} option(s) for "${g.name}" on ${p.name}`);
     }
-    const cat = categories.find((c) => String(c._id) === String(p.categoryId));
-    const station = (p.station && p.station !== 'inherit' ? p.station : cat?.station ?? 'kitchen') as 'kitchen' | 'bar' | 'none';
+    const stationOf = (x: typeof p) => {
+      const c = categories.find((k) => String(k._id) === String(x.categoryId));
+      return (x.station && x.station !== 'inherit' ? x.station : c?.station ?? 'kitchen') as 'kitchen' | 'bar' | 'none';
+    };
+    const combo = p.combo?.isCombo && (p.combo.items ?? []).length ? p.combo.items : null;
+    // A combo is prepared through its parts, so the priced line itself goes to no station.
+    const station = combo ? 'none' : stationOf(p);
     const rv = await getCurrentRecipeVersion(ctx.tenantId, p._id, price.variantName ?? '');
     if (rv) needs.push(...requirements(rv as never, it.qty));
+    const lineId = it.lineId ?? randomUUID();
     lines.push({
-      lineId: it.lineId ?? randomUUID(),
+      isCombo: combo ? true : undefined,
+      lineId,
       productId: p._id,
       name: price.variantName ? `${p.name} (${price.variantName})` : p.name,
       categoryId: p.categoryId,
@@ -157,6 +167,20 @@ async function buildLines(ctx: BranchContext, items: ItemInput[], opts: { approv
       addedBy: ctx.userId,
       happyHour: price.happyHour,
     });
+    // Combo parts: each to its own station, each deducting its own recipe; the price stays on the combo line.
+    for (const [n, c] of (combo ?? []).entries()) {
+      const q = products.find((x) => String(x._id) === String(c.productId));
+      if (!q) throw badRequest(`A part of ${p.name} no longer exists — update the combo in Settings`);
+      if (!opts.offline && q.status !== 'available') throw conflict(`${q.name} (part of ${p.name}) is ${q.status === 'sold_out' ? 'sold out' : 'not available'}`, 'PRODUCT_UNAVAILABLE');
+      const qty = it.qty * (c.qty ?? 1);
+      const prv = await getCurrentRecipeVersion(ctx.tenantId, q._id, '');
+      if (prv) needs.push(...requirements(prv as never, qty));
+      lines.push({
+        lineId: `${lineId}:${n + 1}`, parentLineId: lineId, productId: q._id, name: q.name, categoryId: q.categoryId, station: stationOf(q), qty,
+        unitPrice: 0, modifiers: [], notes: `Part of ${p.name}${it.notes ? ` — ${it.notes}` : ''}`, discount: 0, lineTotal: 0, serviceChargeApplies: false, taxRateIds: [],
+        ageRestricted: !!q.ageRestricted, ageCheckConfirmed: q.ageRestricted ? true : undefined, recipeVersionId: prv?._id, status: 'new', priority: !!it.priority, addedBy: ctx.userId,
+      });
+    }
   }
   // Ingredient availability: insufficient stock blocks the sale unless an authorised override is given.
   const shortages = opts.offline ? [] : await checkAvailability(ctx.tenantId, ctx.branchId, needs);
@@ -271,8 +295,13 @@ export async function updateItem(ctx: BranchContext, orderId: string, lineId: st
   return mutateOrder(ctx, orderId, async (o) => {
     const line = o.items.find((i) => i.lineId === lineId);
     if (!line || line.voided) throw notFound('Order line');
+    if (line.parentLineId) throw conflict('This is part of a combo — change the combo instead', 'COMBO_PART');
     if (line.status !== 'new') throw conflict('This item was already sent to the kitchen/bar. Void it instead.', 'ITEM_SENT');
-    if (patch.qty !== undefined) line.qty = patch.qty;
+    if (patch.qty !== undefined) {
+      // The combo's parts follow its quantity.
+      for (const part of o.items.filter((i) => i.parentLineId === lineId && !i.voided)) part.qty = (part.qty / line.qty) * patch.qty;
+      line.qty = patch.qty;
+    }
     if (patch.notes !== undefined) line.notes = patch.notes;
     await recalc(o);
   });
@@ -283,19 +312,23 @@ export async function voidItem(ctx: BranchContext, orderId: string, lineId: stri
   const order = await mutateOrder(ctx, orderId, async (o) => {
     const line = o.items.find((i) => i.lineId === lineId);
     if (!line || line.voided) throw notFound('Order line');
-    const sent = line.status !== 'new';
+    if (line.parentLineId) throw conflict('This is part of a combo — void the combo instead', 'COMBO_PART');
+    const parts = o.items.filter((i) => i.parentLineId === lineId && !i.voided);
+    const sent = line.status !== 'new' || parts.some((i) => i.status !== 'new');
     approvedBy = await resolveApproval(ctx, sent ? P.ORDERS_VOID_SENT_ITEM : P.ORDERS_VOID_ITEM, approval, sent ? 'Voiding an item already sent to the kitchen/bar' : 'Voiding an item');
     line.voided = true;
     line.voidReason = reason;
     line.voidedBy = ctx.userId;
     line.approvedBy = approvedBy;
     if (sent) line.status = 'cancelled';
+    for (const part of parts) part.set({ voided: true, voidReason: reason, voidedBy: ctx.userId, approvedBy, ...(part.status !== 'new' ? { status: 'cancelled' } : {}) });
     await recalc(o);
   });
   const line = order.items.find((i) => i.lineId === lineId)!;
-  if (line.ticketId) {
-    await KitchenTicket.updateOne({ tenantId: ctx.tenantId, _id: line.ticketId, 'items.lineId': lineId }, { $set: { 'items.$.status': 'cancelled' } });
-    emitStation(ctx.tenantId, ctx.branchId, line.station, 'ticket.updated', { id: String(line.ticketId) });
+  for (const l of [line, ...order.items.filter((i) => i.parentLineId === lineId)]) {
+    if (!l.ticketId) continue;
+    await KitchenTicket.updateOne({ tenantId: ctx.tenantId, _id: l.ticketId, 'items.lineId': l.lineId }, { $set: { 'items.$.status': 'cancelled' } });
+    emitStation(ctx.tenantId, ctx.branchId, l.station, 'ticket.updated', { id: String(l.ticketId) });
   }
   await audit(ctx, { action: 'order.void_item', entity: 'Order', entityId: order._id, reason, approvedBy, meta: { lineId, name: line.name, qty: line.qty, amount: line.qty * line.unitPrice } });
   return order;
@@ -471,10 +504,18 @@ export async function splitOrder(ctx: BranchContext, orderId: string, lines: Arr
     for (const sel of lines) {
       const line = o.items.find((i) => i.lineId === sel.lineId && !i.voided);
       if (!line) throw notFound('Order line');
+      if (line.parentLineId) throw badRequest(`${line.name} is part of a combo — move the combo instead`);
       const q = sel.qty ?? line.qty;
       if (q <= 0 || q > line.qty) throw badRequest(`Invalid split quantity for ${line.name}`);
       const copy = { ...line.toObject(), lineId: randomUUID(), qty: q };
       moving.push(copy);
+      // A combo's parts move with it, in proportion.
+      for (const [n, part] of o.items.filter((i) => i.parentLineId === line.lineId && !i.voided).entries()) {
+        const share = Math.round(((part.qty * q) / line.qty) * 1000) / 1000;
+        moving.push({ ...part.toObject(), lineId: `${copy.lineId}:${n + 1}`, parentLineId: copy.lineId, qty: share });
+        if (q === line.qty) o.items.pull({ lineId: part.lineId } as never);
+        else part.qty = Math.round((part.qty - share) * 1000) / 1000;
+      }
       if (q === line.qty) o.items.pull({ lineId: line.lineId } as never);
       else line.qty = Math.round((line.qty - q) * 1000) / 1000;
     }

@@ -43,7 +43,7 @@ export default function SettingsPage() {
   );
 }
 
-interface Product { _id: string; name: string; categoryId: string; price: number; sku?: string; barcode?: string; plu?: string; status: string; imageUrl?: string; description?: string; dietary: string[]; allergens: string[]; ageRestricted: boolean; modifierGroupIds: string[]; taxRateIds: string[]; happyHourPrice?: number | null; station: string; variants: Array<{ name: string; price: number }>; branchPrices: Array<{ branchId: string; price: number }> }
+interface Product { _id: string; name: string; categoryId: string; price: number; sku?: string; barcode?: string; plu?: string; status: string; imageUrl?: string; description?: string; dietary: string[]; allergens: string[]; ageRestricted: boolean; modifierGroupIds: string[]; taxRateIds: string[]; happyHourPrice?: number | null; station: string; variants: Array<{ name: string; price: number }>; branchPrices: Array<{ branchId: string; price: number }>; combo?: { isCombo: boolean; items: Array<{ productId: string; qty: number }> } }
 interface Cat { _id: string; name: string; icon: string; kind: string; station: string; sortOrder: number }
 
 function Menu() {
@@ -61,7 +61,7 @@ function Menu() {
 
   async function saveProduct() {
     if (!edit) return;
-    const body = { categoryId: edit.categoryId, name: edit.name, description: edit.description || undefined, imageUrl: edit.imageUrl || undefined, sku: edit.sku || undefined, barcode: edit.barcode || undefined, plu: edit.plu || undefined, price: edit.price, happyHourPrice: edit.happyHourPrice ?? null, status: edit.status, dietary: edit.dietary, allergens: edit.allergens, ageRestricted: edit.ageRestricted, modifierGroupIds: edit.modifierGroupIds, taxRateIds: edit.taxRateIds, station: edit.station, variants: edit.variants };
+    const body = { categoryId: edit.categoryId, name: edit.name, description: edit.description || undefined, imageUrl: edit.imageUrl || undefined, sku: edit.sku || undefined, barcode: edit.barcode || undefined, plu: edit.plu || undefined, price: edit.price, happyHourPrice: edit.happyHourPrice ?? null, status: edit.status, dietary: edit.dietary, allergens: edit.allergens, ageRestricted: edit.ageRestricted, modifierGroupIds: edit.modifierGroupIds, taxRateIds: edit.taxRateIds, station: edit.station, variants: edit.variants, combo: edit.combo?.isCombo ? { isCombo: true, items: (edit.combo.items ?? []).filter((c) => c.productId && c.qty > 0) } : { isCombo: false, items: [] } };
     try {
       if (edit._id) {
         let reason: string | undefined;
@@ -128,6 +128,25 @@ function Menu() {
             <div className="flex items-end"><Toggle checked={!!edit.ageRestricted} onChange={(v) => setEdit({ ...edit, ageRestricted: v })} label="Age-restricted (18+)" /></div>
             <div className="md:col-span-3"><p className="label">Modifier groups</p><div className="flex flex-wrap gap-2">{groups.data?.map((g) => <button type="button" key={g._id} onClick={() => setEdit({ ...edit, modifierGroupIds: edit.modifierGroupIds?.includes(g._id) ? edit.modifierGroupIds.filter((x) => x !== g._id) : [...(edit.modifierGroupIds ?? []), g._id] })} className={`rounded-full border px-3 py-1 text-xs font-semibold ${edit.modifierGroupIds?.includes(g._id) ? 'border-brand bg-brand-pale text-brand-dark' : 'border-line'}`}>{g.name}</button>)}</div></div>
             <div className="md:col-span-3"><p className="label">Taxes</p><div className="flex flex-wrap gap-2">{taxes.data?.map((t) => <button type="button" key={t._id} onClick={() => setEdit({ ...edit, taxRateIds: edit.taxRateIds?.includes(t._id) ? edit.taxRateIds.filter((x) => x !== t._id) : [...(edit.taxRateIds ?? []), t._id] })} className={`rounded-full border px-3 py-1 text-xs font-semibold ${edit.taxRateIds?.includes(t._id) ? 'border-brand bg-brand-pale text-brand-dark' : 'border-line'}`}>{t.name}{!t.active && ' (inactive)'}</button>)}</div></div>
+            <div className="md:col-span-3 rounded-2xl border border-line p-3">
+              <Toggle checked={!!edit.combo?.isCombo} onChange={(v) => setEdit({ ...edit, combo: { isCombo: v, items: edit.combo?.items?.length ? edit.combo.items : [{ productId: '', qty: 1 }] } })} label="Combo / set menu (one price for several items)" />
+              {edit.combo?.isCombo && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-xs text-ink-soft">Each part goes to its own station (kitchen or bar) and deducts its own recipe stock; the price above is charged once for the combo.</p>
+                  {(edit.combo.items ?? []).map((c, i) => (
+                    <div key={i} className="flex gap-2">
+                      <Select value={c.productId} onChange={(e) => setEdit({ ...edit, combo: { ...edit.combo!, items: edit.combo!.items.map((x, j) => (j === i ? { ...x, productId: e.target.value } : x)) } })} aria-label="Combo part">
+                        <option value="">Choose an item…</option>
+                        {products.data?.filter((p) => p._id !== edit._id && !p.combo?.isCombo && p.status !== 'archived').map((p) => <option key={p._id} value={p._id}>{p.name}</option>)}
+                      </Select>
+                      <Input inputMode="decimal" className="w-20" value={String(c.qty)} onChange={(e) => setEdit({ ...edit, combo: { ...edit.combo!, items: edit.combo!.items.map((x, j) => (j === i ? { ...x, qty: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 } : x)) } })} aria-label="Quantity" />
+                      <Button variant="ghost" size="sm" onClick={() => setEdit({ ...edit, combo: { ...edit.combo!, items: edit.combo!.items.filter((_, j) => j !== i) } })}>✕</Button>
+                    </div>
+                  ))}
+                  <Button size="sm" variant="ghost" icon={<Plus className="h-4 w-4" />} onClick={() => setEdit({ ...edit, combo: { ...edit.combo!, items: [...(edit.combo!.items ?? []), { productId: '', qty: 1 }] } })}>Add part</Button>
+                </div>
+              )}
+            </div>
             <div className="md:col-span-3"><p className="label">Sizes / variants</p>{(edit.variants ?? []).map((v, i) => <div key={i} className="mb-2 flex gap-2"><Input value={v.name} placeholder="e.g. Glass" onChange={(e) => setEdit({ ...edit, variants: edit.variants!.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} /><Input inputMode="decimal" value={fromCents(v.price)} onChange={(e) => setEdit({ ...edit, variants: edit.variants!.map((x, j) => (j === i ? { ...x, price: toCents(e.target.value || 0) } : x)) })} /><Button variant="ghost" size="sm" onClick={() => setEdit({ ...edit, variants: edit.variants!.filter((_, j) => j !== i) })}>✕</Button></div>)}<Button size="sm" variant="ghost" onClick={() => setEdit({ ...edit, variants: [...(edit.variants ?? []), { name: '', price: edit.price ?? 0 }] })}>Add size</Button></div>
           </div>
         </Modal>
