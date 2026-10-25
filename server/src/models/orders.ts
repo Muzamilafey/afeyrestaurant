@@ -95,6 +95,8 @@ const orderSchema = new Schema(
       tips: { ...money },
     },
     taxBreakdown: [{ code: String, rateBps: Number, inclusive: Boolean, amount: Number }],
+    /** KRA eTIMS: when this paid order was given its KRA invoice number. */
+    fiscal: { queuedAt: Date, invcNo: Number },
     delivery: {
       address: String,
       landmark: String,

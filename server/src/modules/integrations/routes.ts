@@ -4,6 +4,7 @@ import { IntegrationConfiguration, IntegrationLog, NotificationJob, Notification
 import { PERMISSIONS as P } from '../../auth/permissions';
 import { saveIntegration, redact, recordIntegrationResult, type IntegrationKind, SECRET_KEYS } from '../../services/integrations';
 import { getEmailProvider, getMpesa, getSmsProvider, getWhatsAppProvider } from '../../integrations/factory';
+import { getEtims } from '../../services/etims';
 import { audit } from '../../services/audit';
 import { notify, retryNotification } from '../../services/notify';
 import { renderTemplate, smsSegments, templateVariables } from '../../lib/template';
@@ -20,6 +21,7 @@ const SETUP: Record<string, string> = {
   mpesa: 'Create an app on developer.safaricom.co.ke, enable "M-Pesa Express" (and C2B for Till/Paybill confirmations), then paste the Consumer Key/Secret, Business Short Code and Lipa Na M-Pesa passkey. Use the sandbox (short code 174379) until Safaricom approves your production go-live. Callback URLs must be public HTTPS.',
   sms: 'Log in to bulksms.talksasa.com → Developers/API to create an API token. Use your approved Sender ID. Confirm the API base URL and endpoints in your Talk Sasa dashboard documentation before going live — this integration has not been verified against a live Talk Sasa account.',
   whatsapp: 'Meta WhatsApp Cloud API: in Meta Business Suite create a WhatsApp Business app, add your business number, and copy the Phone number ID and a permanent System User access token. Messages you start must use an approved template: create a Utility template (e.g. chili_message, language English) with the body "Message from {{1}}:\\n\\n{{2}}" and enter its name here. Free text only works within 24 hours of the customer messaging you.',
+  etims: 'KRA eTIMS (OSCU): on the eTIMS portal (etims.kra.go.ke; sandbox etims-sbx.kra.go.ke) sign up as a taxpayer, choose OSCU and register this POS as a third-party system integrator software; KRA approves an OSCU serial number for your branch. Enter your KRA PIN, branch ID (00 for the head office) and that serial, then Initialise device — KRA returns the communication key. Pick the KRA item classification for your menu (food, drinks…) and switch it on. Test everything in the sandbox first: this integration follows KRA OSCU specification v2.0 and has not been certified by KRA yet.',
   email: 'Use your provider SMTP details (Zoho: smtp.zoho.com:587 STARTTLS; Brevo: smtp-relay.brevo.com:587; Google Workspace: smtp.gmail.com:587 with an app password). Publish SPF, DKIM and DMARC records for your sending domain — see docs/integrations/email.md.',
   receipt_printer: 'Install the Chili Bridge on the till PC, then add ESC/POS printers by IP (port 9100) under Printers. Browser printing is used as a fallback.',
   kitchen_printer: 'Add kitchen/bar printers under Printers and assign them the kitchen or bar role.',
@@ -62,7 +64,7 @@ const zSave = z.object({
   settings: z.record(z.string(), z.union([z.string().max(4000), z.number(), z.boolean(), z.null()])).optional(), // 4000: a pasted certificate
   secrets: z.record(z.string(), z.string().max(2000).nullable()).optional(),
 });
-const PROVIDERS: Record<string, string[]> = { mpesa: ['daraja', 'mock'], sms: ['talksasa', 'mock'], whatsapp: ['meta', 'mock'], email: ['smtp', 'mock'], online_ordering: ['none'], accounting_export: ['csv'] };
+const PROVIDERS: Record<string, string[]> = { mpesa: ['daraja', 'mock'], sms: ['talksasa', 'mock'], whatsapp: ['meta', 'mock'], etims: ['oscu', 'mock'], email: ['smtp', 'mock'], online_ordering: ['none'], accounting_export: ['csv'] };
 
 m.route({ method: 'put', path: '/:kind', summary: 'Save integration settings (secrets write-only)', auth: 'tenant', permission: P.INTEGRATIONS_MANAGE, body: zSave }, async ({ ctx, params, body, req }) => {
   const kind = params.kind as IntegrationKind;
@@ -76,6 +78,15 @@ m.route({ method: 'put', path: '/:kind', summary: 'Save integration settings (se
   }
   if (kind === 'email' && body.settings?.port && ![25, 465, 587, 2525].includes(Number(body.settings.port))) throw badRequest('Unusual SMTP port — use 465 (TLS) or 587 (STARTTLS)');
   if (kind === 'sms' && body.settings?.senderId && !/^[A-Za-z0-9 ]{3,11}$/.test(String(body.settings.senderId))) throw badRequest('Sender ID must be 3–11 letters/digits');
+  if (kind === 'etims') {
+    const s = body.settings ?? {};
+    if (s.tin && !/^[AP]\d{9}[A-Z]$/.test(String(s.tin).toUpperCase())) throw badRequest('Enter the KRA PIN as on your certificate, e.g. P051234567A');
+    if (s.defaultItemClass && !/^\d{1,10}$/.test(String(s.defaultItemClass))) throw badRequest('KRA item classification codes are digits (e.g. from the eTIMS item classification list)');
+    // Keep what device initialisation stored, and start sending from the moment eTIMS is first switched on.
+    const prev = (await IntegrationConfiguration.findOne({ tenantId: ctx.tenantId, kind: 'etims', branchId: null }).lean())?.settings as Record<string, unknown> | undefined;
+    body.settings = { ...(prev ?? {}), ...s, ...(s.tin ? { tin: String(s.tin).toUpperCase() } : {}) };
+    if (body.enabled && !body.settings.startFrom) body.settings.startFrom = new Date().toISOString();
+  }
   const saved = await saveIntegration(ctx.tenantId, kind, { ...body, environment: body.provider === 'mock' ? 'mock' : body.environment, branchId: body.branchId ? (body.branchId as never) : null, settings: body.settings as Record<string, unknown> }, ctx.userId);
   // Log which secret fields changed — never their values.
   await audit(ctx, { action: `integration.${kind}_saved`, entity: 'IntegrationConfiguration', meta: { provider: body.provider, enabled: body.enabled, environment: body.environment, secretsChanged: Object.keys(body.secrets ?? {}).filter((k) => body.secrets![k]) } }, req);
@@ -111,6 +122,11 @@ m.route({ method: 'post', path: '/:kind/test', summary: 'Run a real connection t
       const { provider } = await getWhatsAppProvider(ctx.tenantId);
       const r = await provider.send(to, 'This is a test message from Chili POS. Your WhatsApp integration works.');
       result = { ok: true, simulated: r.simulated, message: r.simulated ? 'SIMULATED send — nothing left this server.' : `Accepted by WhatsApp (id ${r.messageId}). Delivery shows on the phone; a template that isn't approved fails here instead.` };
+    } else if (kind === 'etims') {
+      const h = await getEtims(ctx.tenantId);
+      if (!h) throw badRequest('Switch KRA eTIMS on first');
+      await h.client.ping();
+      result = h.client.simulated ? { ok: true, simulated: true, message: 'SIMULATED — nothing was sent to KRA. Receipts show "simulated" instead of a real KRA signature.' } : { ok: true, message: `KRA ${h.environment} accepted the PIN ${h.tin}, branch ${h.bhfId} and communication key. Sales are signed as they are paid.` };
     } else if (kind === 'email') {
       if (!body.to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.to)) throw badRequest('Enter a test recipient email');
       const { provider } = await getEmailProvider(ctx.tenantId);

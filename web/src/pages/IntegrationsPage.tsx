@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Smartphone, MessageSquare, MessageCircle, Mail, Printer, ChefHat, Fingerprint, Usb, Globe, FileSpreadsheet, FlaskConical, KeyRound, RotateCcw, Copy, Plus } from 'lucide-react';
+import { Smartphone, MessageSquare, MessageCircle, Mail, ReceiptText, Printer, ChefHat, Fingerprint, Usb, Globe, FileSpreadsheet, FlaskConical, KeyRound, RotateCcw, Copy, Plus } from 'lucide-react';
 import { get, post, put } from '@/lib/api';
 import { dateTime } from '@/lib/format';
 import { Button, Card, DataTable, Field, Input, Modal, PageHeader, Pill, Select, StatusPill, Tabs, Toggle, Textarea, Skeleton } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
+import { EtimsPanel } from '@/components/EtimsPanel';
 
 interface IntegrationView {
   kind: string;
@@ -17,7 +18,7 @@ interface IntegrationView {
 interface Overview { mocksAllowed: boolean; publicApiUrl: string; integrations: IntegrationView[]; bridges: Array<{ _id: string; name: string; lastSeenAt?: string; version?: string; active: boolean; tokenHint?: string }> }
 
 const META: Record<string, { title: string; icon: typeof Smartphone }> = {
-  mpesa: { title: 'M-Pesa Daraja', icon: Smartphone }, sms: { title: 'Talk Sasa SMS', icon: MessageSquare }, whatsapp: { title: 'WhatsApp', icon: MessageCircle }, email: { title: 'SMTP email', icon: Mail },
+  mpesa: { title: 'M-Pesa Daraja', icon: Smartphone }, sms: { title: 'Talk Sasa SMS', icon: MessageSquare }, whatsapp: { title: 'WhatsApp', icon: MessageCircle }, etims: { title: 'KRA eTIMS', icon: ReceiptText }, email: { title: 'SMTP email', icon: Mail },
   receipt_printer: { title: 'Receipt printers', icon: Printer }, kitchen_printer: { title: 'Kitchen & bar printers', icon: ChefHat }, zkteco: { title: 'ZKTeco devices', icon: Fingerprint },
   secugen: { title: 'SecuGen readers', icon: Usb }, online_ordering: { title: 'Online ordering', icon: Globe }, accounting_export: { title: 'Accounting exports', icon: FileSpreadsheet },
 };
@@ -61,7 +62,7 @@ export default function IntegrationsPage() {
                   {i.derived && Object.entries(i.derived).filter(([, v]) => v !== null).map(([k2, v]) => <p key={k2}>{k2}: <b className="text-ink">{String(v)}</b></p>)}
                 </div>
                 <div className="flex flex-wrap gap-2 border-t border-line p-4">
-                  {['mpesa', 'sms', 'whatsapp', 'email'].includes(i.kind) ? <Button size="sm" onClick={() => setEdit(i)}>Configure & test</Button> : <Button size="sm" variant="secondary" onClick={() => setEdit(i)}>Setup guide</Button>}
+                  {['mpesa', 'sms', 'whatsapp', 'etims', 'email'].includes(i.kind) ? <Button size="sm" onClick={() => setEdit(i)}>Configure & test</Button> : <Button size="sm" variant="secondary" onClick={() => setEdit(i)}>Setup guide</Button>}
                 </div>
               </Card>
             );
@@ -104,6 +105,16 @@ const FIELDS: Record<string, Array<{ key: string; label: string; secret?: boolea
     { key: 'useFor', label: 'Use for customer messages', options: [['off', 'Only when chosen (receipts)'], ['instead_of_sms', 'Instead of SMS'], ['with_sms', 'As well as SMS']], hint: 'Order ready, delivery updates, reservations, payment confirmations…' },
     { key: 'apiVersion', label: 'Graph API version', hint: 'Default v21.0' },
   ],
+  etims: [
+    { key: 'tin', label: 'KRA PIN', hint: 'As on your KRA PIN certificate, e.g. P051234567A' },
+    { key: 'bhfId', label: 'KRA branch ID', hint: '00 for the head office; 01, 02… for branches registered on iTax' },
+    { key: 'deviceSerial', label: 'OSCU serial number', hint: 'The device serial KRA approved for this branch on the eTIMS portal' },
+    { key: 'defaultItemClass', label: 'Default item classification', hint: 'KRA item classification code used for products without their own (set per product in Settings → Menu). Look it up in the eTIMS portal’s item classification list.' },
+    { key: 'defaultTaxType', label: 'Tax type for taxed items', options: [['B', 'B — VAT 16%'], ['E', 'E — VAT 8%']], hint: 'Used when a product’s tax rate is not 16% or 8%' },
+    { key: 'untaxedTaxType', label: 'Tax type for items without VAT', options: [['A', 'A — Exempt'], ['C', 'C — Zero-rated'], ['D', 'D — Non-VAT']] },
+    { key: 'startAfterInvcNo', label: 'Last invoice number already used', hint: 'Only if this PIN + branch already sent invoices from another system; Chili POS continues from the next number. Leave blank for a new device.' },
+    { key: 'cmcKey', label: 'Communication key (cmcKey)', secret: true, hint: 'Filled in by “Initialise device” below' },
+  ],
   sms: [
     { key: 'baseUrl', label: 'API base URL', hint: 'Default https://bulksms.talksasa.com/api/v3 — confirm in your Talk Sasa dashboard' },
     { key: 'apiKey', label: 'API token', secret: true },
@@ -127,7 +138,7 @@ function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: Integra
   const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
   const fields = FIELDS[i.kind];
-  const realProvider = { mpesa: 'daraja', sms: 'talksasa', whatsapp: 'meta', email: 'smtp' }[i.kind] ?? 'none';
+  const realProvider = { mpesa: 'daraja', sms: 'talksasa', whatsapp: 'meta', etims: 'oscu', email: 'smtp' }[i.kind] ?? 'none';
   const [provider, setProvider] = useState(i.config?.provider ?? realProvider);
   const [enabled, setEnabled] = useState(i.config?.enabled ?? false);
   const [environment, setEnv] = useState(i.config?.environment === 'production' ? 'production' : 'sandbox');
@@ -142,7 +153,7 @@ function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: Integra
     setBusy(true);
     try {
       const s: Record<string, string | number | boolean> = {};
-      for (const f of fields) if (!f.secret && settings[f.key] !== undefined && settings[f.key] !== '') s[f.key] = f.key === 'port' ? Number(settings[f.key]) : f.key === 'verifyCallbackWithQuery' ? settings[f.key] !== 'false' : settings[f.key];
+      for (const f of fields) if (!f.secret && settings[f.key] !== undefined && settings[f.key] !== '') s[f.key] = f.key === 'port' || f.key === 'startAfterInvcNo' ? Number(settings[f.key]) : f.key === 'verifyCallbackWithQuery' ? settings[f.key] !== 'false' : settings[f.key];
       await put(`/integrations/${i.kind}`, { provider, enabled, environment: provider === 'mock' ? 'mock' : environment, settings: s, secrets });
       setSecrets({});
       qc.invalidateQueries({ queryKey: ['integrations'] });
@@ -175,12 +186,12 @@ function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: Integra
             <option value={realProvider}>{META[i.kind].title}</option>
             {mocksAllowed && <option value="mock">Simulated (development only)</option>}
           </Select>
-          {provider !== 'mock' && i.kind === 'mpesa' && <Select value={environment} onChange={(e) => setEnv(e.target.value)} className="w-40"><option value="sandbox">Sandbox</option><option value="production">Production</option></Select>}
+          {provider !== 'mock' && ['mpesa', 'etims'].includes(i.kind) && <Select value={environment} onChange={(e) => setEnv(e.target.value)} className="w-40"><option value="sandbox">Sandbox</option><option value="production">Production</option></Select>}
         </div>
-        {provider === 'mock' && <p className="rounded-xl bg-warn-pale p-3 text-xs text-warn-ink"><FlaskConical className="mr-1 inline h-3 w-3" />Simulated provider: nothing is sent to Safaricom, Talk Sasa or any mail server. Results are labelled SIMULATED and it cannot be enabled in production.</p>}
-        {provider !== 'mock' && (
+        {provider === 'mock' && <p className="rounded-xl bg-warn-pale p-3 text-xs text-warn-ink"><FlaskConical className="mr-1 inline h-3 w-3" />Simulated provider: nothing is sent to Safaricom, KRA, Talk Sasa or any mail server. Results are labelled SIMULATED and it cannot be enabled in production.</p>}
+        {(provider !== 'mock' || i.kind === 'etims') && (
           <div className="grid gap-3 sm:grid-cols-2">
-            {fields.map((f) => (
+            {fields.filter((f) => provider !== 'mock' || !f.secret).map((f) => (
               <Field key={f.key} label={f.label} hint={f.secret ? (i.config?.secretHints[f.key] ? `Saved (${i.config.secretHints[f.key]}). Leave blank to keep.` : 'Not set') : f.hint}>
                 {f.options ? (
                   <Select value={settings[f.key] ?? f.options[0][0]} onChange={(e) => setSettings({ ...settings, [f.key]: e.target.value })}>{f.options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select>
@@ -196,13 +207,14 @@ function ConfigureModal({ i, mocksAllowed, publicApiUrl, onClose }: { i: Integra
         <div className="rounded-xl border border-line p-4">
           <p className="mb-2 text-sm font-semibold">Test connection</p>
           <div className="flex flex-wrap gap-2">
-            {i.kind !== 'mpesa' && <Input className="max-w-xs" placeholder={i.kind === 'sms' ? 'Phone to receive test SMS' : i.kind === 'whatsapp' ? 'WhatsApp number for the test' : 'Email to receive test'} value={testTo} onChange={(e) => setTestTo(e.target.value)} />}
-            <Button onClick={test} loading={busy}>{i.kind === 'mpesa' ? 'Test Daraja authentication' : 'Send test'}</Button>
+            {!['mpesa', 'etims'].includes(i.kind) && <Input className="max-w-xs" placeholder={i.kind === 'sms' ? 'Phone to receive test SMS' : i.kind === 'whatsapp' ? 'WhatsApp number for the test' : 'Email to receive test'} value={testTo} onChange={(e) => setTestTo(e.target.value)} />}
+            <Button onClick={test} loading={busy}>{i.kind === 'mpesa' ? 'Test Daraja authentication' : i.kind === 'etims' ? 'Test KRA connection' : 'Send test'}</Button>
             {i.kind === 'mpesa' && provider === 'daraja' && <Button variant="secondary" onClick={() => post('/mpesa/c2b/register', {}).then(() => toast('C2B URLs registered with Daraja')).catch(handleError)}>Register C2B URLs</Button>}
             {i.kind === 'sms' && provider === 'talksasa' && <Button variant="secondary" icon={<KeyRound className="h-4 w-4" />} onClick={() => post<{ url: string }>('/integrations/sms/webhook-key').then((r) => { navigator.clipboard?.writeText(r.url); toast('Delivery-report URL copied (shown once)'); prompt({ title: 'Delivery-report URL', label: 'Paste this into Talk Sasa', defaultValue: r.url, readOnly: true, hint: 'Shown once — copy it now.' }); }).catch(handleError)}>Delivery-report URL</Button>}
           </div>
           {result && <p className={`mt-3 rounded-xl px-3 py-2 text-sm ${result.simulated ? 'bg-warn-pale text-warn-ink' : result.ok ? 'bg-brand-pale text-brand-dark' : 'bg-danger-pale text-danger'}`}>{result.simulated ? 'SIMULATED — ' : ''}{result.message}</p>}
         </div>
+        {i.kind === 'etims' && <EtimsPanel settings={settings} environment={environment} simulated={provider === 'mock'} onInitialized={(s2) => setSettings({ ...settings, ...s2 })} />}
         {i.recentLogs.length > 0 && (
           <div>
             <p className="label">Recent activity</p>

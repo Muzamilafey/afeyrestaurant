@@ -78,6 +78,8 @@ const productSchema = new Schema(
       start: String, // "HH:mm"
       end: String,
     },
+    /** KRA eTIMS: item classification and tax type; empty = the defaults set under Integrations → KRA eTIMS. */
+    etims: { itemClsCd: String, taxTyCd: { type: String, enum: ['A', 'B', 'C', 'D', 'E'] } },
     combo: {
       isCombo: { type: Boolean, default: false },
       items: [{ productId: Schema.Types.ObjectId, qty: Number }],

@@ -35,6 +35,14 @@ describe('ESC/POS', () => {
     expect(s).toMatch(/TOTAL {2,}KSh 2,200\.00/);
     expect(s.split('\n').every((l) => l.replace(/[\x00-\x1f]./g, '').length <= 34)).toBe(true);
   });
+  it('prints a QR code with the printer\'s own QR command (KRA eTIMS verification link)', () => {
+    const data = 'https://etims.kra.go.ke/common/link/etims/receipt/indexEtimsReceiptData?Data=P05123456700ABC';
+    const b = render('receipt', { doc: { kind: 'receipt', copy: 'original', lines: [{ k: 'qr', data }] } }, 80);
+    const len = data.length + 3;
+    expect(b.includes(Buffer.from([0x1d, 0x28, 0x6b, len & 0xff, len >> 8, 0x31, 0x50, 0x30]))).toBe(true); // store
+    expect(b.includes(Buffer.from(data))).toBe(true);
+    expect(b.includes(Buffer.from([0x1d, 0x28, 0x6b, 3, 0, 0x31, 0x51, 0x30]))).toBe(true); // print
+  });
   it('sends bytes to a network printer and reports unreachable printers', async () => {
     const received: Buffer[] = [];
     const srv = net.createServer((s) => s.on('data', (d) => received.push(d)));

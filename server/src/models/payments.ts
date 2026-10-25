@@ -114,6 +114,8 @@ const refundSchema = new Schema(
     approvedBy: Schema.Types.ObjectId,
     restock: { type: Boolean, default: false },
     idempotencyKey: { type: String, required: true },
+    /** Set when the refund was reported to KRA eTIMS as a credit note (or found not to need one). */
+    fiscalQueuedAt: Date,
   },
   schemaOpts,
 );

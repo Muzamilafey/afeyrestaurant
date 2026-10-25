@@ -50,6 +50,19 @@ export class EscPos {
   cut() {
     return this.feed(3).raw(GS, 0x56, 0x42, 0x00);
   }
+  /** QR code printed by the printer itself (GS ( k, model 2), centred. */
+  qr(data: string, moduleSize = 6) {
+    const bytes = Buffer.from(data, 'ascii');
+    const len = bytes.length + 3;
+    this.align('center');
+    this.raw(GS, 0x28, 0x6b, 4, 0, 0x31, 0x41, 0x32, 0x00); // model 2
+    this.raw(GS, 0x28, 0x6b, 3, 0, 0x31, 0x43, moduleSize); // module size
+    this.raw(GS, 0x28, 0x6b, 3, 0, 0x31, 0x45, 0x31); // error correction M
+    this.raw(GS, 0x28, 0x6b, len & 0xff, len >> 8, 0x31, 0x50, 0x30);
+    this.chunks.push(bytes);
+    this.raw(GS, 0x28, 0x6b, 3, 0, 0x31, 0x51, 0x30); // print
+    return this.line().align('left');
+  }
   /** Pulse the cash drawer connected to the printer's DK port. */
   openDrawer() {
     return this.raw(ESC, 0x70, 0x00, 0x19, 0xfa);
@@ -82,7 +95,8 @@ export type ReceiptLine =
   | { k: 'rule'; heavy?: boolean }
   | { k: 'row'; l: string; r: string; bold?: boolean; big?: boolean; muted?: boolean }
   | { k: 'item'; qty: number; name: string; total: string; each?: string; mods: string[] }
-  | { k: 'space' };
+  | { k: 'space' }
+  | { k: 'qr'; data: string };
 
 export interface PrintPayload {
   title?: string;
@@ -183,6 +197,9 @@ function renderDoc(e: EscPos, lines: ReceiptLine[]) {
       }
       case 'space':
         e.line();
+        break;
+      case 'qr':
+        e.qr(l.data);
         break;
     }
   }

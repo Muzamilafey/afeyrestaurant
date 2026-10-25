@@ -1,7 +1,7 @@
 import { Schema, model } from 'mongoose';
 import { schemaOpts, tenantRef } from './common';
 
-export const INTEGRATION_KINDS = ['mpesa', 'sms', 'whatsapp', 'email', 'receipt_printer', 'kitchen_printer', 'zkteco', 'secugen', 'online_ordering', 'accounting_export'] as const;
+export const INTEGRATION_KINDS = ['mpesa', 'sms', 'whatsapp', 'email', 'etims', 'receipt_printer', 'kitchen_printer', 'zkteco', 'secugen', 'online_ordering', 'accounting_export'] as const;
 
 /**
  * Per-tenant (optionally per-branch) integration configuration.

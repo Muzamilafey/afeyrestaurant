@@ -47,6 +47,7 @@ const zProduct = z.object({
   allergens: z.array(z.string().max(40)).optional(), ageRestricted: z.boolean().optional(),
   status: z.enum(['available', 'sold_out', 'seasonal', 'archived']).optional(),
   availability: z.object({ branchIds: z.array(zId).optional(), days: z.array(z.number().int().min(0).max(6)).optional(), start: z.string().regex(/^\d{2}:\d{2}$/).optional(), end: z.string().regex(/^\d{2}:\d{2}$/).optional() }).optional(),
+  etims: z.object({ itemClsCd: z.string().regex(/^\d{1,10}$/, 'KRA item classification codes are digits').or(z.literal('')).optional().transform((v) => v || undefined), taxTyCd: z.enum(['A', 'B', 'C', 'D', 'E']).or(z.literal('')).optional().transform((v) => v || undefined) }).optional(),
   combo: z.object({ isCombo: z.boolean(), items: z.array(z.object({ productId: zId, qty: z.number().positive() })) }).optional(),
   prepMinutes: z.number().int().min(0).max(240).optional(), sortOrder: z.number().int().optional(),
 });

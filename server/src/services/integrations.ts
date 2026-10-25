@@ -9,6 +9,7 @@ export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
 export const SECRET_KEYS: Record<string, string[]> = {
   mpesa: ['consumerKey', 'consumerSecret', 'passkey', 'initiatorPassword', 'securityCredential'],
   whatsapp: ['accessToken'],
+  etims: ['cmcKey'],
   sms: ['apiKey'],
   email: ['smtpPass'],
   online_ordering: ['apiKey'],

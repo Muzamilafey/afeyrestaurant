@@ -14,7 +14,9 @@ export type ReceiptLine =
   | { k: 'rule'; heavy?: boolean }
   | { k: 'row'; l: string; r: string; bold?: boolean; big?: boolean; muted?: boolean }
   | { k: 'item'; qty: number; name: string; total: string; each?: string; mods: string[] }
-  | { k: 'space' };
+  | { k: 'space' }
+  /** A QR code (e.g. KRA's receipt verification link); text outputs print the link instead. */
+  | { k: 'qr'; data: string };
 
 export interface ReceiptDoc {
   kind: 'receipt' | 'bill' | 'report';
@@ -30,7 +32,12 @@ export interface ReceiptData {
   totals?: { subtotal?: number | null; discount?: number | null; serviceCharge?: number | null; deliveryFee?: number | null; total?: number | null; paid?: number | null; balance?: number | null } | null;
   taxes?: Array<{ code?: string | null; name?: string | null; rateBps?: number | null; inclusive?: boolean | null; amount?: number | null }> | null;
   payments: Array<{ method: string; amount: number; tendered?: number | null; change?: number | null; reference?: string | null; phone?: string | null; pending?: boolean; payerName?: string | null; tip?: number | null }>;
+  /** KRA eTIMS signature (null when eTIMS is off). */
+  fiscal?: { pending: true } | { pending: false; simulated: boolean; invcNo: number; sdcId?: string | null; curRcptNo?: number | null; totRcptNo?: number | null; intrlData?: string | null; rcptSign?: string | null; sdcDateTime?: string | null; mrcNo?: string | null; qrUrl?: string | null } | null;
 }
+
+/** "20261025143005" → "25/10/2026 14:30:05" */
+const kraDate = (s?: string | null) => (s && /^\d{14}$/.test(s) ? `${s.slice(6, 8)}/${s.slice(4, 6)}/${s.slice(0, 4)} ${s.slice(8, 10)}:${s.slice(10, 12)}:${s.slice(12, 14)}` : s ?? '');
 
 /** 123456 cents → "1,234.56" */
 export const amount = (cents: number | null | undefined) => ((cents ?? 0) / 100).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -115,6 +122,22 @@ export function receiptDoc(r: ReceiptData, copy: 'original' | 'duplicate' = 'ori
     for (const x of incl) L.push({ k: 'row', l: `${x.code ?? x.name ?? 'Tax'} ${((x.rateBps ?? 0) / 100).toFixed(0)}% included`, r: amount(x.amount), muted: true });
   }
 
+  // ── KRA eTIMS
+  const f = isReceipt ? r.fiscal : null;
+  if (f?.pending) {
+    L.push({ k: 'rule' }, { k: 'center', t: 'KRA eTIMS invoice is being signed', bold: true }, { k: 'center', t: 'Reprint shortly for the signed copy', muted: true });
+  } else if (f) {
+    L.push({ k: 'rule' }, { k: 'center', t: 'KRA eTIMS', bold: true });
+    if (f.simulated) L.push({ k: 'banner', t: 'SIMULATED - NOT SENT TO KRA' });
+    if (f.sdcId) L.push({ k: 'row', l: 'CU Serial No.', r: f.sdcId });
+    L.push({ k: 'row', l: 'CU Invoice No.', r: `${f.sdcId ? `${f.sdcId}/` : ''}${f.curRcptNo ?? f.invcNo}` });
+    L.push({ k: 'row', l: 'Invoice No.', r: String(f.invcNo) });
+    if (f.sdcDateTime) L.push({ k: 'row', l: 'Date', r: kraDate(f.sdcDateTime) });
+    if (f.intrlData) L.push({ k: 'center', t: 'Internal Data', muted: true }, { k: 'center', t: f.intrlData });
+    if (f.rcptSign) L.push({ k: 'center', t: 'Receipt Signature', muted: true }, { k: 'center', t: f.rcptSign });
+    if (f.qrUrl) L.push({ k: 'qr', data: f.qrUrl });
+  }
+
   // ── Footer
   L.push({ k: 'rule' });
   L.push({ k: 'center', t: r.business.footer || 'Thank you for dining with us!', bold: true });
@@ -179,6 +202,9 @@ export function docToText(doc: ReceiptDoc, cols = 40): string {
       }
       case 'space':
         out.push('');
+        break;
+      case 'qr':
+        out.push(ln.data);
         break;
     }
   }

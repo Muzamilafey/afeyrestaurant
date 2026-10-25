@@ -21,6 +21,7 @@ import { sha256 } from '../lib/crypto';
 import { env } from '../config/env';
 import { recordIntegrationResult } from './integrations';
 import { receiptDoc, docToText, type ReceiptData } from './receipt';
+import { kickEtims, receiptFiscal } from './etims';
 import { findOpenDrawer, noDrawerMessage } from './cash';
 import { logger } from '../lib/logger';
 import { toMajor } from '../lib/money';
@@ -231,6 +232,7 @@ async function afterPayment(order: OrderDoc) {
   emitBranch(order.tenantId, order.branchId, 'payment.updated', { orderId: String(order._id), paymentStatus: order.paymentStatus });
   if (order.status !== 'paid') return;
   emitTicketsClosed(order);
+  kickEtims(order.tenantId as Types.ObjectId);
   if (order.tableId) {
     const ctxLike = { tenantId: order.tenantId, branchId: order.branchId } as BranchContext;
     await releaseTableIfFree(ctxLike, order.tableId as Types.ObjectId, 'cleaning');
@@ -576,6 +578,7 @@ export async function refundPayment(ctx: BranchContext, paymentId: string, input
     }
     return refund;
   });
+  kickEtims(ctx.tenantId);
   await audit(ctx, { action: 'payment.refund', entity: 'Payment', entityId: paymentId, reason: input.reason, approvedBy, meta: { amount: input.amount, restock: input.restock, reference: input.reference } });
   return refund;
 }
@@ -604,6 +607,7 @@ export async function buildReceipt(tenantId: Types.ObjectId, orderId: Types.Obje
     totals: order.totals,
     taxes: order.taxBreakdown,
     payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference ?? p.claimedReference, phone: p.phone, payerName: p.payerName, tip: p.tip, pending: p.status === 'provisional' })),
+    fiscal: order.status === 'paid' ? await receiptFiscal(tenantId, order._id, order.paidAt) : null,
   };
 }
 

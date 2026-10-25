@@ -6,6 +6,7 @@ import { lowStockItems } from '../modules/inventory/routes';
 import { localParts } from '../services/pricing';
 import { logger } from '../lib/logger';
 import { isLiveCopy, runLiveSync } from '../services/liveSync';
+import { processEtims } from '../services/etims';
 
 const G = { skipTenantGuard: true };
 
@@ -99,6 +100,7 @@ export function startScheduler() {
   every(5_000, 'mpesa-reconcile', reconcileMpesa);
   every(5 * 60_000, 'reservation-reminders', reservationReminders);
   every(60 * 60_000, 'daily', dailyTasks);
+  every(20_000, 'etims', () => processEtims());
   every(15_000, 'live-sync', () => runLiveSync().catch((e) => logger.warn({ err: e instanceof Error ? e.message : e }, 'Live sync: will retry')));
   logger.info('Background scheduler started');
   return () => timers.forEach(clearInterval);
