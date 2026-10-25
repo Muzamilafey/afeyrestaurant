@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { reorderSuggestions } from '../../services/reorder';
 import { Types } from 'mongoose';
 import { createModule, zId, zMoney } from '../../http/route';
 import { Ingredient, StockBalance, StockLedger, StockAdjustment, StockCount, StockTransfer, Recipe, RecipeVersion, Supplier, PurchaseOrder, GoodsReceivedNote, SupplierInvoice, SupplierReturn, Branch, StockLot } from '../../models';
@@ -210,6 +211,29 @@ m.route({ method: 'post', path: '/purchase-orders', summary: 'Create a purchase 
   });
   const number = await nextNumber(ctx.tenantId, 'PO', 'ALL');
   return PurchaseOrder.create({ tenantId: ctx.tenantId, branchId: ctx.branchId, supplierId: body.supplierId, number, lines, total: lines.reduce((s, l) => s + Math.round(l.qty * l.unitPrice), 0), expectedAt: body.expectedAt, notes: body.notes, createdBy: ctx.userId });
+});
+m.route({
+  method: 'get', path: '/reorder-suggestions', summary: 'What to buy: usage, stock on hand and on order, suggested quantities', permission: [P.PROCUREMENT_VIEW, P.INVENTORY_VIEW],
+  query: z.object({ days: z.coerce.number().int().min(3).max(90).optional(), coverDays: z.coerce.number().int().min(1).max(60).optional(), leadDays: z.coerce.number().int().min(0).max(30).optional() }),
+}, async ({ ctx, query }) => reorderSuggestions(ctx.tenantId as Types.ObjectId, ctx.branchId as Types.ObjectId, query));
+
+/** Turn chosen suggestions into a draft purchase order for one supplier (priced from the last cost, editable after). */
+m.route({
+  method: 'post', path: '/reorder-suggestions/purchase-order', summary: 'Create a draft PO from reorder suggestions', permission: P.PROCUREMENT_MANAGE, status: 201,
+  body: z.object({ supplierId: zId, lines: z.array(z.object({ ingredientId: zId, qty: z.number().positive(), unit: z.string().max(20).optional() })).min(1).max(100), notes: z.string().max(500).optional() }),
+}, async ({ ctx, body, req }) => {
+  if (!(await Supplier.exists({ tenantId: ctx.tenantId, _id: body.supplierId }))) throw notFound('Supplier');
+  const ings = await Ingredient.find({ tenantId: ctx.tenantId, _id: { $in: body.lines.map((l) => l.ingredientId) } }).lean();
+  const lines = body.lines.map((l) => {
+    const ing = ings.find((i) => String(i._id) === l.ingredientId);
+    if (!ing) throw notFound('Ingredient');
+    const unitFactor = toBaseQty(1, l.unit, ing);
+    return { ingredientId: l.ingredientId, ingredientName: ing.name, qty: l.qty, unit: l.unit ?? ing.baseUnit, unitFactor, unitPrice: Math.round((ing.lastCost ?? 0) * unitFactor) };
+  });
+  const number = await nextNumber(ctx.tenantId, 'PO', 'ALL');
+  const po = await PurchaseOrder.create({ tenantId: ctx.tenantId, branchId: ctx.branchId, supplierId: body.supplierId, number, lines, total: lines.reduce((s, l) => s + Math.round(l.qty * l.unitPrice), 0), notes: body.notes ?? 'From reorder suggestions', createdBy: ctx.userId });
+  await audit(ctx, { action: 'procurement.po_from_suggestions', entity: 'PurchaseOrder', entityId: po._id, meta: { lines: lines.length } }, req);
+  return po;
 });
 m.route({ method: 'post', path: '/purchase-orders/:id/status', summary: 'Submit, approve or cancel a PO', permission: P.PROCUREMENT_MANAGE, body: z.object({ status: z.enum(['submitted', 'approved', 'cancelled']), email: z.boolean().optional() }) }, async ({ ctx, params, body, req }) => {
   const po = await PurchaseOrder.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: params.id });

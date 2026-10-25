@@ -6,6 +6,7 @@ import { date, money, toCents } from '@/lib/format';
 import { Button, Card, DataTable, Field, Input, Modal, PageHeader, Select, StatusPill, Tabs } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
+import { ReorderSuggestions } from './ReorderSuggestions';
 
 interface Supplier { _id: string; name: string; phone?: string; email?: string; balance: number; paymentTermsDays: number }
 interface Ing { _id: string; name: string; baseUnit: string; units: Array<{ name: string }> }
@@ -16,7 +17,7 @@ export default function PurchasingPage() {
   const { can } = useAuth();
   const { handleError, toast , prompt } = useFeedback();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'pos' | 'grn' | 'suppliers' | 'invoices'>('pos');
+  const [tab, setTab] = useState<'pos' | 'reorder' | 'grn' | 'suppliers' | 'invoices'>('pos');
   const suppliers = useQuery<Supplier[]>({ queryKey: ['suppliers'], queryFn: () => get('/inventory/suppliers') });
   const pos = useQuery<PO[]>({ queryKey: ['pos'], queryFn: () => get('/inventory/purchase-orders') });
   const grns = useQuery<Array<{ _id: string; number: string; supplierId: string; total: number; receivedAt: string; supplierInvoiceNo?: string }>>({ queryKey: ['grns'], queryFn: () => get('/inventory/grn'), enabled: tab === 'grn' });
@@ -35,8 +36,9 @@ export default function PurchasingPage() {
           {can('inventory.manage') && <Button icon={<PackageCheck className="h-4 w-4" />} onClick={() => setModal({ kind: 'grn' })}>Receive goods</Button>}
         </>
       } />
-      <Tabs tabs={[{ id: 'pos', label: 'Purchase orders' }, { id: 'grn', label: 'Goods received' }, { id: 'suppliers', label: 'Suppliers' }, { id: 'invoices', label: 'Supplier invoices' }]} value={tab} onChange={setTab} />
-      <Card>
+      <Tabs tabs={[{ id: 'pos', label: 'Purchase orders' }, { id: 'reorder', label: 'Reorder suggestions' }, { id: 'grn', label: 'Goods received' }, { id: 'suppliers', label: 'Suppliers' }, { id: 'invoices', label: 'Supplier invoices' }]} value={tab} onChange={setTab} />
+      {tab === 'reorder' && <ReorderSuggestions suppliers={suppliers.data ?? []} />}
+      {tab !== 'reorder' && <Card>
         {tab === 'pos' && <DataTable rows={pos.data} loading={pos.isLoading} rowKey={(r) => r._id} columns={[
           { key: 'n', header: 'PO', render: (r) => <b>{r.number}</b> }, { key: 's', header: 'Supplier', render: (r) => sname(r.supplierId) }, { key: 'd', header: 'Date', render: (r) => date(r.createdAt) },
           { key: 'l', header: 'Lines', render: (r) => <span className="text-xs">{r.lines.map((l) => `${l.ingredientName} ${l.receivedQty}/${l.qty}${l.unit}`).join(', ')}</span> },
@@ -54,7 +56,7 @@ export default function PurchasingPage() {
           { key: 'a', header: 'Amount', render: (r) => money(r.amount) }, { key: 'p', header: 'Paid', render: (r) => money(r.paid) }, { key: 'st', header: 'Status', render: (r) => <StatusPill status={r.status === 'unpaid' ? 'pending' : r.status === 'paid' ? 'paid' : 'partial'} /> },
           { key: 'x', header: '', render: (r) => r.status !== 'paid' && can('expenses.manage') && <Button size="sm" onClick={async () => { const amt = await prompt({ title: 'Pay supplier invoice', label: 'Amount to pay (KSh)', inputMode: 'decimal', defaultValue: String((r.amount - r.paid) / 100), confirmLabel: 'Next' }); if (!amt || Number.isNaN(Number(amt))) return; const ref = await prompt({ title: 'Pay supplier invoice', label: 'Payment reference (optional)', placeholder: 'Bank or M-Pesa reference', confirmLabel: 'Record payment', minLength: 0 }); if (ref === null) return; post(`/inventory/supplier-invoices/${r._id}/pay`, { amount: toCents(amt), method: 'bank', reference: ref || undefined, notify: true }).then(() => { qc.invalidateQueries({ queryKey: ['invoices'] }); qc.invalidateQueries({ queryKey: ['suppliers'] }); toast('Payment recorded'); }).catch(handleError); }}>Pay</Button> },
         ]} />}
-      </Card>
+      </Card>}
       {modal?.kind === 'supplier' && <SupplierModal onClose={() => setModal(null)} />}
       {(modal?.kind === 'po' || modal?.kind === 'grn') && ings.data && suppliers.data && <LinesModal kind={modal.kind} po={modal.kind === 'grn' ? modal.po : undefined} ings={ings.data} suppliers={suppliers.data} onClose={() => setModal(null)} />}
     </div>
