@@ -10,7 +10,7 @@ import { drawerMode, findOpenDrawer, noDrawerMessage } from '../../services/cash
 const m = createModule('/cash', 'Cash & Expenses');
 
 /** Compute expected drawer cash from the immutable payment/refund/movement records. */
-async function sessionTotals(tenantId: unknown, s: { _id: unknown; openingFloat: number; userId: unknown; branchId: unknown; openedAt: Date; closedAt?: Date | null; shared?: boolean | null }) {
+export async function sessionTotals(tenantId: unknown, s: { _id: unknown; openingFloat: number; userId: unknown; branchId: unknown; openedAt: Date; closedAt?: Date | null; shared?: boolean | null }) {
   // A personal drawer holds what that cashier took; the shared drawer holds what everyone in the branch took while it
   // was open (personal and shared drawers never overlap — the mode can only change when every drawer is closed).
   const who = s.shared ? {} : { receivedBy: s.userId };

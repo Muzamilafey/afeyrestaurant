@@ -17,7 +17,7 @@ export type ReceiptLine =
   | { k: 'space' };
 
 export interface ReceiptDoc {
-  kind: 'receipt' | 'bill';
+  kind: 'receipt' | 'bill' | 'report';
   copy: 'original' | 'duplicate';
   lines: ReceiptLine[];
 }

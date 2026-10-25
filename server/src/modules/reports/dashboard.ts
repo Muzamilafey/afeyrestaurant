@@ -10,23 +10,11 @@ import { lowStockItems } from '../inventory/routes';
  * Owner/manager dashboard: headline KPIs against the previous equal period, the sales trend, what is happening on
  * the floor right now and what needs attention. One request so the screen paints at once.
  */
+import { startOfDay } from '../../lib/time';
+
 const m = createModule('/dashboard', 'Dashboard');
 
 const DAY = 86400_000;
-
-/** Milliseconds to add to a UTC instant to get wall-clock time in `tz`. */
-function tzOffset(date: Date, tz: string) {
-  const p = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(date);
-  const g = (t: string) => Number(p.find((x) => x.type === t)!.value);
-  return Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second')) - Math.floor(date.getTime() / 1000) * 1000;
-}
-/** Midnight of the day containing `date`, in `tz`. */
-function startOfDay(date: Date, tz: string) {
-  const off = tzOffset(date, tz);
-  const local = new Date(date.getTime() + off);
-  local.setUTCHours(0, 0, 0, 0);
-  return new Date(local.getTime() - off);
-}
 
 const RANGES = ['today', 'yesterday', '7d', '30d'] as const;
 type Range = (typeof RANGES)[number];

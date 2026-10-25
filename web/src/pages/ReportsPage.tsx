@@ -6,6 +6,7 @@ import { download, get } from '@/lib/api';
 import { money, titleCase } from '@/lib/format';
 import { Button, Card, DataTable, Input, PageHeader, Pill, Select, Skeleton, Stat, Tabs, ErrorBox } from '@/components/ui';
 import { useAuth } from '@/auth/AuthContext';
+import { EndOfDay } from './EndOfDay';
 
 const PALETTE = ['#07963C', '#2B5FA8', '#F4B942', '#DC4545', '#7A5AF8', '#0EA5A4', '#9CA3AF'];
 const k = (c: number) => `${Math.round(c / 100).toLocaleString()}`;
@@ -30,7 +31,7 @@ function useRange() {
 
 export default function ReportsPage() {
   const { can, session } = useAuth();
-  const [tab, setTab] = useState<'sales' | 'inventory' | 'kitchen'>(can('reports.sales') ? 'sales' : 'inventory');
+  const [tab, setTab] = useState<'sales' | 'inventory' | 'kitchen' | 'eod'>(can('reports.sales') ? 'sales' : 'inventory');
   const r = useRange();
   const [branch, setBranch] = useState('');
   const [outlet, setOutlet] = useState('');
@@ -45,10 +46,11 @@ export default function ReportsPage() {
           {(session?.branches.length ?? 0) > 1 && <Select value={branch} onChange={(e) => setBranch(e.target.value)} className="w-44"><option value="">Active branch</option>{session?.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}<option value="all">All branches</option></Select>}
         </>
       } />
-      <Tabs tabs={[{ id: 'sales', label: 'Sales', hidden: !can('reports.sales') }, { id: 'inventory', label: 'Inventory & costs', hidden: !can('reports.inventory') }, { id: 'kitchen', label: 'Kitchen & tables', hidden: !can('reports.sales') }]} value={tab} onChange={setTab} />
+      <Tabs tabs={[{ id: 'sales', label: 'Sales', hidden: !can('reports.sales') }, { id: 'inventory', label: 'Inventory & costs', hidden: !can('reports.inventory') }, { id: 'kitchen', label: 'Kitchen & tables', hidden: !can('reports.sales') }, { id: 'eod', label: 'End of day', hidden: !can('reports.sales', 'cash.session_view_all') }]} value={tab} onChange={setTab} />
       {tab === 'sales' && <Sales q={q} />}
       {tab === 'inventory' && <Inventory q={q} />}
       {tab === 'kitchen' && <KitchenTables q={q} />}
+      {tab === 'eod' && <EndOfDay branchId={branch || undefined} />}
     </div>
   );
 }

@@ -209,3 +209,21 @@ const c2bSchema = new Schema(
 );
 c2bSchema.index({ tenantId: 1, transId: 1 }, { unique: true });
 export const MpesaC2BTransaction = model('MpesaC2BTransaction', c2bSchema);
+
+/** A closed business day (end-of-day / Z report): the figures as they were when the day was closed. */
+const dayCloseSchema = new Schema(
+  {
+    tenantId: tenantRef,
+    /** null = all branches together */
+    branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null },
+    date: { type: String, required: true }, // YYYY-MM-DD in the business time zone
+    closedBy: Schema.Types.ObjectId,
+    closedByName: String,
+    closedAt: { type: Date, default: Date.now },
+    timesClosed: { type: Number, default: 1 },
+    snapshot: Schema.Types.Mixed,
+  },
+  schemaOpts,
+);
+dayCloseSchema.index({ tenantId: 1, branchId: 1, date: 1 }, { unique: true });
+export const DayClose = model('DayClose', dayCloseSchema);

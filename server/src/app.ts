@@ -27,6 +27,7 @@ import staff, { bridgeModule } from './modules/attendance/routes';
 import crm, { publicModule } from './modules/customers/routes';
 import reports from './modules/reports/routes';
 import dashboard from './modules/reports/dashboard';
+import dayClose from './modules/reports/dayclose';
 import sync from './modules/sync/routes';
 import live, { liveCopyGuard } from './modules/live/routes';
 import { AppError } from './lib/errors';
@@ -57,7 +58,7 @@ export function createApp() {
   app.use(liveCopyGuard);
   app.use('/api/v1', healthRouter);
   app.use('/api/v1', manifestRouter);
-  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, paymentCallbacks, integrations, staff, bridgeModule, crm, publicModule, reports, dashboard, sync, live]) {
+  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, paymentCallbacks, integrations, staff, bridgeModule, crm, publicModule, reports, dashboard, dayClose, sync, live]) {
     app.use(`/api/v1${mod.basePath}`, mod.router);
   }
   const spec = buildOpenApi();
