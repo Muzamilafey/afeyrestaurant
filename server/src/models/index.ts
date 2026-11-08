@@ -13,3 +13,4 @@ export * from './attendance';
 export * from './audit';
 export * from './live';
 export * from './etims';
+export * from './accommodation';

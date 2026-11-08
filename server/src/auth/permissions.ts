@@ -32,6 +32,8 @@ export const PERMISSIONS = {
   TABLES_MANAGE: 'tables.manage',
   RESERVATIONS_VIEW: 'reservations.view',
   RESERVATIONS_MANAGE: 'reservations.manage',
+  ACCOMMODATION_VIEW: 'accommodation.view',
+  ACCOMMODATION_MANAGE: 'accommodation.manage',
   DELIVERY_VIEW: 'delivery.view',
   DELIVERY_MANAGE: 'delivery.manage',
   // Menu
@@ -111,6 +113,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
       P.PAYMENTS_RECEIVE, P.PAYMENTS_MANUAL_CONFIRM, P.PAYMENTS_REFUND, P.PAYMENTS_CREDIT_SALE, P.RECEIPTS_REPRINT,
       P.KITCHEN_VIEW, P.KITCHEN_UPDATE, P.BAR_VIEW, P.BAR_UPDATE, P.TABLES_VIEW, P.TABLES_MANAGE,
       P.RESERVATIONS_VIEW, P.RESERVATIONS_MANAGE, P.DELIVERY_VIEW, P.DELIVERY_MANAGE, P.MENU_VIEW, P.MENU_MANAGE,
+      P.ACCOMMODATION_VIEW, P.ACCOMMODATION_MANAGE,
       P.INVENTORY_VIEW, P.INVENTORY_MANAGE, P.INVENTORY_ADJUST, P.INVENTORY_ADJUST_APPROVE, P.INVENTORY_OVERRIDE,
       P.RECIPES_MANAGE, P.PROCUREMENT_VIEW, P.PROCUREMENT_MANAGE, P.PROCUREMENT_APPROVE, P.CASH_SESSION,
       P.CASH_SESSION_VIEW_ALL, P.EXPENSES_MANAGE, P.CUSTOMERS_VIEW, P.CUSTOMERS_MANAGE, P.CUSTOMERS_NOTES,
@@ -136,6 +139,12 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
       P.ORDERS_VIEW, P.ORDERS_CREATE, P.ORDERS_UPDATE, P.ORDERS_VOID_ITEM, P.ORDERS_TRANSFER, P.TABLES_VIEW,
       P.MENU_VIEW, P.RESERVATIONS_VIEW, P.CUSTOMERS_VIEW,
     ],
+    branchScoped: true,
+  },
+  receptionist: {
+    name: 'Receptionist',
+    description: 'Manages accommodation rooms, bookings and guest check-in/out',
+    permissions: [P.ACCOMMODATION_VIEW, P.ACCOMMODATION_MANAGE],
     branchScoped: true,
   },
   bartender: {

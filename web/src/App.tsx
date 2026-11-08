@@ -28,17 +28,18 @@ const AccountingPage = lazy(() => import('@/pages/AccountingPage'));
 const IntegrationsPage = lazy(() => import('@/pages/IntegrationsPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const TrackOrder = lazy(() => import('@/pages/TrackOrder'));
+const AccommodationPage = lazy(() => import('@/pages/AccommodationPage'));
 
 function Loading() {
   return <div className="space-y-3 p-6"><Skeleton className="h-8 w-48" /><Skeleton className="h-40" /><Skeleton className="h-40" /></div>;
 }
 
-function Guard({ perms, feature, children }: { perms?: string[]; feature?: 'bar'; children: ReactNode }) {
+function Guard({ perms, feature, children }: { perms?: string[]; feature?: 'bar' | 'accommodation'; children: ReactNode }) {
   const { session, loading, can } = useAuth();
   const location = useLocation();
   if (loading) return <Loading />;
   if (!session) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
-  if (feature === 'bar' && session.business?.settings?.barEnabled !== true) return <Empty title="Bar service is disabled" hint="Ask a business manager to enable bar service in Business settings." />;
+  if (feature && session.business?.settings?.[`${feature}Enabled`] !== true) return <Empty title={feature === 'bar' ? 'Bar service is disabled' : 'Accommodation is disabled'} hint={`Ask a business manager to enable ${feature} in Business settings.`} />;
   if (perms && !can(...perms)) return <Empty title="Not available" hint="Your role does not have access to this area. Ask a manager if you need it." />;
   return <>{children}</>;
 }
@@ -50,6 +51,7 @@ function Home() {
   if (can('orders.create')) return <Navigate to="/pos" replace />;
   if (can('kitchen.view')) return <Navigate to="/kitchen" replace />;
   if (can('bar.view') && session?.business?.settings?.barEnabled === true) return <Navigate to="/bar" replace />;
+  if (can('accommodation.view') && session?.business?.settings?.accommodationEnabled === true) return <Navigate to="/accommodation" replace />;
   if (can('reports.sales', 'reports.financial')) return <Navigate to="/reports" replace />;
   if (can('inventory.view')) return <Navigate to="/inventory" replace />;
   if (can('staff.view', 'attendance.view')) return <Navigate to="/staff" replace />;
@@ -81,11 +83,12 @@ export default function App() {
             <Route index element={<Home />} />
             <Route path="dashboard" element={<Guard perms={['reports.sales']}><DashboardPage /></Guard>} />
             <Route path="pos" element={<Guard perms={['orders.create']}><PosPage outlet="restaurant" /></Guard>} />
-            <Route path="bar-pos" element={<Guard perms={['orders.create']}><PosPage outlet="bar" /></Guard>} />
+            <Route path="bar-pos" element={<Guard perms={['orders.create']} feature="bar"><PosPage outlet="bar" /></Guard>} />
             <Route path="orders" element={<Guard perms={['orders.view']}><OrdersBoard /></Guard>} />
             <Route path="tables" element={<Guard perms={['tables.view']}><TablesPage /></Guard>} />
             <Route path="kitchen" element={<Guard perms={['kitchen.view']}><StationPage station="kitchen" /></Guard>} />
             <Route path="bar" element={<Guard perms={['bar.view']} feature="bar"><StationPage station="bar" /></Guard>} />
+            <Route path="accommodation" element={<Guard perms={['accommodation.view']} feature="accommodation"><AccommodationPage /></Guard>} />
             <Route path="reservations" element={<Guard perms={['reservations.view']}><ReservationsPage /></Guard>} />
             <Route path="delivery" element={<Guard perms={['delivery.view', 'orders.view']}><DeliveryPage /></Guard>} />
             <Route path="inventory" element={<Guard perms={['inventory.view']}><InventoryPage /></Guard>} />

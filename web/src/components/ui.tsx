@@ -74,7 +74,7 @@ const STATUS_COLOR: Record<string, keyof typeof PILL> = {
   open: 'blue', held: 'yellow', paid: 'green', voided: 'red', merged: 'gray', unpaid: 'gray', partial: 'yellow', refunded: 'red', partially_refunded: 'yellow',
   pending: 'yellow', accepted: 'blue', preparing: 'blue', ready: 'green', served: 'gray', completed: 'gray', cancelled: 'red', new: 'gray',
   available: 'green', occupied: 'blue', reserved: 'yellow', cleaning: 'gray', succeeded: 'green', failed: 'red', timeout: 'red', error: 'red',
-  confirmed: 'green', seated: 'blue', no_show: 'red', ok: 'green', configured: 'yellow', unconfigured: 'gray', online: 'green', offline: 'red', unknown: 'gray',
+  confirmed: 'green', seated: 'blue', checked_in: 'blue', checked_out: 'gray', no_show: 'red', ok: 'green', configured: 'yellow', unconfigured: 'gray', online: 'green', offline: 'red', unknown: 'gray',
   queued: 'yellow', sending: 'blue', sent: 'green', delivered: 'green', dead: 'red', skipped: 'gray', approved: 'green', rejected: 'red', draft: 'gray', submitted: 'blue',
   received: 'green', partially_received: 'yellow', trialing: 'yellow', trial: 'yellow', active: 'green', suspended: 'red', past_due: 'red', closed: 'gray', low: 'yellow', out: 'red',
 };

@@ -28,6 +28,7 @@ m.route(
         mpesaTimeoutSeconds: z.number().int().min(30).max(600).optional(), offlineAllowedActions: z.array(z.enum(['browse', 'create_order', 'cash_payment', 'card_payment', 'mpesa_payment', 'print'])).optional(),
         alertEmails: z.array(z.email()).max(5).optional(), alertPhones: z.array(z.string().max(20)).max(5).optional(), dailySummary: z.boolean().optional(), lowStockAlerts: z.boolean().optional(),
         barEnabled: z.boolean().optional(),
+        accommodationEnabled: z.boolean().optional(),
       }).optional(),
     }),
   },

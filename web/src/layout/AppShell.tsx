@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import {
-  LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList, Eye, Martini,
+  LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList, Eye, Martini, BedDouble,
 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, patch } from '@/lib/api';
@@ -17,14 +17,15 @@ import { BusinessMark } from '@/pages/Login';
 import { AccountMenu } from './AccountMenu';
 import { useTheme } from '@/lib/theme';
 
-const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; perms: string[]; feature?: 'bar' }> = [
+const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; perms: string[]; feature?: 'bar' | 'accommodation' }> = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perms: ['reports.sales'] },
   { to: '/pos', label: 'Restaurant POS', icon: LayoutGrid, perms: ['orders.create'] },
-  { to: '/bar-pos', label: 'Bar POS', icon: Martini, perms: ['orders.create'] },
+  { to: '/bar-pos', label: 'Bar POS', icon: Martini, perms: ['orders.create'], feature: 'bar' },
   { to: '/orders', label: 'Orders', icon: ClipboardList, perms: ['orders.view'] },
   { to: '/tables', label: 'Table Services', icon: Armchair, perms: ['tables.view'] },
   { to: '/kitchen', label: 'Kitchen Orders', icon: ChefHat, perms: ['kitchen.view'] },
   { to: '/bar', label: 'Bar Orders', icon: Wine, perms: ['bar.view'], feature: 'bar' },
+  { to: '/accommodation', label: 'Accommodation', icon: BedDouble, perms: ['accommodation.view'], feature: 'accommodation' },
   { to: '/reservations', label: 'Reservations', icon: CalendarDays, perms: ['reservations.view'] },
   { to: '/delivery', label: 'Delivery', icon: Bike, perms: ['delivery.view', 'orders.view'] },
   { to: '/inventory', label: 'Inventory', icon: Boxes, perms: ['inventory.view'] },
@@ -145,13 +146,8 @@ export function AppShell() {
     return () => { offOrder(); offCall(); };
   }, [branch?.id, floorStaff, notify]);
   if (!session) return null;
-<<<<<<< HEAD
-  const items = NAV.filter((n) => can(...n.perms) && (n.feature !== 'bar' || session.business?.settings?.barEnabled === true));
-  const isPos = loc.pathname.startsWith('/pos');
-=======
-  const items = NAV.filter((n) => can(...n.perms));
+  const items = NAV.filter((n) => can(...n.perms) && (!n.feature || session.business?.settings?.[`${n.feature}Enabled`] === true));
   const isPos = loc.pathname.startsWith('/pos') || loc.pathname.startsWith('/bar-pos');
->>>>>>> aead3ab0ce54de89b25e8826ad5664d0ff84b981
 
   // The desktop sidebar can be collapsed to icons; the mobile slide-out menu always shows the full names.
   const renderNav = (collapsed: boolean) => (

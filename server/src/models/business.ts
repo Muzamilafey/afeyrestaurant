@@ -45,6 +45,9 @@ const tenantSchema = new Schema(
       lowStockAlerts: { type: Boolean, default: true },
       /** Whether this business operates a bar and should show bar navigation. */
       barEnabled: { type: Boolean, default: false },
+      /** Turns on the separate accommodation rooms and stays module. */
+      accommodationEnabled: { type: Boolean, default: false },
+      accommodationRolesUpgraded: { type: Boolean, default: true },
     },
   },
   schemaOpts,
