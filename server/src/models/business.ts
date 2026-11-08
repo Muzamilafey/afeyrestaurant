@@ -38,6 +38,8 @@ const tenantSchema = new Schema(
       alertPhones: [String],
       dailySummary: { type: Boolean, default: false },
       lowStockAlerts: { type: Boolean, default: true },
+      /** Whether this business operates a bar and should show bar navigation. */
+      barEnabled: { type: Boolean, default: false },
     },
   },
   schemaOpts,

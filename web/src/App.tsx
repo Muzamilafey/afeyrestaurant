@@ -28,11 +28,12 @@ function Loading() {
   return <div className="space-y-3 p-6"><Skeleton className="h-8 w-48" /><Skeleton className="h-40" /><Skeleton className="h-40" /></div>;
 }
 
-function Guard({ perms, children }: { perms?: string[]; children: ReactNode }) {
+function Guard({ perms, feature, children }: { perms?: string[]; feature?: 'bar'; children: ReactNode }) {
   const { session, loading, can } = useAuth();
   const location = useLocation();
   if (loading) return <Loading />;
   if (!session) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  if (feature === 'bar' && session.business?.settings?.barEnabled !== true) return <Empty title="Bar service is disabled" hint="Ask a business manager to enable bar service in Business settings." />;
   if (perms && !can(...perms)) return <Empty title="Not available" hint="Your role does not have access to this area. Ask a manager if you need it." />;
   return <>{children}</>;
 }
@@ -43,7 +44,7 @@ function Home() {
   if (can('reports.sales')) return <Navigate to="/dashboard" replace />;
   if (can('orders.create')) return <Navigate to="/pos" replace />;
   if (can('kitchen.view')) return <Navigate to="/kitchen" replace />;
-  if (can('bar.view')) return <Navigate to="/bar" replace />;
+  if (can('bar.view') && session?.business?.settings?.barEnabled === true) return <Navigate to="/bar" replace />;
   if (can('reports.sales', 'reports.financial')) return <Navigate to="/reports" replace />;
   if (can('inventory.view')) return <Navigate to="/inventory" replace />;
   if (can('staff.view', 'attendance.view')) return <Navigate to="/staff" replace />;
@@ -66,7 +67,7 @@ export default function App() {
             <Route path="orders" element={<Guard perms={['orders.view']}><OrdersBoard /></Guard>} />
             <Route path="tables" element={<Guard perms={['tables.view']}><TablesPage /></Guard>} />
             <Route path="kitchen" element={<Guard perms={['kitchen.view']}><StationPage station="kitchen" /></Guard>} />
-            <Route path="bar" element={<Guard perms={['bar.view']}><StationPage station="bar" /></Guard>} />
+            <Route path="bar" element={<Guard perms={['bar.view']} feature="bar"><StationPage station="bar" /></Guard>} />
             <Route path="reservations" element={<Guard perms={['reservations.view']}><ReservationsPage /></Guard>} />
             <Route path="delivery" element={<Guard perms={['delivery.view']}><DeliveryPage /></Guard>} />
             <Route path="inventory" element={<Guard perms={['inventory.view']}><InventoryPage /></Guard>} />

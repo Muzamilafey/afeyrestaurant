@@ -11,13 +11,13 @@ import { BusinessMark } from '@/pages/Login';
 import { AccountMenu } from './AccountMenu';
 import { useTheme } from '@/lib/theme';
 
-const NAV = [
+const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; perms: string[]; feature?: 'bar' }> = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perms: ['reports.sales'] },
   { to: '/pos', label: 'POS / Menu', icon: LayoutGrid, perms: ['orders.create'] },
   { to: '/orders', label: 'Orders', icon: ClipboardList, perms: ['orders.view'] },
   { to: '/tables', label: 'Table Services', icon: Armchair, perms: ['tables.view'] },
   { to: '/kitchen', label: 'Kitchen Orders', icon: ChefHat, perms: ['kitchen.view'] },
-  { to: '/bar', label: 'Bar Orders', icon: Wine, perms: ['bar.view'] },
+  { to: '/bar', label: 'Bar Orders', icon: Wine, perms: ['bar.view'], feature: 'bar' },
   { to: '/reservations', label: 'Reservations', icon: CalendarDays, perms: ['reservations.view'] },
   { to: '/delivery', label: 'Delivery', icon: Bike, perms: ['delivery.view'] },
   { to: '/inventory', label: 'Inventory', icon: Boxes, perms: ['inventory.view'] },
@@ -90,10 +90,10 @@ export function AppShell() {
     navigate('/login', { state: { preselect: id } });
   };
   useEffect(() => setOpen(false), [loc.pathname]);
-  const stations = [can('kitchen.view') ? 'kitchen' : null, can('bar.view') ? 'bar' : null].filter(Boolean) as string[];
+  const stations = [can('kitchen.view') ? 'kitchen' : null, can('bar.view') && session.business?.settings?.barEnabled === true ? 'bar' : null].filter(Boolean) as string[];
   useRealtime(branch?.id ?? null, stations);
   if (!session) return null;
-  const items = NAV.filter((n) => can(...n.perms));
+  const items = NAV.filter((n) => can(...n.perms) && (n.feature !== 'bar' || session.business?.settings?.barEnabled === true));
   const isPos = loc.pathname.startsWith('/pos');
 
   const nav = (

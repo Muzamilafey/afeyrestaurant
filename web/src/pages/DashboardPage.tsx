@@ -199,6 +199,7 @@ function TrendTooltip({ active, payload, label, currentName, previousName }: { a
 
 export default function DashboardPage() {
   const { session } = useAuth();
+  const barEnabled = session?.business?.settings?.barEnabled === true;
   const qc = useQueryClient();
   const colors = useVizColors();
   const [range, setRange] = useState<Range>(() => {
@@ -367,7 +368,7 @@ export default function DashboardPage() {
                   value={<>{data.live.tables.occupied}<span className="text-sm font-medium text-ink-soft">/{data.live.tables.total}</span></>}
                 />
                 <LiveRow to="/kitchen" icon={<ChefHat className="h-4 w-4" />} label="Kitchen tickets" sub={data.live.delayedTickets ? <span className="font-semibold text-danger">{data.live.delayedTickets} waiting over {data.live.delayMinutes} min</span> : 'All on time'} value={data.live.kitchen} tone={data.live.delayedTickets ? 'danger' : undefined} />
-                <LiveRow to="/bar" icon={<Wine className="h-4 w-4" />} label="Bar tickets" value={data.live.bar} />
+                {barEnabled && <LiveRow to="/bar" icon={<Wine className="h-4 w-4" />} label="Bar tickets" value={data.live.bar} />}
                 <LiveRow to="/accounting" icon={<Wallet className="h-4 w-4" />} label="Cash drawers open" sub={data.live.pendingMpesa ? `${data.live.pendingMpesa} M-Pesa payment${data.live.pendingMpesa > 1 ? 's' : ''} waiting` : undefined} value={data.live.openDrawers} tone={data.live.pendingMpesa ? 'warn' : undefined} />
               </div>
             </Card>

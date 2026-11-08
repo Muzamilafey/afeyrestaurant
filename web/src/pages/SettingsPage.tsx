@@ -164,7 +164,7 @@ function Business() {
       setUploading(false);
     }
   };
-  const save = () => patch('/admin/tenant', { name: f.name, kraPin: f.kraPin, contactEmail: f.contactEmail || undefined, contactPhone: f.contactPhone, branding: { primaryColor: f.branding.primaryColor, receiptHeader: f.branding.receiptHeader, receiptFooter: f.branding.receiptFooter, logoUrl: f.branding.logoUrl ?? '' }, settings: { discountApprovalThresholdBps: Number(s.discountApprovalThresholdBps), loyaltyPointsPer100: Number(s.loyaltyPointsPer100), costingPolicy: s.costingPolicy, allowNegativeStock: s.allowNegativeStock, mpesaTimeoutSeconds: Number(s.mpesaTimeoutSeconds), offlineAllowedActions: s.offlineAllowedActions, alertEmails: s.alertEmails, dailySummary: s.dailySummary, lowStockAlerts: s.lowStockAlerts } }).then(async () => { await refreshSession(); qc.invalidateQueries({ queryKey: ['public-business'] }); toast('Business settings saved'); }).catch(handleError);
+  const save = () => patch('/admin/tenant', { name: f.name, kraPin: f.kraPin, contactEmail: f.contactEmail || undefined, contactPhone: f.contactPhone, branding: { primaryColor: f.branding.primaryColor, receiptHeader: f.branding.receiptHeader, receiptFooter: f.branding.receiptFooter, logoUrl: f.branding.logoUrl ?? '' }, settings: { discountApprovalThresholdBps: Number(s.discountApprovalThresholdBps), loyaltyPointsPer100: Number(s.loyaltyPointsPer100), costingPolicy: s.costingPolicy, allowNegativeStock: s.allowNegativeStock, mpesaTimeoutSeconds: Number(s.mpesaTimeoutSeconds), offlineAllowedActions: s.offlineAllowedActions, alertEmails: s.alertEmails, dailySummary: s.dailySummary, lowStockAlerts: s.lowStockAlerts, barEnabled: !!s.barEnabled } }).then(async () => { await refreshSession(); qc.invalidateQueries({ queryKey: ['public-business'] }); toast('Business settings saved'); }).catch(handleError);
   return (
     <Card title="Business settings" actions={<Button size="sm" onClick={save}>Save</Button>}>
       <div className="mb-5 flex flex-wrap items-center gap-4 rounded-2xl bg-page p-4">
@@ -191,6 +191,7 @@ function Business() {
         <Field label="M-Pesa prompt timeout (s)"><Input inputMode="numeric" value={s.mpesaTimeoutSeconds} onChange={(e) => setF({ ...f, settings: { ...s, mpesaTimeoutSeconds: e.target.value } })} /></Field>
         <Field label="Alert emails (comma separated)"><Input value={(s.alertEmails ?? []).join(', ')} onChange={(e) => setF({ ...f, settings: { ...s, alertEmails: e.target.value.split(',').map((x: string) => x.trim()).filter(Boolean) } })} /></Field>
         <div className="flex flex-col gap-2 md:col-span-3">
+          <Toggle checked={!!s.barEnabled} onChange={(v) => setF({ ...f, settings: { ...s, barEnabled: v } })} label="Enable bar" />
           <Toggle checked={!!s.allowNegativeStock} onChange={(v) => setF({ ...f, settings: { ...s, allowNegativeStock: v } })} label="Allow negative stock without manager override" />
           <Toggle checked={!!s.dailySummary} onChange={(v) => setF({ ...f, settings: { ...s, dailySummary: v } })} label="Send daily sales summary to alert contacts" />
           <Toggle checked={s.lowStockAlerts !== false} onChange={(v) => setF({ ...f, settings: { ...s, lowStockAlerts: v } })} label="Send low-stock alerts" />
