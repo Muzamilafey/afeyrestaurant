@@ -128,7 +128,7 @@ export function AppShell() {
     navigate('/login', { state: { preselect: id } });
   };
   useEffect(() => setOpen(false), [loc.pathname]);
-  const stations = [can('kitchen.view') ? 'kitchen' : null, can('bar.view') && session.business?.settings?.barEnabled === true ? 'bar' : null].filter(Boolean) as string[];
+  const stations = [can('kitchen.view') ? 'kitchen' : null, can('bar.view') && session?.business?.settings?.barEnabled === true ? 'bar' : null].filter(Boolean) as string[];
   useRealtime(branch?.id ?? null, stations);
   const { toast: notify } = useFeedback();
   const floorStaff = can('orders.update', 'tables.view');
