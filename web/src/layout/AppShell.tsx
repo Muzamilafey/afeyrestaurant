@@ -1,25 +1,32 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList,
+  LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList, Eye, Martini,
 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { get, patch } from '@/lib/api';
+import { appIconsStale, makeAppIcons, type AppIcons } from '@/lib/appIcons';
 import { useAuth, shiftStaff } from '@/auth/AuthContext';
 import { cx } from '@/components/ui';
 import { outbox, syncOutbox } from '@/lib/offline';
-import { useRealtime } from '@/lib/socket';
+import { useFeedback } from '@/components/feedback';
+import { useOnline } from '@/lib/connectivity';
+import { onSocket, useRealtime } from '@/lib/socket';
+import { chime } from '@/lib/chime';
 import { BusinessMark } from '@/pages/Login';
 import { AccountMenu } from './AccountMenu';
 import { useTheme } from '@/lib/theme';
 
 const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; perms: string[]; feature?: 'bar' }> = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, perms: ['reports.sales'] },
-  { to: '/pos', label: 'POS / Menu', icon: LayoutGrid, perms: ['orders.create'] },
+  { to: '/pos', label: 'Restaurant POS', icon: LayoutGrid, perms: ['orders.create'] },
+  { to: '/bar-pos', label: 'Bar POS', icon: Martini, perms: ['orders.create'] },
   { to: '/orders', label: 'Orders', icon: ClipboardList, perms: ['orders.view'] },
   { to: '/tables', label: 'Table Services', icon: Armchair, perms: ['tables.view'] },
   { to: '/kitchen', label: 'Kitchen Orders', icon: ChefHat, perms: ['kitchen.view'] },
   { to: '/bar', label: 'Bar Orders', icon: Wine, perms: ['bar.view'], feature: 'bar' },
   { to: '/reservations', label: 'Reservations', icon: CalendarDays, perms: ['reservations.view'] },
-  { to: '/delivery', label: 'Delivery', icon: Bike, perms: ['delivery.view'] },
+  { to: '/delivery', label: 'Delivery', icon: Bike, perms: ['delivery.view', 'orders.view'] },
   { to: '/inventory', label: 'Inventory', icon: Boxes, perms: ['inventory.view'] },
   { to: '/recipes', label: 'Recipes & Stock', icon: BookOpenText, perms: ['recipes.manage', 'inventory.view'] },
   { to: '/purchasing', label: 'Purchasing', icon: Truck, perms: ['procurement.view'] },
@@ -31,19 +38,39 @@ const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; perm
   { to: '/settings', label: 'Settings', icon: Settings, perms: ['settings.manage', 'menu.manage', 'users.manage', 'tables.manage', 'audit.view'] },
 ];
 
-export function useOnline() {
-  const [online, setOnline] = useState(navigator.onLine);
+
+/**
+ * The installed app (desktop / home-screen icon) uses icons made from the business logo. If the logo has no icons yet
+ * — it was uploaded before icons were made automatically — make them once, quietly, when an admin is signed in.
+ */
+function AppIconRepair() {
+  const { can } = useAuth();
+  const qc = useQueryClient();
+  const done = useRef(false);
+  const { data } = useQuery<{ logoUrl: string | null; icons: AppIcons | null; liveCopy: unknown }>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000 });
   useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener('online', on);
-    window.addEventListener('offline', off);
-    return () => {
-      window.removeEventListener('online', on);
-      window.removeEventListener('offline', off);
-    };
-  }, []);
-  return online;
+    if (done.current || !data || data.liveCopy || !appIconsStale(data) || !can('settings.manage') || !can('menu.manage')) return;
+    done.current = true;
+    makeAppIcons(data.logoUrl!)
+      .then((appIcons) => patch('/admin/tenant', { branding: { appIcons } }))
+      .then(() => qc.invalidateQueries({ queryKey: ['public-business'] }))
+      .catch(() => undefined); // Settings -> Business shows the problem when the logo is saved
+  }, [data, can, qc]);
+  return null;
+}
+
+/** On the live (internet) copy everything is view-only: changes are made on the restaurant's own server. */
+function LiveCopyBanner() {
+  const { data } = useQuery<{ liveCopy: { lastPushAt: string | null } | null }>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000, refetchInterval: 60_000 });
+  if (!data?.liveCopy) return null;
+  const at = data.liveCopy.lastPushAt ? new Date(data.liveCopy.lastPushAt) : null;
+  const mins = at ? Math.round((Date.now() - at.getTime()) / 60_000) : null;
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-b border-line bg-info-pale px-4 py-1.5 text-xs font-semibold text-info sm:text-sm">
+      <Eye className="h-4 w-4 shrink-0" />
+      <span>Live copy · view only. Updated {mins == null ? 'not yet' : mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : at!.toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' })}. Make changes on the restaurant's own server.</span>
+    </div>
+  );
 }
 
 function SyncBadge({ branchId }: { branchId: string | null }) {
@@ -55,11 +82,21 @@ function SyncBadge({ branchId }: { branchId: string | null }) {
     window.addEventListener('chili:outbox', refresh);
     return () => window.removeEventListener('chili:outbox', refresh);
   }, []);
+  const { toast } = useFeedback();
+  // Upload offline sales as soon as the server is reachable again (and every 30 s while any are waiting).
   useEffect(() => {
-    if (online && branchId && pending) syncOutbox(branchId).catch(() => undefined);
-    const t = setInterval(() => online && branchId && syncOutbox(branchId).catch(() => undefined), 30_000);
+    if (!online || !branchId) return;
+    const run = () =>
+      syncOutbox(branchId)
+        .then(({ synced, rejected }) => {
+          if (synced) toast(`${synced} offline sale${synced === 1 ? '' : 's'} uploaded`);
+          if (rejected) toast(`${rejected} offline sale${rejected === 1 ? ' was' : 's were'} refused by the server — ask a manager to check the order list`, 'error');
+        })
+        .catch(() => undefined);
+    if (pending) run();
+    const t = setInterval(() => pending && run(), 30_000);
     return () => clearInterval(t);
-  }, [online, branchId, pending]);
+  }, [online, branchId, pending, toast]);
   return (
     <div className="flex items-center gap-2">
       {pending > 0 && (
@@ -81,8 +118,8 @@ export function AppShell() {
   const { theme, toggle } = useTheme();
   useIdleLock(!!terminalToken && !!session, logout);
   const [open, setOpen] = useState(false);
-  // Start collapsed on tablets so the POS gets the full width.
-  const [collapsed, setCollapsed] = useState(() => window.innerWidth < 1280);
+  // The sidebar starts closed (icons only) after signing in, so the screen gets the full width; ☰ opens it.
+  const [collapsed, setCollapsed] = useState(true);
   const loc = useLocation();
   const navigate = useNavigate();
   const switchTo = async (id: string) => {
@@ -92,11 +129,32 @@ export function AppShell() {
   useEffect(() => setOpen(false), [loc.pathname]);
   const stations = [can('kitchen.view') ? 'kitchen' : null, can('bar.view') && session.business?.settings?.barEnabled === true ? 'bar' : null].filter(Boolean) as string[];
   useRealtime(branch?.id ?? null, stations);
+  const { toast: notify } = useFeedback();
+  const floorStaff = can('orders.update', 'tables.view');
+  // Guests ordering from the table QR code, calling a waiter or asking for the bill.
+  useEffect(() => {
+    if (!floorStaff) return;
+    const offOrder = onSocket('qr.order', (e: { number: string; table: string; needsAccept: boolean }) => {
+      chime();
+      notify(e.needsAccept ? `Table ${e.table} ordered by QR (${e.number}) — open it on the POS to accept` : `Table ${e.table} ordered by QR (${e.number}) — sent to the kitchen/bar`, 'info');
+    });
+    const offCall = onSocket('table.call', (e: { table: string; reason: 'waiter' | 'bill' }) => {
+      chime();
+      notify(e.reason === 'bill' ? `Table ${e.table} is asking for the bill` : `Table ${e.table} is calling a waiter`, 'info');
+    });
+    return () => { offOrder(); offCall(); };
+  }, [branch?.id, floorStaff, notify]);
   if (!session) return null;
+<<<<<<< HEAD
   const items = NAV.filter((n) => can(...n.perms) && (n.feature !== 'bar' || session.business?.settings?.barEnabled === true));
   const isPos = loc.pathname.startsWith('/pos');
+=======
+  const items = NAV.filter((n) => can(...n.perms));
+  const isPos = loc.pathname.startsWith('/pos') || loc.pathname.startsWith('/bar-pos');
+>>>>>>> aead3ab0ce54de89b25e8826ad5664d0ff84b981
 
-  const nav = (
+  // The desktop sidebar can be collapsed to icons; the mobile slide-out menu always shows the full names.
+  const renderNav = (collapsed: boolean) => (
     <nav className="flex h-full flex-col">
       <div className="flex items-center gap-3 px-4 pb-4 pt-5">
         <BusinessMark name={session.business?.name ?? 'Chili POS'} logoUrl={session.business?.branding?.logoUrl} />
@@ -147,13 +205,13 @@ export function AppShell() {
 
   return (
     <div className="flex h-full">
-      <aside className={cx('hidden shrink-0 border-r border-line bg-card transition-all lg:block', collapsed ? 'w-[76px]' : 'w-60')}>{nav}</aside>
+      <aside className={cx('hidden shrink-0 border-r border-line bg-card transition-all lg:block', collapsed ? 'w-[76px]' : 'w-60')}>{renderNav(collapsed)}</aside>
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
-          <aside className="absolute left-0 top-0 h-full w-64 bg-card shadow-lift" onClick={(e) => e.stopPropagation()}>
+          <aside className="absolute left-0 top-0 h-full w-72 max-w-[85vw] bg-card shadow-lift" onClick={(e) => e.stopPropagation()}>
             <button className="absolute right-3 top-5 rounded-lg p-1 text-ink-soft" onClick={() => setOpen(false)} aria-label="Close menu"><X className="h-5 w-5" /></button>
-            {nav}
+            {renderNav(false)}
           </aside>
         </div>
       )}
@@ -181,6 +239,8 @@ export function AppShell() {
             </button>
           )}
         </header>
+        <LiveCopyBanner />
+        <AppIconRepair />
         <main className={cx('min-h-0 flex-1', isPos ? 'overflow-hidden' : 'scroll-thin overflow-y-auto p-4 sm:p-6')}>
           <Outlet />
         </main>

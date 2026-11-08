@@ -2,6 +2,8 @@
  * API client. Access tokens live in memory only; the refresh token is an httpOnly cookie that the
  * browser sends to /api/v1/auth/refresh. A 401 triggers one silent refresh and a retry.
  */
+import { setServerReachable } from './connectivity';
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) {
     super(message);
@@ -76,8 +78,11 @@ export async function api<T = any>(path: string, opts: RequestOptions = {}, retr
   try {
     res = await fetch(`/api/v1${path}${qs}`, { method: opts.method ?? (opts.body ? 'POST' : 'GET'), headers, body: isForm ? (opts.body as FormData) : opts.body !== undefined ? JSON.stringify(opts.body) : undefined, credentials: 'include', signal: opts.signal });
   } catch (e) {
+    if ((e as Error)?.name !== 'AbortError') setServerReachable(false);
     throw new ApiError(0, 'NETWORK', 'Cannot reach the server. Check your connection.');
   }
+  // A gateway error from a proxy in front of the API (e.g. the server is down) also means "offline".
+  setServerReachable(![502, 503, 504].includes(res.status) || res.headers.get('content-type')?.includes('application/json') === true);
   if (res.status === 401 && !retried && !path.startsWith('/auth/login')) {
     if (await tryRefresh()) return api<T>(path, opts, true);
     onSessionExpired?.();

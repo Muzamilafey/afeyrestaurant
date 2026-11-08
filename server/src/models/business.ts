@@ -18,6 +18,8 @@ const tenantSchema = new Schema(
     kraPin: String,
     branding: {
       logoUrl: String,
+      /** PNG app icons generated from the logo (browser tab, home screen, installed app); source = the logo they came from. */
+      appIcons: { icon192: String, icon512: String, maskable512: String, source: String },
       primaryColor: { type: String, default: '#07963C' },
       receiptHeader: String,
       receiptFooter: { type: String, default: 'Thank you for dining with us!' },
@@ -33,7 +35,10 @@ const tenantSchema = new Schema(
       costingPolicy: { type: String, enum: ['fifo', 'weighted_average'], default: 'fifo' },
       allowNegativeStock: { type: Boolean, default: false },
       mpesaTimeoutSeconds: { type: Number, default: 90 },
-      offlineAllowedActions: { type: [String], default: ['browse', 'create_order', 'cash_payment', 'print'] },
+      offlineAllowedActions: { type: [String], default: ['browse', 'create_order', 'cash_payment', 'card_payment', 'mpesa_payment', 'print'] },
+      offlineMethodsUpgraded: { type: Boolean, default: true },
+      /** New businesses get orders.view_all in their system roles at setup; older ones once at startup. */
+      ordersViewAllUpgraded: { type: Boolean, default: true },
       alertEmails: [String],
       alertPhones: [String],
       dailySummary: { type: Boolean, default: false },

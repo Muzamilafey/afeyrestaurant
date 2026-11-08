@@ -1,5 +1,5 @@
 import { Schema, model, InferSchemaType, HydratedDocument } from 'mongoose';
-import { schemaOpts, tenantRef, money } from './common';
+import { schemaOpts, tenantRef, branchRef, money } from './common';
 
 const branchSchema = new Schema(
   {
@@ -12,6 +12,12 @@ const branchSchema = new Schema(
     active: { type: Boolean, default: true },
     settings: {
       serviceChargeBps: { type: Number, default: 0 },
+      /** Guests order from a QR code on their table. requireAccept: staff accept before it reaches the kitchen. */
+      qrOrdering: {
+        enabled: { type: Boolean, default: false },
+        requireAccept: { type: Boolean, default: true },
+        payByMpesa: { type: Boolean, default: true },
+      },
       serviceChargeModes: { type: [String], default: ['dine_in'] },
       receiptPrefix: { type: String, default: 'RC' },
       orderPrefix: { type: String, default: 'ORD' },
@@ -123,6 +129,8 @@ const employeeSchema = new Schema(
     email: String,
     jobTitle: String,
     hourlyRate: { type: Number, default: 0 },
+    /** Commission on the net sales of the orders they served (basis points: 250 = 2.5%). */
+    commissionBps: { type: Number, default: 0 },
     /** The user ID/PIN the employee is registered under on biometric terminals. */
     deviceUserCode: String,
     active: { type: Boolean, default: true },
@@ -148,3 +156,26 @@ const counterSchema = new Schema({
 });
 counterSchema.index({ tenantId: 1, key: 1 }, { unique: true });
 export const Counter = model('Counter', counterSchema);
+
+/**
+ * A customer-facing display (a tablet or screen facing the customer) paired with a till. The display gets its own
+ * token that can only read this display's screen — it never sees anything else.
+ */
+const displayPairingSchema = new Schema(
+  {
+    tenantId: tenantRef,
+    branchId: branchRef,
+    name: { type: String, default: 'Customer display' },
+    createdBy: Schema.Types.ObjectId,
+    code: String,
+    codeExpiresAt: Date,
+    tokenHash: String,
+    pairedAt: Date,
+    lastSeenAt: Date,
+    active: { type: Boolean, default: true },
+  },
+  schemaOpts,
+);
+displayPairingSchema.index({ code: 1 }, { unique: true, partialFilterExpression: { code: { $type: 'string' } } });
+displayPairingSchema.index({ tokenHash: 1 }, { unique: true, partialFilterExpression: { tokenHash: { $type: 'string' } } });
+export const DisplayPairing = model('DisplayPairing', displayPairingSchema);

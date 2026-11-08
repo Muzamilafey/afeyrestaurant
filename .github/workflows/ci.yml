@@ -17,3 +17,31 @@ jobs:
       - run: npm test
       - run: npm test -w bridge
       - run: npm run build
+
+  windows-scripts:
+    # The installer runs on client PCs with Windows PowerShell 5.1, which reads script files without a BOM as ANSI:
+    # any non-ASCII character can break parsing there even though PowerShell 7 is fine.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scripts are plain ASCII
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem scripts/windows/*.ps1 | Where-Object { [IO.File]::ReadAllBytes($_.FullName) | Where-Object { $_ -gt 127 } | Select-Object -First 1 }
+          if ($bad) { throw "Non-ASCII characters in: $($bad.Name -join ', ')" }
+      - name: Parse with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          foreach ($f in Get-ChildItem scripts/windows/*.ps1) {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs)
+            if ($errs) { $errs | ForEach-Object { Write-Host "$($f.Name):$($_.Extent.StartLineNumber) $($_.Message)" }; throw "Parse errors in $($f.Name)" }
+            Write-Host "$($f.Name): OK ($($PSVersionTable.PSVersion))"
+          }
+      - name: Installer check and dry run (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install.ps1 -CheckOnly
+          Write-Host "check-only exit code: $LASTEXITCODE (1 = something to install, expected on a CI runner)"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install.ps1 -DryRun -SkipPrerequisites
+          if ($LASTEXITCODE) { throw "dry run failed ($LASTEXITCODE)" }

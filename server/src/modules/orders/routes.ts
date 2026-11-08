@@ -21,11 +21,13 @@ const zItem = z.object({
 const ORDER_TYPES = ['dine_in', 'takeaway', 'delivery', 'room_service', 'bar_counter', 'online'] as const;
 
 m.route(
-  { method: 'get', path: '', summary: 'List orders for the active branch', permission: P.ORDERS_VIEW, query: z.object({ status: z.string().optional(), active: z.coerce.boolean().optional(), tableId: zId.optional(), type: z.string().optional(), q: z.string().max(40).optional(), from: z.coerce.date().optional(), to: z.coerce.date().optional(), limit: z.coerce.number().int().min(1).max(200).default(100) }) },
+  { method: 'get', path: '', summary: 'List orders for the active branch', permission: P.ORDERS_VIEW, query: z.object({ mine: z.coerce.boolean().optional(), status: z.string().optional(), active: z.coerce.boolean().optional(), tableId: zId.optional(), type: z.string().optional(), q: z.string().max(40).optional(), from: z.coerce.date().optional(), to: z.coerce.date().optional(), limit: z.coerce.number().int().min(1).max(200).default(100) }) },
   async ({ ctx, query }) => {
     const f: Record<string, unknown> = { tenantId: ctx.tenantId, branchId: ctx.branchId };
     if (query.active) f.status = { $in: ['open', 'held'] };
     else if (query.status) f.status = { $in: query.status.split(',') };
+    // POS lists (held orders): staff without orders.view_all get only their own.
+    if (query.mine && !ctx.permissions.has(P.ORDERS_VIEW_ALL)) f.waiterId = ctx.userId;
     if (query.tableId) f.tableId = query.tableId;
     if (query.type) f.type = query.type;
     if (query.q) f.$or = [{ number: { $regex: query.q.replace(/[^\w-]/g, ''), $options: 'i' } }, { customerPhone: query.q.replace(/\D/g, '') || '__none__' }, { receiptNumber: query.q }];
@@ -48,9 +50,9 @@ m.route(
   {
     method: 'post', path: '', summary: 'Create an order (idempotent by clientId)', permission: P.ORDERS_CREATE,
     body: z.object({
-      clientId: z.uuid().optional(), type: z.enum(ORDER_TYPES), tableId: zId.optional(), guests: z.number().int().min(1).max(100).optional(),
+      clientId: z.uuid().optional(), type: z.enum(ORDER_TYPES), outlet: z.enum(['restaurant', 'bar']).optional(), tableId: zId.optional(), guests: z.number().int().min(1).max(100).optional(),
       customerId: zId.optional(), customerName: z.string().max(80).optional(), customerPhone: z.string().max(20).optional(), notes: z.string().max(500).optional(), priority: z.boolean().optional(),
-      items: z.array(zItem).max(100).optional(), delivery: z.object({ address: z.string().min(3).max(300), landmark: z.string().max(200).optional(), contactPhone: z.string().max(20).optional(), zoneId: zId.optional() }).optional(),
+      items: z.array(zItem).max(100).optional(), delivery: z.object({ address: z.string().min(3).max(300), landmark: z.string().max(200).optional(), contactPhone: z.string().max(20).optional(), zoneId: zId.optional(), riderId: zId.optional() }).optional(),
       approval: zApproval, overrideStockReason: z.string().max(200).optional(), sendToStations: z.boolean().optional(),
     }),
   },
@@ -97,14 +99,14 @@ m.route({ method: 'patch', path: '/:id', summary: 'Update order header (customer
 
 // ── Payments ──
 m.route(
-  { method: 'post', path: '/:id/payments', summary: 'Record a cash/card/QR/account payment or manager-confirmed M-Pesa code', permission: P.PAYMENTS_RECEIVE, body: z.object({ method: z.enum(['cash', 'card', 'qr', 'account', 'mpesa_manual']), amount: zMoney, tendered: zMoney.optional(), reference: z.string().max(40).optional(), customerId: zId.optional(), reason: z.string().max(200).optional(), idempotencyKey: z.string().min(8).max(80), approval: zApproval }) },
+  { method: 'post', path: '/:id/payments', summary: 'Record a cash/card/QR/account payment or a manual M-Pesa payment', permission: P.PAYMENTS_RECEIVE, body: z.object({ method: z.enum(['cash', 'card', 'qr', 'account', 'mpesa_manual']), amount: zMoney, tendered: zMoney.optional(), reference: z.string().max(40).optional(), customerId: zId.optional(), reason: z.string().max(200).optional(), tip: zMoney.optional(), idempotencyKey: z.string().min(8).max(80), approval: zApproval }) },
   async ({ ctx, params, body, res }) => {
     const r = await pay.recordPayment(ctx, params.id, body);
     res.status(r.duplicate ? 200 : 201);
     return r;
   },
 );
-m.route({ method: 'post', path: '/:id/mpesa', summary: 'Send an M-Pesa STK Push prompt', permission: P.PAYMENTS_RECEIVE, body: z.object({ phone: z.string().min(9).max(16), amount: zMoney, idempotencyKey: z.string().min(8).max(80) }) }, async ({ ctx, params, body }) => pay.initiateMpesa(ctx, params.id, body));
+m.route({ method: 'post', path: '/:id/mpesa', summary: 'Send an M-Pesa STK Push prompt', permission: P.PAYMENTS_RECEIVE, body: z.object({ phone: z.string().min(9).max(16), amount: zMoney, tip: zMoney.optional(), idempotencyKey: z.string().min(8).max(80) }) }, async ({ ctx, params, body }) => pay.initiateMpesa(ctx, params.id, body));
 m.route({ method: 'get', path: '/:id/mpesa/:attemptId', summary: 'Check/refresh an M-Pesa attempt status', permission: P.PAYMENTS_RECEIVE }, async ({ ctx, params }) => {
   const a = await PaymentAttempt.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: params.id, _id: params.attemptId }).lean();
   if (!a) throw notFound('Payment attempt');
@@ -143,7 +145,7 @@ m.route({ method: 'post', path: '/:id/receipt/print', summary: 'Record a receipt
   const r = await pay.buildReceipt(ctx.tenantId, order._id);
   return { copy, doc: receiptDoc(r, copy), text: pay.receiptText(r, copy), receipt: r };
 });
-m.route({ method: 'post', path: '/:id/receipt/send', summary: 'Send the receipt by SMS or email', permission: P.ORDERS_VIEW, body: z.object({ channel: z.enum(['sms', 'email']), to: z.string().min(5).max(120) }) }, async ({ ctx, params, body }) => {
+m.route({ method: 'post', path: '/:id/receipt/send', summary: 'Send the receipt by SMS, WhatsApp or email', permission: P.ORDERS_VIEW, body: z.object({ channel: z.enum(['sms', 'email', 'whatsapp']), to: z.string().min(5).max(120) }) }, async ({ ctx, params, body }) => {
   const order = await svc.loadOrder(ctx, params.id);
   if (order.status !== 'paid') throw badRequest('Order is not paid');
   const r = await pay.buildReceipt(ctx.tenantId, order._id);

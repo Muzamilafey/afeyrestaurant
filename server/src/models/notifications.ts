@@ -14,7 +14,7 @@ const templateSchema = new Schema(
   {
     tenantId: tenantRef,
     event: { type: String, enum: NOTIFICATION_EVENTS, required: true },
-    channel: { type: String, enum: ['sms', 'email'], required: true },
+    channel: { type: String, enum: ['sms', 'email', 'whatsapp'], required: true },
     subject: String,
     body: { type: String, required: true, maxlength: 10000 },
     html: String,
@@ -29,7 +29,7 @@ export const NotificationTemplate = model('NotificationTemplate', templateSchema
 const notificationJobSchema = new Schema(
   {
     tenantId: tenantRef,
-    channel: { type: String, enum: ['sms', 'email'], required: true },
+    channel: { type: String, enum: ['sms', 'email', 'whatsapp'], required: true },
     event: { type: String, required: true },
     to: { type: String, required: true },
     subject: String,

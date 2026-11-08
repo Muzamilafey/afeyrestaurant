@@ -9,6 +9,9 @@ import { badRequest, conflict, forbidden, notFound, AppError } from '../../lib/e
 import { revokeAllForUser } from '../../auth/tokens';
 import { randomToken } from '../../lib/crypto';
 
+/** Our own uploaded files only. */
+const zUpload = z.string().max(300).regex(/^\/uploads\/[\w-]+\/[\w-]+\.(png|jpg|webp)$/);
+
 const m = createModule('/admin', 'Administration');
 
 // ── Business profile & settings ──
@@ -18,11 +21,11 @@ m.route(
     method: 'patch', path: '/tenant', summary: 'Update business name, logo, branding and settings', auth: 'tenant', permission: P.SETTINGS_MANAGE,
     body: z.object({
       name: z.string().min(2).max(120).optional(), contactEmail: z.email().optional(), contactPhone: z.string().optional(), kraPin: z.string().max(20).optional(),
-      branding: z.object({ logoUrl: z.string().max(500).regex(/^(\/uploads\/|https:\/\/)/, 'Upload the logo or use an https URL').or(z.literal('')).optional(), primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), receiptHeader: z.string().max(300).optional(), receiptFooter: z.string().max(300).optional() }).optional(),
+      branding: z.object({ logoUrl: z.string().max(500).regex(/^(\/uploads\/|https:\/\/)/, 'Upload the logo or use an https URL').or(z.literal('')).optional(), primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), receiptHeader: z.string().max(300).optional(), receiptFooter: z.string().max(300).optional(), appIcons: z.object({ icon192: zUpload, icon512: zUpload, maskable512: zUpload, source: z.string().max(500) }).nullable().optional() }).optional(),
       settings: z.object({
         timezone: z.string().optional(), discountApprovalThresholdBps: z.number().int().min(0).max(10000).optional(), loyaltyPointsPer100: z.number().min(0).max(100).optional(),
         loyaltyRedeemValue: z.number().int().min(0).optional(), costingPolicy: z.enum(['fifo', 'weighted_average']).optional(), allowNegativeStock: z.boolean().optional(),
-        mpesaTimeoutSeconds: z.number().int().min(30).max(600).optional(), offlineAllowedActions: z.array(z.enum(['browse', 'create_order', 'cash_payment', 'print'])).optional(),
+        mpesaTimeoutSeconds: z.number().int().min(30).max(600).optional(), offlineAllowedActions: z.array(z.enum(['browse', 'create_order', 'cash_payment', 'card_payment', 'mpesa_payment', 'print'])).optional(),
         alertEmails: z.array(z.email()).max(5).optional(), alertPhones: z.array(z.string().max(20)).max(5).optional(), dailySummary: z.boolean().optional(), lowStockAlerts: z.boolean().optional(),
         barEnabled: z.boolean().optional(),
       }).optional(),
@@ -50,7 +53,7 @@ const zBranch = z.object({
   settings: z.object({
     serviceChargeBps: z.number().int().min(0).max(3000).optional(), serviceChargeModes: z.array(z.string()).optional(), receiptPrefix: z.string().max(6).optional(), orderPrefix: z.string().max(6).optional(),
     enabledModes: z.array(z.enum(['dine_in', 'takeaway', 'delivery', 'room_service', 'bar_counter', 'online'])).optional(), roomServiceEnabled: z.boolean().optional(), deliveryFee: z.number().int().min(0).optional(),
-    openingTime: z.string().optional(), closingTime: z.string().optional(), kitchenDelayMinutes: z.number().int().min(1).max(240).optional(), cashDrawerMode: z.enum(['per_user', 'shared']).optional(),
+    openingTime: z.string().optional(), closingTime: z.string().optional(), kitchenDelayMinutes: z.number().int().min(1).max(240).optional(), cashDrawerMode: z.enum(['per_user', 'shared']).optional(), qrOrdering: z.object({ enabled: z.boolean(), requireAccept: z.boolean(), payByMpesa: z.boolean() }).partial().optional(),
     happyHours: z.array(z.object({ days: z.array(z.number().int().min(0).max(6)), start: z.string().regex(/^\d{2}:\d{2}$/), end: z.string().regex(/^\d{2}:\d{2}$/), discountBps: z.number().int().min(0).max(10000).optional(), categoryIds: z.array(zId).optional() })).max(10).optional(),
   }).optional(),
 });

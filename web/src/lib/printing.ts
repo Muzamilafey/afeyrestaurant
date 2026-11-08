@@ -3,6 +3,8 @@
  * rendered here as a styled 80mm page. The local bridge prints the same receipt on ESC/POS printers when configured.
  */
 
+import QRCode from 'qrcode';
+
 export type ReceiptLine =
   | { k: 'logo'; url: string }
   | { k: 'title'; t: string }
@@ -11,11 +13,25 @@ export type ReceiptLine =
   | { k: 'rule'; heavy?: boolean }
   | { k: 'row'; l: string; r: string; bold?: boolean; big?: boolean; muted?: boolean }
   | { k: 'item'; qty: number; name: string; total: string; each?: string; mods: string[] }
-  | { k: 'space' };
+  | { k: 'space' }
+  | { k: 'qr'; data: string };
 export interface ReceiptDoc {
-  kind: 'receipt' | 'bill';
+  kind: 'receipt' | 'bill' | 'report';
   copy: 'original' | 'duplicate';
   lines: ReceiptLine[];
+}
+
+/** QR code as inline SVG (synchronous, so receipts render in one pass). */
+function qrSvg(data: string) {
+  try {
+    const q = QRCode.create(data, { errorCorrectionLevel: 'M' });
+    const n = q.modules.size;
+    let path = '';
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (q.modules.get(x, y)) path += `M${x + 2} ${y + 2}h1v1h-1z`;
+    return `<svg class="qr" viewBox="0 0 ${n + 4} ${n + 4}" shape-rendering="crispEdges" role="img" aria-label="QR code"><rect width="100%" height="100%" fill="#fff"/><path d="${path}" fill="#000"/></svg>`;
+  } catch {
+    return '';
+  }
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -39,6 +55,7 @@ export const RECEIPT_CSS = `
 .rcpt .item .qty{display:inline-block;min-width:22px;font-weight:700}
 .rcpt .item .sub{padding-left:22px;color:#555;font-size:11px}
 .rcpt .sp{height:6px}
+.rcpt .qr{display:block;width:34mm;height:34mm;margin:6px auto}
 `;
 
 /** Receipt body as HTML (escaped). */
@@ -62,6 +79,8 @@ export function receiptHtml(doc: ReceiptDoc) {
           return `<div class="item"><div class="row"><span><span class="qty">${l.qty}×</span>${esc(l.name)}</span><span>${esc(l.total)}</span></div>${l.each ? `<div class="sub">@ ${esc(l.each)} each</div>` : ''}${l.mods.map((m) => `<div class="sub">+ ${esc(m)}</div>`).join('')}</div>`;
         case 'space':
           return '<div class="sp"></div>';
+        case 'qr':
+          return qrSvg(l.data);
         default:
           return '';
       }
@@ -80,8 +99,11 @@ function openPrintWindow(body: string, title: string, css: string) {
 }
 
 /** Print a structured receipt or bill in the browser (80mm thermal paper or A4 — it centres itself). */
-export function printReceipt(doc: ReceiptDoc, title = doc.kind === 'bill' ? 'Bill' : 'Receipt') {
-  openPrintWindow(`<div class="rcpt" style="width:72mm;margin:0 auto;padding:2mm 0">${receiptHtml(doc)}</div>`, title, RECEIPT_CSS);
+export function printReceipt(doc: ReceiptDoc | ReceiptDoc[], title?: string) {
+  // Several slips (e.g. receipt + kitchen ticket) go out as one print job, each on its own page / cut.
+  const docs = Array.isArray(doc) ? doc : [doc];
+  const body = docs.map((d, i) => `<div class="rcpt" style="width:72mm;margin:0 auto;padding:2mm 0;${i < docs.length - 1 ? 'break-after:page;page-break-after:always' : ''}">${receiptHtml(d)}</div>`).join('');
+  openPrintWindow(body, title ?? (docs[0].kind === 'bill' ? 'Bill' : 'Receipt'), RECEIPT_CSS);
 }
 
 /** Browser fallback printing for plain text (kept for anything not yet structured). */

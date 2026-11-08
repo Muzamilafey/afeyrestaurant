@@ -6,6 +6,7 @@ import { download, get } from '@/lib/api';
 import { money, titleCase } from '@/lib/format';
 import { Button, Card, DataTable, Input, PageHeader, Pill, Select, Skeleton, Stat, Tabs, ErrorBox } from '@/components/ui';
 import { useAuth } from '@/auth/AuthContext';
+import { EndOfDay } from './EndOfDay';
 
 const PALETTE = ['#07963C', '#2B5FA8', '#F4B942', '#DC4545', '#7A5AF8', '#0EA5A4', '#9CA3AF'];
 const k = (c: number) => `${Math.round(c / 100).toLocaleString()}`;
@@ -30,28 +31,31 @@ function useRange() {
 
 export default function ReportsPage() {
   const { can, session } = useAuth();
-  const [tab, setTab] = useState<'sales' | 'inventory' | 'kitchen'>(can('reports.sales') ? 'sales' : 'inventory');
+  const [tab, setTab] = useState<'sales' | 'inventory' | 'kitchen' | 'eod'>(can('reports.sales') ? 'sales' : 'inventory');
   const r = useRange();
   const [branch, setBranch] = useState('');
-  const q = { ...r.query, branchId: branch || undefined };
+  const [outlet, setOutlet] = useState('');
+  const q = { ...r.query, branchId: branch || undefined, outlet: outlet || undefined };
   return (
     <div>
       <PageHeader title="Reports & analytics" subtitle="Server-side reports scoped to your branches" actions={
         <>
           <Select value={r.preset} onChange={(e) => r.setPreset(e.target.value)} className="w-36"><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="week">This week</option><option value="month">This month</option><option value="custom">Custom</option></Select>
           {r.preset === 'custom' && <><Input type="date" className="w-40" value={r.from} onChange={(e) => r.setFrom(e.target.value)} /><Input type="date" className="w-40" value={r.to} onChange={(e) => r.setTo(e.target.value)} /></>}
+          <Select value={outlet} onChange={(e) => setOutlet(e.target.value)} className="w-40" aria-label="Outlet"><option value="">Restaurant + bar</option><option value="restaurant">Restaurant POS</option><option value="bar">Bar POS</option></Select>
           {(session?.branches.length ?? 0) > 1 && <Select value={branch} onChange={(e) => setBranch(e.target.value)} className="w-44"><option value="">Active branch</option>{session?.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}<option value="all">All branches</option></Select>}
         </>
       } />
-      <Tabs tabs={[{ id: 'sales', label: 'Sales', hidden: !can('reports.sales') }, { id: 'inventory', label: 'Inventory & costs', hidden: !can('reports.inventory') }, { id: 'kitchen', label: 'Kitchen & tables', hidden: !can('reports.sales') }]} value={tab} onChange={setTab} />
+      <Tabs tabs={[{ id: 'sales', label: 'Sales', hidden: !can('reports.sales') }, { id: 'inventory', label: 'Inventory & costs', hidden: !can('reports.inventory') }, { id: 'kitchen', label: 'Kitchen & tables', hidden: !can('reports.sales') }, { id: 'eod', label: 'End of day', hidden: !can('reports.sales', 'cash.session_view_all') }]} value={tab} onChange={setTab} />
       {tab === 'sales' && <Sales q={q} />}
       {tab === 'inventory' && <Inventory q={q} />}
       {tab === 'kitchen' && <KitchenTables q={q} />}
+      {tab === 'eod' && <EndOfDay branchId={branch || undefined} />}
     </div>
   );
 }
 
-interface SalesResp { summary: { revenue: number; orders: number; averageOrderValue: number; discounts: number; serviceCharge: number; tax: number; refunded: number; netSales: number; voids: { count: number; value: number } }; trend: Array<{ _id: string; revenue: number; orders: number }>; hourly: Array<{ _id: number; revenue: number }>; payments: Array<{ _id: string; amount: number; count: number; manual: number }>; topItems: Array<{ name: string; qty: number; revenue: number; category?: string }>; categories: Array<{ category: string; revenue: number; qty: number }>; byCashier: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byWaiter: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byType: Array<{ _id: string; revenue: number; orders: number }>; refunds: Array<{ _id: string; amount: number; count: number }> }
+interface SalesResp { summary: { revenue: number; orders: number; averageOrderValue: number; discounts: number; serviceCharge: number; tax: number; refunded: number; netSales: number; voids: { count: number; value: number } }; trend: Array<{ _id: string; revenue: number; orders: number }>; hourly: Array<{ _id: number; revenue: number }>; payments: Array<{ _id: string; amount: number; count: number; manual: number }>; topItems: Array<{ name: string; qty: number; revenue: number; category?: string }>; categories: Array<{ category: string; revenue: number; qty: number }>; byCashier: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byWaiter: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byType: Array<{ _id: string; revenue: number; orders: number }>; byOutlet?: Array<{ outlet: string; revenue: number; orders: number }>; tips?: { total: number; byStaff: Array<{ userId: string; name: string; cash: number; mpesa: number; total: number; count: number }> }; refunds: Array<{ _id: string; amount: number; count: number }> }
 
 function Sales({ q }: { q: Record<string, string | undefined> }) {
   const { data, isLoading, error, refetch } = useQuery<SalesResp>({ queryKey: ['report-sales', q], queryFn: () => get('/reports/sales', q) });
@@ -82,6 +86,8 @@ function Sales({ q }: { q: Record<string, string | undefined> }) {
       <div className="grid gap-4 xl:grid-cols-3">
         <Card title="Best-selling items" className="xl:col-span-1"><DataTable rows={data.topItems} rowKey={(r) => r.name} columns={[{ key: 'n', header: 'Item', render: (r) => r.name }, { key: 'q', header: 'Qty', render: (r) => r.qty }, { key: 'r', header: 'Revenue', render: (r) => money(r.revenue) }]} /></Card>
         <Card title="By cashier"><DataTable rows={data.byCashier} rowKey={(r) => String(r._id)} columns={[{ key: 'n', header: 'Cashier', render: (r) => r.name ?? '—' }, { key: 'o', header: 'Orders', render: (r) => r.orders }, { key: 'r', header: 'Revenue', render: (r) => money(r.revenue) }]} /></Card>
+        <Card title={`Tips · ${money(data.tips?.total ?? 0)}`}><DataTable rows={data.tips?.byStaff ?? []} rowKey={(r) => r.userId} empty="No tips in this period" columns={[{ key: 'n', header: 'Staff', render: (r) => r.name }, { key: 'c', header: 'Cash', render: (r) => money(r.cash) }, { key: 'm', header: 'M-Pesa', render: (r) => money(r.mpesa) }, { key: 't', header: 'Total', render: (r) => <b>{money(r.total)}</b> }]} /></Card>
+        <Card title="By outlet"><DataTable rows={data.byOutlet ?? []} rowKey={(r) => r.outlet} columns={[{ key: 'n', header: 'Outlet', render: (r) => (r.outlet === 'bar' ? 'Bar POS' : 'Restaurant POS') }, { key: 'o', header: 'Orders', render: (r) => r.orders }, { key: 'r', header: 'Revenue', render: (r) => money(r.revenue) }]} /></Card>
         <Card title="By waiter"><DataTable rows={data.byWaiter} rowKey={(r) => String(r._id)} columns={[{ key: 'n', header: 'Waiter', render: (r) => r.name ?? '—' }, { key: 'o', header: 'Orders', render: (r) => r.orders }, { key: 'r', header: 'Revenue', render: (r) => money(r.revenue) }]} /></Card>
       </div>
     </div>

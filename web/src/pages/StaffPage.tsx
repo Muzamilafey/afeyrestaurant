@@ -7,9 +7,9 @@ import { Button, Card, DataTable, Field, Input, Modal, PageHeader, Pill, Select,
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
 
-interface Emp { _id: string; employeeNo: string; name: string; phone?: string; jobTitle?: string; deviceUserCode?: string; active: boolean; biometricConsent?: { given: boolean; at?: string } }
+interface Emp { _id: string; employeeNo: string; name: string; phone?: string; jobTitle?: string; deviceUserCode?: string; active: boolean; hourlyRate?: number; commissionBps?: number; userId?: string; biometricConsent?: { given: boolean; at?: string } }
 interface Device { _id: string; name: string; vendor: string; deviceType: string; model?: string; connection: string; host?: string; port?: number; status: string; verified: boolean; lastSeenAt?: string; lastSyncAt?: string; lastError?: string; bridgeId?: string }
-type TabId = 'attendance' | 'employees' | 'shifts' | 'devices' | 'events';
+type TabId = 'attendance' | 'payroll' | 'employees' | 'shifts' | 'devices' | 'events';
 
 export default function StaffPage() {
   const { can } = useAuth();
@@ -17,8 +17,9 @@ export default function StaffPage() {
   return (
     <div>
       <PageHeader title="Staff & attendance" subtitle="Employees, shifts, biometric devices and attendance reports" />
-      <Tabs<TabId> tabs={[{ id: 'attendance', label: 'Attendance report', hidden: !can('attendance.view') }, { id: 'events', label: 'Clock events', hidden: !can('attendance.view') }, { id: 'employees', label: 'Employees' }, { id: 'shifts', label: 'Shifts' }, { id: 'devices', label: 'Devices', hidden: !can('devices.manage') }]} value={tab} onChange={setTab} />
+      <Tabs<TabId> tabs={[{ id: 'attendance', label: 'Attendance report', hidden: !can('attendance.view') }, { id: 'payroll', label: 'Payroll & commissions', hidden: !can('reports.staff', 'staff.manage') }, { id: 'events', label: 'Clock events', hidden: !can('attendance.view') }, { id: 'employees', label: 'Employees' }, { id: 'shifts', label: 'Shifts' }, { id: 'devices', label: 'Devices', hidden: !can('devices.manage') }]} value={tab} onChange={setTab} />
       {tab === 'attendance' && <Report />}
+      {tab === 'payroll' && <Payroll />}
       {tab === 'events' && <Events />}
       {tab === 'employees' && <Employees />}
       {tab === 'shifts' && <Shifts />}
@@ -89,6 +90,7 @@ function Employees() {
   const { data, isLoading } = useQuery<Emp[]>({ queryKey: ['employees'], queryFn: () => get('/staff/employees') });
   const devices = useQuery<Device[]>({ queryKey: ['devices'], queryFn: () => get('/staff/devices'), enabled: can('biometric.enroll') });
   const [form, setForm] = useState<null | Partial<Emp>>(null);
+  const users = useQuery<Array<{ id: string; name: string; email: string }>>({ queryKey: ['users-min'], queryFn: () => get('/admin/users'), enabled: !!form });
   const consent = async (e: Emp, given: boolean) => {
     const c = await confirm({ title: given ? 'Record biometric consent' : 'Withdraw consent', message: given ? <>Confirm that <b>{e.name}</b> has read the biometric privacy notice and gave informed, voluntary consent. They may instead use PIN/manual attendance.</> : 'Withdrawing consent queues deletion of their fingerprint templates from devices.', confirmLabel: given ? 'Consent given' : 'Withdraw' });
     if (c.ok) post(`/staff/employees/${e._id}/biometric-consent`, { given }).then(() => { qc.invalidateQueries({ queryKey: ['employees'] }); toast('Recorded'); }).catch(handleError);
@@ -111,13 +113,16 @@ function Employees() {
         </div> },
       ]} />
       {form && (
-        <Modal open onClose={() => setForm(null)} title={form._id ? 'Edit employee' : 'New employee'} footer={<Button onClick={() => (form._id ? patch(`/staff/employees/${form._id}`, { name: form.name, phone: form.phone, jobTitle: form.jobTitle, deviceUserCode: form.deviceUserCode || undefined }) : post('/staff/employees', { employeeNo: form.employeeNo, name: form.name, phone: form.phone || undefined, jobTitle: form.jobTitle, deviceUserCode: form.deviceUserCode || undefined })).then(() => { qc.invalidateQueries({ queryKey: ['employees'] }); setForm(null); }).catch(handleError)}>Save</Button>}>
+        <Modal open onClose={() => setForm(null)} title={form._id ? 'Edit employee' : 'New employee'} footer={<Button onClick={() => (form._id ? patch(`/staff/employees/${form._id}`, { name: form.name, phone: form.phone, jobTitle: form.jobTitle, deviceUserCode: form.deviceUserCode || undefined, hourlyRate: form.hourlyRate ?? 0, commissionBps: form.commissionBps ?? 0, userId: form.userId || undefined }) : post('/staff/employees', { employeeNo: form.employeeNo, name: form.name, phone: form.phone || undefined, jobTitle: form.jobTitle, deviceUserCode: form.deviceUserCode || undefined, hourlyRate: form.hourlyRate ?? 0, commissionBps: form.commissionBps ?? 0, userId: form.userId || undefined })).then(() => { qc.invalidateQueries({ queryKey: ['employees'] }); setForm(null); }).catch(handleError)}>Save</Button>}>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Employee no."><Input disabled={!!form._id} value={form.employeeNo ?? ''} onChange={(e) => setForm({ ...form, employeeNo: e.target.value })} /></Field>
             <Field label="Name"><Input value={form.name ?? ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
             <Field label="Phone"><Input value={form.phone ?? ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
             <Field label="Job title"><Input value={form.jobTitle ?? ''} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} /></Field>
             <Field label="Device user code" hint="The numeric ID used on attendance terminals"><Input inputMode="numeric" value={form.deviceUserCode ?? ''} onChange={(e) => setForm({ ...form, deviceUserCode: e.target.value.replace(/\D/g, '') })} /></Field>
+            <Field label="POS user" hint="Links sales and tips to this employee for commission"><Select value={form.userId ?? ''} onChange={(e) => setForm({ ...form, userId: e.target.value || undefined })}><option value="">Not linked</option>{users.data?.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}</Select></Field>
+            <Field label="Hourly rate (KSh)"><Input inputMode="decimal" value={form.hourlyRate ? String(form.hourlyRate / 100) : ''} onChange={(e) => setForm({ ...form, hourlyRate: Math.round(Number(e.target.value.replace(/[^\d.]/g, '') || 0) * 100) })} placeholder="0" /></Field>
+            <Field label="Commission on net sales (%)" hint="Of the orders they serve, excluding tax and service charge"><Input inputMode="decimal" value={form.commissionBps ? String(form.commissionBps / 100) : ''} onChange={(e) => setForm({ ...form, commissionBps: Math.round(Number(e.target.value.replace(/[^\d.]/g, '') || 0) * 100) })} placeholder="0" /></Field>
           </div>
         </Modal>
       )}
@@ -176,6 +181,39 @@ function Devices() {
           </div>
         </Modal>
       )}
+    </Card>
+  );
+}
+
+interface PayRow { employeeId: string | null; employeeNo: string; name: string; jobTitle: string; linked: boolean; days: number; hours: number; overtimeHours: number; basicPay: number; overtimePay: number; orders: number; netSales: number; commissionPct: number; commission: number; tips: number; tipsCash: number; tipsMpesa: number; grossPay: number; totalWithTips: number }
+
+/** Pay for a period: hours (regular + overtime), commission on sales served, tips. Export CSV for payroll. */
+function Payroll() {
+  const first = new Date();
+  first.setDate(1);
+  const [from, setFrom] = useState(first.toLocaleDateString('en-CA'));
+  const [to, setTo] = useState(new Date().toLocaleDateString('en-CA'));
+  const [ot, setOt] = useState('1.5');
+  const q = { from: new Date(`${from}T00:00:00`).toISOString(), to: new Date(`${to}T23:59:59`).toISOString(), overtimeMultiplier: ot };
+  const { data, isLoading } = useQuery<{ rows: PayRow[]; totals: Record<string, number> }>({ queryKey: ['payroll', q], queryFn: () => get('/staff/payroll', q) });
+  const kes = (c: number) => `KSh ${(c / 100).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return (
+    <Card title="Payroll & commissions" actions={<div className="flex flex-wrap items-center gap-2">
+      <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" aria-label="From" />
+      <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" aria-label="To" />
+      <label className="flex items-center gap-1 text-xs text-ink-soft">Overtime ×<Input inputMode="decimal" className="w-16" value={ot} onChange={(e) => setOt(e.target.value)} /></label>
+      <Button size="sm" variant="secondary" icon={<Download className="h-4 w-4" />} onClick={() => download('/staff/payroll', { ...q, format: 'csv' }, `payroll-${from}.csv`)}>CSV</Button>
+    </div>}>
+      <DataTable rows={data?.rows} loading={isLoading} rowKey={(r) => r.employeeId ?? r.name} empty="No employees" columns={[
+        { key: 'n', header: 'Employee', render: (r) => <div><p className="font-semibold">{r.name}</p><p className="text-xs text-ink-soft">{r.employeeNo} {r.jobTitle}{!r.linked && r.orders ? ' · not linked to a POS user' : ''}{!r.employeeId ? ' · no employee record' : ''}</p></div> },
+        { key: 'h', header: 'Hours', render: (r) => <span className="tabular-nums">{r.hours}{r.overtimeHours ? <span className="text-xs text-ink-soft"> (+{r.overtimeHours} OT)</span> : null}</span> },
+        { key: 'b', header: 'Basic + OT', render: (r) => <span className="tabular-nums">{kes(r.basicPay + r.overtimePay)}</span> },
+        { key: 's', header: 'Sales served', render: (r) => <span className="tabular-nums">{kes(r.netSales)} <span className="text-xs text-ink-soft">({r.orders})</span></span> },
+        { key: 'c', header: 'Commission', render: (r) => <span className="tabular-nums">{kes(r.commission)}{r.commissionPct ? <span className="text-xs text-ink-soft"> @{r.commissionPct}%</span> : null}</span> },
+        { key: 'g', header: 'Gross pay', render: (r) => <b className="tabular-nums">{kes(r.grossPay)}</b> },
+        { key: 't', header: 'Tips', render: (r) => <span className="tabular-nums" title={`Cash ${kes(r.tipsCash)} · M-Pesa ${kes(r.tipsMpesa)}`}>{kes(r.tips)}</span> },
+      ]} />
+      {data && <p className="mt-3 text-sm">Total gross pay <b>{kes(data.totals.grossPay)}</b> · commission {kes(data.totals.commission)} · tips {kes(data.totals.tips)}. <span className="text-ink-soft">Statutory deductions (PAYE, NSSF, SHIF, housing levy) are done in your payroll system.</span></p>}
     </Card>
   );
 }

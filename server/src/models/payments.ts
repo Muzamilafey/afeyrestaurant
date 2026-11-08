@@ -37,6 +37,18 @@ const paymentAttemptSchema = new Schema(
     paymentId: Schema.Types.ObjectId,
     initiatedBy: Schema.Types.ObjectId,
     error: String,
+    /** Registered M-Pesa name of the payer, from Safaricom's Transaction Status API (DebitPartyName). */
+    payerName: String,
+    /** Part of `amount` that is a tip (the prompt asks for bill + tip in one go). */
+    tip: { ...money },
+    /** The name lookup: requested -> received | failed | unavailable (not configured / not reachable). */
+    nameLookup: {
+      status: { type: String, enum: ['requested', 'received', 'failed', 'unavailable'] },
+      tokenHash: String,
+      requestedAt: Date,
+      receivedAt: Date,
+      error: String,
+    },
   },
   schemaOpts,
 );
@@ -62,10 +74,17 @@ const paymentSchema = new Schema(
     change: { ...money },
     reference: String, // M-Pesa receipt, card approval code, etc.
     phone: String,
+    /** M-Pesa: the payer's registered name (Transaction Status API or the C2B confirmation). */
+    payerName: String,
+    /** Tip given with this payment — not part of the sale (not in `amount`), credited to the waiter. */
+    tip: { ...money },
+    tipFor: { userId: Schema.Types.ObjectId, name: String },
     customerId: Schema.Types.ObjectId,
     status: { type: String, enum: ['confirmed', 'provisional'], default: 'confirmed' },
-    /** confirmed_by_provider | manual | offline_cash */
-    verification: { type: String, enum: ['provider', 'manual', 'cash', 'offline_cash'], required: true },
+    /** provider | manual | cash | offline_cash | offline_mpesa (code typed in while offline, confirmed against C2B) */
+    verification: { type: String, enum: ['provider', 'stk_query', 'manual', 'cash', 'offline_cash', 'offline_mpesa'], required: true },
+    /** An offline M-Pesa code that was already used on another sale (kept for review instead of losing the sale). */
+    claimedReference: String,
     manualConfirmation: { by: Schema.Types.ObjectId, reason: String },
     refundedAmount: { ...money },
     receivedBy: Schema.Types.ObjectId,
@@ -95,6 +114,8 @@ const refundSchema = new Schema(
     approvedBy: Schema.Types.ObjectId,
     restock: { type: Boolean, default: false },
     idempotencyKey: { type: String, required: true },
+    /** Set when the refund was reported to KRA eTIMS as a credit note (or found not to need one). */
+    fiscalQueuedAt: Date,
   },
   schemaOpts,
 );
@@ -118,7 +139,7 @@ const cashSessionSchema = new Schema(
     expectedCash: Number,
     variance: Number,
     denominations: [{ value: Number, count: Number }],
-    totals: { cashSales: Number, cashRefunds: Number, drops: Number, expenses: Number, payIns: Number, mpesa: Number, card: Number, other: Number },
+    totals: { cashSales: Number, cashRefunds: Number, drops: Number, expenses: Number, payIns: Number, mpesa: Number, card: Number, other: Number, cashTips: Number, tips: Number },
     closingNotes: String,
     closedBy: Schema.Types.ObjectId,
   },
@@ -177,6 +198,8 @@ const c2bSchema = new Schema(
     billRef: String,
     msisdn: String, // may be hashed by Safaricom on newer API versions
     firstName: String,
+    /** First, middle and last name from the C2B confirmation. */
+    payerName: String,
     transTime: String,
     status: { type: String, enum: ['unmatched', 'matched', 'ignored'], default: 'unmatched', index: true },
     matchedOrderId: Schema.Types.ObjectId,
@@ -188,3 +211,21 @@ const c2bSchema = new Schema(
 );
 c2bSchema.index({ tenantId: 1, transId: 1 }, { unique: true });
 export const MpesaC2BTransaction = model('MpesaC2BTransaction', c2bSchema);
+
+/** A closed business day (end-of-day / Z report): the figures as they were when the day was closed. */
+const dayCloseSchema = new Schema(
+  {
+    tenantId: tenantRef,
+    /** null = all branches together */
+    branchId: { type: Schema.Types.ObjectId, ref: 'Branch', default: null },
+    date: { type: String, required: true }, // YYYY-MM-DD in the business time zone
+    closedBy: Schema.Types.ObjectId,
+    closedByName: String,
+    closedAt: { type: Date, default: Date.now },
+    timesClosed: { type: Number, default: 1 },
+    snapshot: Schema.Types.Mixed,
+  },
+  schemaOpts,
+);
+dayCloseSchema.index({ tenantId: 1, branchId: 1, date: 1 }, { unique: true });
+export const DayClose = model('DayClose', dayCloseSchema);

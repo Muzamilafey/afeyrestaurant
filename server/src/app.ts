@@ -21,13 +21,18 @@ import orders from './modules/orders/routes';
 import kitchen from './modules/kitchen/routes';
 import inventory from './modules/inventory/routes';
 import cash from './modules/cash/routes';
-import mpesa from './modules/mpesa/routes';
+import mpesa, { callbacks as paymentCallbacks } from './modules/mpesa/routes';
 import integrations from './modules/integrations/routes';
 import staff, { bridgeModule } from './modules/attendance/routes';
 import crm, { publicModule } from './modules/customers/routes';
 import reports from './modules/reports/routes';
 import dashboard from './modules/reports/dashboard';
+import dayClose from './modules/reports/dayclose';
 import sync from './modules/sync/routes';
+import live, { liveCopyGuard } from './modules/live/routes';
+import display from './modules/display/routes';
+import qr from './modules/qr/routes';
+import etims from './modules/etims/routes';
 import { AppError } from './lib/errors';
 
 export function createApp() {
@@ -53,9 +58,10 @@ export function createApp() {
   app.use(sanitizeInput);
   app.use('/api', rateLimit({ windowMs: 60_000, limit: isTest ? 100000 : 600, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: { code: 'RATE_LIMITED', message: 'Too many requests' } } }));
 
+  app.use(liveCopyGuard);
   app.use('/api/v1', healthRouter);
   app.use('/api/v1', manifestRouter);
-  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, integrations, staff, bridgeModule, crm, publicModule, reports, dashboard, sync]) {
+  for (const mod of [setup, auth, admin, menu, tables, orders, kitchen, inventory, cash, mpesa, paymentCallbacks, integrations, staff, bridgeModule, crm, publicModule, reports, dashboard, dayClose, sync, live, display, qr, etims]) {
     app.use(`/api/v1${mod.basePath}`, mod.router);
   }
   const spec = buildOpenApi();

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Banknote, Smartphone, CreditCard, UserRound, KeyRound, CheckCircle2, Loader2, Printer, MessageSquare, Mail, XCircle, FlaskConical } from 'lucide-react';
+import { Banknote, Smartphone, CheckCircle2, MessageCircle, Loader2, Printer, MessageSquare, Mail, XCircle, FlaskConical } from 'lucide-react';
 import { Button, Field, Input, Modal, Pill, Select, cx } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { api, get, post } from '@/lib/api';
@@ -10,6 +10,7 @@ import { ReceiptPaper } from '@/components/ReceiptPaper';
 import { pickReceiptPrinter } from '@/lib/till';
 import { useAuth } from '@/auth/AuthContext';
 import type { Order } from './types';
+import { publishDisplay } from '@/lib/customerDisplay';
 
 type Method = 'cash' | 'mpesa' | 'card' | 'account' | 'mpesa_manual';
 interface Attempt { _id: string; status: string; resultDesc?: string; mpesaReceipt?: string; provider: string; error?: string }
@@ -24,7 +25,6 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
   const [tendered, setTendered] = useState('');
   const [reference, setReference] = useState('');
   const [phone, setPhone] = useState(order.customerPhone ? `0${order.customerPhone.slice(3)}` : '');
-  const [reason, setReason] = useState('');
   const [customerId, setCustomerId] = useState(order.customerId ?? '');
   const [busy, setBusy] = useState(false);
   const [attemptId, setAttemptId] = useState<string | null>(null);
@@ -33,13 +33,16 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
 
   useEffect(() => setAmount(fromCents(balance)), [balance]);
   const cents = toCents(amount || 0);
-  const tenderedCents = tendered ? toCents(tendered) : cents;
+  // Tip on top of the bill (cash and M-Pesa). Kept out of sales and credited to the order's waiter.
+  const [tipText, setTipText] = useState('');
+  const tipCents = method === 'cash' || method === 'mpesa' || method === 'mpesa_manual' ? toCents(tipText || 0) : 0;
+  const tenderedCents = tendered ? toCents(tendered) : cents + tipCents;
 
   const { data: attempt } = useQuery<Attempt>({
     queryKey: ['attempt', attemptId],
     queryFn: () => get(`/orders/${order._id}/mpesa/${attemptId}`),
     enabled: !!attemptId,
-    refetchInterval: (q) => (['pending', 'initiated'].includes(q.state.data?.status ?? 'pending') ? 3000 : false),
+    refetchInterval: (q) => (['pending', 'initiated'].includes(q.state.data?.status ?? 'pending') ? 2000 : false),
   });
   const { data: customers } = useQuery<Array<{ _id: string; name: string; phone?: string; credit?: { approved: boolean; limit: number; balance: number } }>>({ queryKey: ['credit-customers'], queryFn: () => get('/crm/customers'), enabled: method === 'account' });
 
@@ -68,15 +71,15 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
     setBusy(true);
     try {
       if (method === 'mpesa') {
-        const a = await post<Attempt>(`/orders/${order._id}/mpesa`, { phone, amount: Math.round(cents / 100) * 100, idempotencyKey: idemKey });
+        const a = await post<Attempt>(`/orders/${order._id}/mpesa`, { phone, amount: Math.round(cents / 100) * 100, tip: Math.round(tipCents / 100) * 100 || undefined, idempotencyKey: idemKey });
         setAttemptId(a._id);
         setIdemKey(uuid());
         return;
       }
       const body: Record<string, unknown> = { method, amount: cents, idempotencyKey: idemKey };
       if (method === 'cash') body.tendered = tenderedCents;
-      if (method === 'card' || method === 'mpesa_manual') body.reference = reference.trim();
-      if (method === 'mpesa_manual') body.reason = reason;
+      if (tipCents > 0) body.tip = tipCents;
+      if (method === 'card') body.reference = reference.trim();
       if (method === 'account') body.customerId = customerId;
       const r = await withApproval((approval) => post<{ order: Order; payment: { change: number } }>(`/orders/${order._id}/payments`, { ...body, approval }));
       setIdemKey(uuid());
@@ -93,14 +96,23 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
     }
   }
 
+  // Customer-facing display: amount to pay, the M-Pesa prompt, then "thank you".
+  useEffect(() => {
+    const o = paidOrder ?? order;
+    const live = o.items.filter((i) => !i.voided);
+    const lines = live.filter((i) => !i.parentLineId).map((i) => ({ name: i.name, qty: i.qty, total: i.lineTotal, parts: live.filter((x) => x.parentLineId === i.lineId).map((x) => x.name) }));
+    const base = { orderNumber: o.number, lines, subtotal: o.totals.subtotal, total: o.totals.total, paid: o.totals.paid, balance: o.totals.total - o.totals.paid };
+    if (paidOrder) publishDisplay({ ...base, stage: 'paid', tip: paidOrder.totals.tips || undefined, receiptNumber: paidOrder.receiptNumber });
+    else if (method === 'mpesa' && attempt && ['pending', 'initiated'].includes(attempt.status)) publishDisplay({ ...base, stage: 'mpesa', tip: tipCents || undefined, message: `Enter your M-Pesa PIN on ${phone.replace(/^(\d{4})\d+(\d{3})$/, '$1 *** $2')} to pay ${money(Math.round((cents + tipCents) / 100) * 100)}` });
+    else publishDisplay({ ...base, stage: 'pay', tip: tipCents || undefined, message: method === 'mpesa_manual' ? 'Pay to our Till / Paybill by M-Pesa' : method === 'cash' ? 'Paying by cash' : undefined });
+  }, [paidOrder, order, method, attempt?.status, tipCents, cents, phone]);
+
   if (paidOrder) return <ReceiptPanel order={paidOrder} onClose={onClose} />;
 
   const methods: Array<{ id: Method; label: string; icon: typeof Banknote; show: boolean }> = [
     { id: 'cash', label: 'Cash', icon: Banknote, show: true },
     { id: 'mpesa', label: 'M-Pesa', icon: Smartphone, show: true },
-    { id: 'card', label: 'Card / QR', icon: CreditCard, show: true },
-    { id: 'account', label: 'Credit account', icon: UserRound, show: true },
-    { id: 'mpesa_manual', label: 'M-Pesa code', icon: KeyRound, show: true },
+    { id: 'mpesa_manual', label: 'Manual M-Pesa', icon: CheckCircle2, show: true },
   ];
   const waiting = attempt && ['pending', 'initiated'].includes(attempt.status);
 
@@ -132,7 +144,7 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
                 <Input inputMode="decimal" value={tendered} placeholder={amount} onChange={(e) => setTendered(e.target.value.replace(/[^\d.]/g, ''))} className="h-12 text-lg" />
               </Field>
               <div className="flex flex-wrap gap-2">{quick.map((q) => <button key={q} onClick={() => setTendered(String(q))} className="rounded-xl border border-line px-3 py-2 text-sm font-semibold hover:bg-page">{q.toLocaleString()}</button>)}</div>
-              {tenderedCents > cents && <p className="rounded-xl bg-page px-3 py-2 text-sm">Change: <b>{money(tenderedCents - cents)}</b></p>}
+              {tenderedCents > cents + tipCents && <p className="rounded-xl bg-page px-3 py-2 text-sm">Change: <b>{money(tenderedCents - cents - tipCents)}</b></p>}
             </>
           )}
           {method === 'mpesa' && (
@@ -169,14 +181,24 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
             </Field>
           )}
           {method === 'mpesa_manual' && (
-            <>
-              <p className="rounded-xl bg-warn-pale px-3 py-2 text-xs text-warn-ink">Use only when a payment was made outside the STK prompt and verified on the M-Pesa statement. Requires manager approval and is audited.</p>
-              <Field label="M-Pesa transaction code"><Input value={reference} onChange={(e) => setReference(e.target.value.toUpperCase())} maxLength={10} /></Field>
-              <Field label="Reason"><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
-            </>
+            <p className="rounded-xl bg-brand-pale px-3 py-2 text-sm text-brand-dark">The customer paid to your Till / Paybill number and you have seen the M-Pesa message. Completing the sale records it as M-Pesa under your name.</p>
           )}
-          <Button size="lg" className="w-full" loading={busy} disabled={cents <= 0 || cents > balance || !!waiting || (method === 'cash' && tenderedCents < cents) || (method === 'card' && !reference) || (method === 'account' && !customerId) || (method === 'mpesa_manual' && (reference.length !== 10 || reason.length < 3))} onClick={pay}>
-            {method === 'mpesa' ? (attempt && !waiting ? 'Send prompt again' : 'Send M-Pesa prompt') : `Charge ${money(cents)}`}
+          {(method === 'cash' || method === 'mpesa' || method === 'mpesa_manual') && (
+            <div>
+              <p className="label mb-1.5">Tip (optional)</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {[0, 5, 10].map((pct) => {
+                  const v = pct ? Math.round((cents * pct) / 100 / 100) * 100 : 0;
+                  const on = pct ? tipCents === v && v > 0 : !tipCents;
+                  return <button key={pct} type="button" onClick={() => setTipText(v ? String(v / 100) : '')} className={cx('rounded-xl border-2 px-3 py-1.5 text-sm font-semibold', on ? 'border-brand bg-brand-50 text-brand-dark' : 'border-line hover:bg-page')}>{pct ? `${pct}% · ${money(v)}` : 'No tip'}</button>;
+                })}
+                <Input inputMode="decimal" value={tipText} onChange={(e) => setTipText(e.target.value.replace(/[^\d.]/g, ''))} placeholder="Other" className="w-24" aria-label="Tip amount" />
+              </div>
+              {tipCents > 0 && <p className="mt-1 text-xs text-ink-soft">Customer pays <b>{money(cents + tipCents)}</b> · tip {money(tipCents)} goes to {order.waiterName ?? 'the waiter'}</p>}
+            </div>
+          )}
+          <Button size="lg" className="w-full" loading={busy} disabled={cents <= 0 || cents > balance || !!waiting || (method === 'cash' && tenderedCents < cents + tipCents) || (method === 'card' && !reference) || (method === 'account' && !customerId)} onClick={pay}>
+            {method === 'mpesa' ? (attempt && !waiting ? 'Send prompt again' : 'Send M-Pesa prompt') : method === 'mpesa_manual' ? `Complete sale · ${money(cents + tipCents)}` : `Charge ${money(cents + tipCents)}`}
           </Button>
         </div>
       </div>
@@ -188,7 +210,19 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
   const { toast, handleError, confirm } = useFeedback();
   const { can } = useAuth();
   const [to, setTo] = useState(order.customerPhone ? `0${order.customerPhone.slice(3)}` : '');
-  const { data, refetch } = useQuery<{ text: string; doc: ReceiptDoc; printCount: number }>({ queryKey: ['receipt', order._id], queryFn: () => get(`/orders/${order._id}/receipt`) });
+  // The M-Pesa payer's registered name comes from Safaricom a few seconds after the payment: keep checking for a while.
+  const [openedAt] = useState(() => Date.now());
+  const { data, refetch } = useQuery<{ text: string; doc: ReceiptDoc; printCount: number }>({
+    queryKey: ['receipt', order._id],
+    queryFn: () => get(`/orders/${order._id}/receipt`),
+    refetchInterval: (q) => {
+      const lines = q.state.data?.doc.lines ?? [];
+      const mpesa = lines.some((l) => l.k === 'row' && /^M-Pesa/.test(l.l));
+      const named = lines.some((l) => l.k === 'row' && /^\s*Paid by /.test(l.l));
+      return mpesa && !named && Date.now() - openedAt < 45_000 ? 2500 : false;
+    },
+  });
+  const payerName = data?.doc.lines.map((l) => (l.k === 'row' ? /^\s*Paid by (.+)$/.exec(l.l)?.[1] : undefined)).find(Boolean);
   async function print() {
     try {
       let reason: string | undefined;
@@ -217,10 +251,10 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
       handleError(e);
     }
   }
-  async function send(channel: 'sms' | 'email') {
+  async function send(channel: 'sms' | 'email' | 'whatsapp') {
     try {
       const job = await post<{ status: string; lastError?: string }>(`/orders/${order._id}/receipt/send`, { channel, to });
-      toast(job.status === 'skipped' ? `Not sent: ${job.lastError}` : `Receipt queued for ${channel.toUpperCase()}`, job.status === 'skipped' ? 'error' : 'success');
+      toast(job.status === 'skipped' ? `Not sent: ${job.lastError}` : `Receipt queued for ${channel === 'whatsapp' ? 'WhatsApp' : channel.toUpperCase()}`, job.status === 'skipped' ? 'error' : 'success');
     } catch (e) {
       handleError(e);
     }
@@ -233,6 +267,7 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
           <div>
             <p className="font-bold">{money(order.totals.total)} received</p>
             <p className="text-sm">Receipt {order.receiptNumber}{order.source === 'offline' ? ' · pending cloud verification' : ''}</p>
+            {payerName && <p className="mt-0.5 text-sm font-semibold">Paid by {payerName}</p>}
           </div>
         </div>
         <ReceiptPaper doc={data?.doc} animate />
@@ -244,6 +279,7 @@ export function ReceiptPanel({ order, onClose }: { order: Order; onClose: () => 
         <div className="flex gap-2">
           <Input placeholder="Phone or email" value={to} onChange={(e) => setTo(e.target.value)} />
           <Button variant="secondary" icon={<MessageSquare className="h-4 w-4" />} onClick={() => send('sms')} disabled={!to || to.includes('@')}>SMS</Button>
+          <Button variant="secondary" icon={<MessageCircle className="h-4 w-4" />} onClick={() => send('whatsapp')} disabled={!to || to.includes('@')}>WhatsApp</Button>
           <Button variant="secondary" icon={<Mail className="h-4 w-4" />} onClick={() => send('email')} disabled={!to.includes('@')}>Email</Button>
         </div>
       </div>

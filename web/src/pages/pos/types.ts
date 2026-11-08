@@ -8,15 +8,15 @@ export interface Product {
 }
 export interface Catalog { categories: Category[]; products: Product[]; modifierGroups: ModifierGroup[]; taxes: unknown[]; serverTime: string }
 export interface OrderLine {
-  lineId: string; productId: string; name: string; station: string; qty: number; unitPrice: number; lineTotal: number; discount: number;
+  lineId: string; productId: string; name: string; station: string; qty: number; unitPrice: number; lineTotal: number; discount: number; parentLineId?: string; isCombo?: boolean;
   modifiers: Array<{ groupName?: string; name: string; priceDelta: number }>; notes?: string; status: string; voided: boolean; complimentary?: boolean; variant?: string; ageRestricted?: boolean;
 }
 export interface Order {
-  _id: string; number: string; clientId: string; type: string; status: string; paymentStatus: string; tableId?: string; tableNumber?: string; guests: number; waiterName?: string;
-  customerId?: string; customerName?: string; customerPhone?: string; items: OrderLine[]; notes?: string; receiptNumber?: string; source?: string;
+  _id: string; number: string; clientId: string; type: string; outlet?: 'restaurant' | 'bar'; status: string; paymentStatus: string; tableId?: string; tableNumber?: string; guests: number; waiterName?: string;
+  customerId?: string; customerName?: string; customerPhone?: string; items: OrderLine[]; notes?: string; receiptNumber?: string; source?: string; qrPending?: boolean;
   discount?: { type: string; value: number; amount: number; reason?: string };
-  totals: { subtotal: number; discount: number; serviceCharge: number; taxInclusive: number; taxExclusive: number; deliveryFee: number; total: number; paid: number; refunded: number; balance: number };
+  totals: { subtotal: number; discount: number; serviceCharge: number; taxInclusive: number; taxExclusive: number; deliveryFee: number; total: number; paid: number; refunded: number; balance: number; tips?: number };
   taxBreakdown?: Array<{ code: string; rateBps: number; inclusive: boolean; amount: number }>;
-  delivery?: { address?: string; status?: string; trackingCode?: string };
+  delivery?: { address?: string; status?: string; trackingCode?: string; riderId?: string; riderName?: string; deliveredAt?: string; deliveredBy?: string };
 }
 export interface DraftLine { lineId: string; productId: string; name: string; qty: number; unitPrice: number; variant?: string; modifiers: Array<{ groupId: string; optionId: string; name: string; priceDelta: number }>; notes?: string; ageCheckConfirmed?: boolean; station: string }

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { Types, ClientSession } from 'mongoose';
 import { Order, type OrderDoc, Payment, PaymentAttempt, Refund, Customer, LoyaltyAccount, LoyaltyTransaction, Tenant, Branch, Receipt, KitchenTicket, User } from '../models';
 import type { BranchContext } from '../http/context';
@@ -14,13 +14,14 @@ import { broadcastOrder, releaseTableIfFree } from './orders';
 import { emitBranch, emitStation } from '../realtime/bus';
 import { resolveApproval, type ApprovalInput } from './approval';
 import { getMpesa } from '../integrations/factory';
-import { parseStkCallback, STK_RESULT_CODES, type StkCallbackParsed } from '../integrations/mpesa/daraja';
+import { parseStatusResult, parseStkCallback, STK_RESULT_CODES, type StkCallbackParsed } from '../integrations/mpesa/daraja';
 import { ProviderError } from '../integrations/http';
 import { normalizeKePhone } from '../lib/phone';
-import { randomToken, sha256 } from '../lib/crypto';
+import { sha256 } from '../lib/crypto';
 import { env } from '../config/env';
 import { recordIntegrationResult } from './integrations';
 import { receiptDoc, docToText, type ReceiptData } from './receipt';
+import { kickEtims, receiptFiscal } from './etims';
 import { findOpenDrawer, noDrawerMessage } from './cash';
 import { logger } from '../lib/logger';
 import { toMajor } from '../lib/money';
@@ -34,6 +35,8 @@ export interface PaymentInput {
   reference?: string;
   customerId?: string;
   reason?: string;
+  /** Tip on top of `amount` (cash and manual M-Pesa). */
+  tip?: number;
   idempotencyKey: string;
   approval?: ApprovalInput;
 }
@@ -56,11 +59,13 @@ export async function recordPayment(ctx: BranchContext, orderId: string, input: 
     if (!input.reference) throw badRequest('Enter the terminal approval/reference code');
   }
   if (input.method === 'mpesa_manual') {
-    if (!input.reference || !/^[A-Z0-9]{10}$/.test(input.reference.toUpperCase())) throw badRequest('Enter the 10-character M-Pesa transaction code');
-    if (!input.reason) throw badRequest('A reason is required for manual payment confirmation');
-    const by = await resolveApproval(ctx, P.PAYMENTS_MANUAL_CONFIRM, input.approval, 'Manually confirming an M-Pesa payment');
-    manual = { by, reason: input.reason };
-    input.reference = input.reference.toUpperCase();
+    // Manual M-Pesa: the cashier saw the money arrive (Till/Paybill SMS or statement) and completes the sale. No code,
+    // reason or approval is needed; who confirmed it is kept on the payment and in the audit log, and the code is
+    // stored when one is typed.
+    const code = input.reference?.trim().toUpperCase();
+    if (code && !/^[A-Z0-9]{8,12}$/.test(code)) throw badRequest('That does not look like an M-Pesa code');
+    input.reference = code || undefined;
+    manual = { by: ctx.userId as Types.ObjectId, reason: input.reason?.trim() || 'Confirmed at the till' };
   }
   if (input.method === 'account') await resolveApproval(ctx, P.PAYMENTS_CREDIT_SALE, input.approval, 'Credit (account) sales');
   if (input.method === 'complimentary') throw badRequest('Use complimentary items rather than a complimentary payment');
@@ -74,16 +79,18 @@ export async function recordPayment(ctx: BranchContext, orderId: string, input: 
     if (input.amount <= 0) throw badRequest('Amount must be positive');
     if (input.amount > balance) throw badRequest(`Amount exceeds the outstanding balance of ${toMajor(balance).toFixed(2)}`);
 
-    let tendered = input.amount;
+    const tip = Math.max(0, Math.round(input.tip ?? 0));
+    if (tip && !['cash', 'mpesa'].includes(method)) throw badRequest('Tips can be taken with cash or M-Pesa');
+    let tendered = input.amount + tip;
     let change = 0;
     let cashSessionId: Types.ObjectId | undefined;
     if (method === 'cash') {
       const { drawer: cs, mode } = await findOpenDrawer(ctx, session);
       if (!cs) throw new AppError(409, 'NO_CASH_SESSION', noDrawerMessage(mode, 'before accepting cash'));
       cashSessionId = cs._id;
-      tendered = input.tendered ?? input.amount;
-      if (tendered < input.amount) throw badRequest('Cash tendered is less than the amount');
-      change = tendered - input.amount;
+      tendered = input.tendered ?? input.amount + tip;
+      if (tendered < input.amount + tip) throw badRequest(tip ? 'Cash tendered is less than the amount plus tip' : 'Cash tendered is less than the amount');
+      change = tendered - input.amount - tip;
     }
     let customerId: Types.ObjectId | undefined;
     if (method === 'account') {
@@ -98,11 +105,13 @@ export async function recordPayment(ctx: BranchContext, orderId: string, input: 
       [{
         tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, orderNumber: order.number, method, amount: input.amount, tendered, change,
         reference: input.reference, customerId, verification, manualConfirmation: manual, receivedBy: ctx.userId, cashSessionId, idempotencyKey: input.idempotencyKey,
+        tip, tipFor: tip ? { userId: order.waiterId ?? ctx.userId, name: order.waiterName ?? ctx.userName } : undefined,
       }],
       { session },
     );
     order.totals!.paid += input.amount;
     order.totals!.balance = order.totals!.total - order.totals!.paid;
+    if (tip) order.totals!.tips = (order.totals!.tips ?? 0) + tip;
     order.cashierId = ctx.userId;
     order.paymentStatus = order.totals!.balance <= 0 ? 'paid' : 'partial';
     if (order.totals!.balance <= 0) await finalizePaidOrder(order, session);
@@ -223,6 +232,7 @@ async function afterPayment(order: OrderDoc) {
   emitBranch(order.tenantId, order.branchId, 'payment.updated', { orderId: String(order._id), paymentStatus: order.paymentStatus });
   if (order.status !== 'paid') return;
   emitTicketsClosed(order);
+  kickEtims(order.tenantId as Types.ObjectId);
   if (order.tableId) {
     const ctxLike = { tenantId: order.tenantId, branchId: order.branchId } as BranchContext;
     await releaseTableIfFree(ctxLike, order.tableId as Types.ObjectId, 'cleaning');
@@ -239,13 +249,15 @@ async function afterPayment(order: OrderDoc) {
 
 // ───────────────────────────── M-Pesa STK Push ─────────────────────────────
 
-export async function initiateMpesa(ctx: BranchContext, orderId: string, input: { phone: string; amount: number; idempotencyKey: string }) {
+export async function initiateMpesa(ctx: BranchContext, orderId: string, input: { phone: string; amount: number; tip?: number; idempotencyKey: string }) {
   const existing = await PaymentAttempt.findOne({ tenantId: ctx.tenantId, idempotencyKey: input.idempotencyKey }).lean();
   if (existing) return existing;
   const tenant = await Tenant.findById(ctx.tenantId).lean();
   const phone = normalizeKePhone(input.phone, tenant?.settings?.countryCode ?? '254');
   if (!phone) throw badRequest('Enter a valid Safaricom number, e.g. 0712345678');
-  if (input.amount % 100 !== 0) throw badRequest('M-Pesa amounts must be whole shillings');
+  // The prompt asks for bill + tip together; the tip part is kept apart when the payment is recorded.
+  const tip = Math.max(0, Math.round(input.tip ?? 0));
+  if ((input.amount + tip) % 100 !== 0) throw badRequest('M-Pesa amounts must be whole shillings');
   const order = await Order.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: orderId });
   if (!order) throw notFound('Order');
   if (!['open', 'held'].includes(order.status)) throw conflict(`Order is ${order.status}`, 'ORDER_LOCKED');
@@ -256,21 +268,23 @@ export async function initiateMpesa(ctx: BranchContext, orderId: string, input: 
   if (live) throw conflict('An M-Pesa prompt is already pending for this order. Wait for it to complete or cancel it.', 'MPESA_PENDING', { attemptId: String(live._id) });
 
   const mp = await getMpesa(ctx.tenantId, ctx.branchId);
-  const token = randomToken(24);
+  // Hex: can't spell any of the words Safaricom blocks in callback URLs (exe, cmd, sql, query…).
+  const token = randomBytes(24).toString('hex');
   const timeout = tenant?.settings?.mpesaTimeoutSeconds ?? 90;
   const attempt = await PaymentAttempt.create({
-    tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, method: 'mpesa', amount: input.amount, phone, idempotencyKey: input.idempotencyKey,
+    tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, method: 'mpesa', amount: input.amount + tip, tip, phone, idempotencyKey: input.idempotencyKey,
     status: 'initiated', provider: mp.mode === 'mock' ? 'mock' : 'daraja', environment: mp.environment, callbackTokenHash: sha256(token),
     expiresAt: new Date(Date.now() + timeout * 1000), initiatedBy: ctx.userId,
   });
-  const callbackUrl = `${(mp.settings.callbackBaseUrl as string) || env.PUBLIC_API_URL}/api/v1/mpesa/callback/stk/${attempt._id}/${token}`;
+  // Neutral path: Safaricom refuses callback URLs containing words like "mpesa" (see modules/mpesa/routes.ts).
+  const callbackUrl = `${((mp.settings.callbackBaseUrl as string) || env.PUBLIC_API_URL).replace(/\/+$/, '')}/api/v1/payhooks/callback/stk/${attempt._id}/${token}`;
   const accountRef = String(mp.settings.accountReferenceFormat || '{order}').replace('{order}', order.number.split('-').pop()!).replace('{branch}', '').slice(0, 12);
   try {
     if (mp.mode === 'mock') {
       attempt.merchantRequestId = `MOCK-MR-${randomUUID().slice(0, 8)}`;
       attempt.checkoutRequestId = `ws_CO_MOCK_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
     } else {
-      const r = await mp.client.stkPush({ phone, amountKes: input.amount / 100, callbackUrl, accountReference: accountRef || order.number.slice(-12), description: String(mp.settings.transactionDesc || 'Payment').slice(0, 13) });
+      const r = await mp.client.stkPush({ phone, amountKes: (input.amount + tip) / 100, callbackUrl, accountReference: accountRef || order.number.slice(-12), description: String(mp.settings.transactionDesc || 'Payment').slice(0, 13) });
       attempt.merchantRequestId = r.merchantRequestId;
       attempt.checkoutRequestId = r.checkoutRequestId;
     }
@@ -306,6 +320,12 @@ export async function applyStkResult(attemptId: Types.ObjectId, tenantId: Types.
       throw unprocessable('Callback does not match this payment attempt', 'MPESA_MISMATCH');
     }
     if (attempt.status === 'succeeded') {
+      // Recorded from a status query (no receipt number then): a callback arriving later fills the M-Pesa code in.
+      if (r.mpesaReceipt && !attempt.mpesaReceipt) {
+        attempt.mpesaReceipt = r.mpesaReceipt;
+        attempt.providerPhone = r.phone ?? attempt.providerPhone;
+        if (attempt.paymentId) await Payment.updateOne({ tenantId, _id: attempt.paymentId }, { $set: { reference: r.mpesaReceipt, phone: r.phone, verification: 'provider' } }, { session });
+      }
       await attempt.save({ session });
       return { attempt, duplicate: true as const };
     }
@@ -324,7 +344,11 @@ export async function applyStkResult(attemptId: Types.ObjectId, tenantId: Types.
       await attempt.save({ session });
       return { attempt, duplicate: false as const, mismatch: true };
     }
-    if (!r.mpesaReceipt) {
+    // A status query (asked by this server, over HTTPS, about this exact request) that says "paid" is final, but it
+    // carries no receipt number. Accept it, so the sale completes even when Safaricom's callback can't reach this
+    // server; the code is added if the callback arrives later.
+    const fromQuery = source === 'query' && !r.mpesaReceipt;
+    if (!r.mpesaReceipt && !fromQuery) {
       attempt.status = 'error';
       attempt.error = 'Successful result without an M-Pesa receipt number';
       await attempt.save({ session });
@@ -332,21 +356,23 @@ export async function applyStkResult(attemptId: Types.ObjectId, tenantId: Types.
     }
     const order = await Order.findOne({ tenantId, _id: attempt.orderId }).session(session);
     if (!order) throw notFound('Order');
-    attempt.mpesaReceipt = r.mpesaReceipt;
+    if (r.mpesaReceipt) attempt.mpesaReceipt = r.mpesaReceipt;
     attempt.providerAmount = r.amount;
     attempt.providerPhone = r.phone;
     attempt.providerTransactionDate = r.transactionDate;
     attempt.status = 'succeeded';
-    const applicable = ['open', 'held'].includes(order.status) ? Math.min(attempt.amount, order.totals!.total - order.totals!.paid) : 0;
+    const tip = attempt.tip ?? 0;
+    const applicable = ['open', 'held'].includes(order.status) ? Math.min(attempt.amount - tip, order.totals!.total - order.totals!.paid) : 0;
     const [payment] = await Payment.create(
       [{
         tenantId, branchId: order.branchId, orderId: order._id, orderNumber: order.number, attemptId: attempt._id, method: 'mpesa', amount: applicable,
-        tendered: attempt.amount, change: 0, reference: r.mpesaReceipt, phone: r.phone, verification: 'provider', receivedBy: attempt.initiatedBy,
+        tendered: attempt.amount, change: 0, tip, tipFor: tip ? { userId: order.waiterId, name: order.waiterName } : undefined, reference: r.mpesaReceipt, phone: r.phone ?? attempt.phone, verification: fromQuery ? 'stk_query' : 'provider', receivedBy: attempt.initiatedBy,
         idempotencyKey: `mpesa:${attempt._id}`,
       }],
       { session },
     );
     attempt.paymentId = payment._id;
+    if (tip) order.totals!.tips = (order.totals!.tips ?? 0) + tip;
     if (applicable > 0) {
       order.totals!.paid += applicable;
       order.totals!.balance = order.totals!.total - order.totals!.paid;
@@ -391,8 +417,74 @@ export async function handleStkCallback(attemptId: string, token: string, body: 
       return { accepted: false };
     }
   }
-  await applyStkResult(attempt._id, attempt.tenantId as Types.ObjectId, parsed, 'callback');
+  const res = await applyStkResult(attempt._id, attempt.tenantId as Types.ObjectId, parsed, 'callback');
+  if (res.attempt.status === 'succeeded') void requestPayerName(attempt.tenantId as Types.ObjectId, attempt._id).catch((e) => logger.warn({ err: e }, 'M-Pesa payer name lookup failed'));
   return { accepted: true };
+}
+
+/**
+ * Ask Safaricom who paid: the Transaction Status API returns the payer's registered M-Pesa name (DebitPartyName). Its
+ * answer is sent later to a ResultURL on this server, so this needs the initiator credentials and a public callback
+ * address. Never blocks or fails a sale: the name is a nice-to-have that appears when it arrives.
+ */
+export async function requestPayerName(tenantId: Types.ObjectId, attemptId: Types.ObjectId) {
+  const attempt = await PaymentAttempt.findOne({ tenantId, _id: attemptId });
+  if (!attempt || attempt.status !== 'succeeded' || attempt.payerName) return;
+  if (attempt.nameLookup?.status === 'requested' && attempt.nameLookup.requestedAt && Date.now() - attempt.nameLookup.requestedAt.getTime() < 60_000) return;
+  const mp = await getMpesa(tenantId, attempt.branchId as Types.ObjectId).catch(() => null);
+  if (!mp) return;
+  const unavailable = async (why: string) => {
+    attempt.set('nameLookup', { status: 'unavailable', error: why });
+    await attempt.save();
+  };
+  if (mp.mode === 'mock') {
+    // Simulated provider: behave like Safaricom's answer arriving a moment later.
+    attempt.set({ payerName: 'SIMULATED CUSTOMER', nameLookup: { status: 'received', receivedAt: new Date() } });
+    await attempt.save();
+    await savePayerName(tenantId, attempt._id, 'SIMULATED CUSTOMER');
+    return;
+  }
+  if (mp.settings.fetchPayerName === false || mp.settings.fetchPayerName === 'false') return unavailable('Payer name lookup is switched off');
+  const base = ((mp.settings.callbackBaseUrl as string) || env.PUBLIC_API_URL).replace(/\/+$/, '');
+  if (!/^https:\/\//.test(base) || /\/\/(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(base)) return unavailable('Needs a public https callback address for Safaricom to send the name to');
+  if (!attempt.mpesaReceipt && !attempt.merchantRequestId) return unavailable('No M-Pesa reference to look up');
+  const token = randomBytes(24).toString('hex');
+  const url = `${base}/api/v1/payhooks/status/${attempt._id}/${token}`;
+  try {
+    await mp.client.transactionStatus({ receipt: attempt.mpesaReceipt ?? undefined, originalConversationId: attempt.merchantRequestId ?? undefined, resultUrl: `${url}/result`, timeoutUrl: `${url}/timeout` });
+    attempt.set('nameLookup', { status: 'requested', tokenHash: sha256(token), requestedAt: new Date() });
+    await attempt.save();
+  } catch (e) {
+    const msg = (e as Error).message;
+    await unavailable(/initiator name and security credential/.test(msg) ? 'Add the initiator name and security credential in Integrations → M-Pesa to see payer names' : msg);
+  }
+}
+
+/** Store the payer's name on the M-Pesa payment and tell the tills. */
+async function savePayerName(tenantId: Types.ObjectId, attemptId: Types.ObjectId, name: string) {
+  const a = await PaymentAttempt.findOne({ tenantId, _id: attemptId }).lean();
+  if (!a) return;
+  if (a.paymentId) await Payment.updateOne({ tenantId, _id: a.paymentId }, { $set: { payerName: name } });
+  emitBranch(tenantId, a.branchId as Types.ObjectId, 'payment.updated', { orderId: String(a.orderId), attemptId: String(a._id), status: a.status, payerName: name });
+}
+
+/** Safaricom's Transaction Status answer (POSTed to the ResultURL given in requestPayerName). */
+export async function handleStatusResult(attemptId: string, token: string, body: unknown, timedOut: boolean) {
+  const attempt = await PaymentAttempt.findOne({ _id: attemptId }).setOptions({ skipTenantGuard: true });
+  if (!attempt?.nameLookup?.tokenHash || attempt.nameLookup.tokenHash !== sha256(token)) throw new AppError(404, 'NOT_FOUND', 'Unknown callback');
+  const tenantId = attempt.tenantId as Types.ObjectId;
+  const r = timedOut ? null : parseStatusResult(body);
+  if (!r || r.resultCode !== 0 || !r.payerName) {
+    attempt.set({ 'nameLookup.status': 'failed', 'nameLookup.error': timedOut ? 'Safaricom timed out' : r ? r.resultDesc || 'No name in the answer' : 'Unreadable answer' });
+    await attempt.save();
+    return;
+  }
+  attempt.payerName = r.payerName;
+  if (r.receipt && !attempt.mpesaReceipt) attempt.mpesaReceipt = r.receipt;
+  attempt.set('nameLookup', { status: 'received', receivedAt: new Date() });
+  await attempt.save();
+  if (r.receipt && attempt.paymentId) await Payment.updateOne({ tenantId, _id: attempt.paymentId, reference: { $exists: false } }, { $set: { reference: r.receipt } });
+  await savePayerName(tenantId, attempt._id, r.payerName);
 }
 
 /** Poll Daraja for attempts whose callback has not arrived (reconciliation job and "check status" button). */
@@ -409,21 +501,22 @@ export async function queryAttempt(tenantId: Types.ObjectId, attemptId: Types.Ob
     }
     return attempt.toObject();
   }
+  // Several tills (and the background check) may ask at once: ask Safaricom at most every 2.5 s per attempt.
+  if (attempt.lastQueryAt && Date.now() - attempt.lastQueryAt.getTime() < 2_500) return attempt.toObject();
+  // Give the customer a moment to see the prompt before the first check.
+  const created = (attempt.get('createdAt') as Date | undefined)?.getTime();
+  if (created && Date.now() - created < 4_000) return attempt.toObject();
   attempt.queryCount = (attempt.queryCount ?? 0) + 1;
   attempt.lastQueryAt = new Date();
   await attempt.save();
   const q = await mp.client.stkQuery(attempt.checkoutRequestId);
   if (q.pending) return attempt.toObject();
-  if (q.resultCode === 0) {
-    // The query confirms success but does not return the receipt/amount; we wait for the callback for those
-    // details, unless the attempt has expired, in which case it is flagged for manual reconciliation.
-    if (attempt.expiresAt && attempt.expiresAt < new Date(Date.now() - 10 * 60_000)) {
-      attempt.error = 'Daraja reports success but no callback was received. Confirm the M-Pesa code manually.';
-      await attempt.save();
-    }
-    return attempt.toObject();
+  // Final answer from Safaricom. Success records the payment at once (the amount is the one requested in the prompt).
+  const res = await applyStkResult(attempt._id, tenantId, { checkoutRequestId: attempt.checkoutRequestId, merchantRequestId: attempt.merchantRequestId ?? '', resultCode: q.resultCode ?? -1, resultDesc: q.resultDesc ?? '', ...(q.resultCode === 0 ? { amount: attempt.amount / 100 } : {}) }, 'query');
+  if (q.resultCode === 0 && res.attempt.status === 'succeeded') {
+    emitBranch(tenantId, res.attempt.branchId as Types.ObjectId, 'payment.updated', { orderId: String(res.attempt.orderId), attemptId: String(res.attempt._id), status: 'succeeded' });
+    void requestPayerName(tenantId, res.attempt._id).catch((e) => logger.warn({ err: e }, 'M-Pesa payer name lookup failed'));
   }
-  const res = await applyStkResult(attempt._id, tenantId, { checkoutRequestId: attempt.checkoutRequestId, merchantRequestId: attempt.merchantRequestId ?? '', resultCode: q.resultCode ?? -1, resultDesc: q.resultDesc ?? '' }, 'query');
   return res.attempt.toObject();
 }
 
@@ -485,6 +578,7 @@ export async function refundPayment(ctx: BranchContext, paymentId: string, input
     }
     return refund;
   });
+  kickEtims(ctx.tenantId);
   await audit(ctx, { action: 'payment.refund', entity: 'Payment', entityId: paymentId, reason: input.reason, approvedBy, meta: { amount: input.amount, restock: input.restock, reference: input.reference } });
   return refund;
 }
@@ -499,7 +593,12 @@ export async function buildReceipt(tenantId: Types.ObjectId, orderId: Types.Obje
     Payment.find({ tenantId, orderId: order._id }).sort({ receivedAt: 1 }).lean(),
     order.cashierId ? User.findOne({ tenantId, _id: order.cashierId }, { name: 1 }).lean() : null,
   ]);
-  const lines = order.items.filter((i) => !i.voided).map((i) => ({ name: i.name, qty: i.qty, unitPrice: i.unitPrice, total: i.lineTotal, modifiers: i.modifiers.map((m) => m.name ?? '').filter(Boolean), complimentary: !!i.complimentary }));
+  // Combo parts are listed under their combo ("incl. 1 x Ugali"), not as separate KSh 0 lines.
+  const live = order.items.filter((i) => !i.voided);
+  const lines = live.filter((i) => !i.parentLineId).map((i) => ({
+    name: i.name, qty: i.qty, unitPrice: i.unitPrice, total: i.lineTotal, complimentary: !!i.complimentary,
+    modifiers: [...i.modifiers.map((m) => m.name ?? '').filter(Boolean), ...live.filter((x) => x.parentLineId === i.lineId).map((x) => `incl. ${Math.round((x.qty / i.qty) * 100) / 100} x ${x.name}`)],
+  }));
   return {
     business: { name: tenant?.name, kraPin: tenant?.kraPin, header: tenant?.branding?.receiptHeader, footer: tenant?.branding?.receiptFooter, logoUrl: tenant?.branding?.logoUrl, timezone: tenant?.settings?.timezone },
     branch: { name: branch?.name, address: branch?.address, phone: branch?.phone },
@@ -507,7 +606,8 @@ export async function buildReceipt(tenantId: Types.ObjectId, orderId: Types.Obje
     lines,
     totals: order.totals,
     taxes: order.taxBreakdown,
-    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference, phone: p.phone })),
+    payments: payments.map((p) => ({ method: p.method, amount: p.amount, tendered: p.tendered, change: p.change, reference: p.reference ?? p.claimedReference, phone: p.phone, payerName: p.payerName, tip: p.tip, pending: p.status === 'provisional' })),
+    fiscal: order.status === 'paid' ? await receiptFiscal(tenantId, order._id, order.paidAt) : null,
   };
 }
 

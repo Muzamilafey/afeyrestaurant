@@ -11,6 +11,11 @@ manifestRouter.get('/manifest.webmanifest', async (_req, res) => {
   const b = await getBusiness().catch(() => null); // never block installing because the DB is briefly unavailable
   const name = b?.name ?? 'Chili POS';
   const theme = /^#[0-9a-fA-F]{6}$/.test(b?.branding?.primaryColor ?? '') ? b!.branding!.primaryColor! : '#07963C';
+  // The business logo as the app icon (PNG sizes generated in the browser when the logo is saved), else Chili POS.
+  const custom = b?.branding?.appIcons;
+  const icons = custom?.icon192 && custom.icon512 && custom.maskable512
+    ? { icon192: custom.icon192, icon512: custom.icon512, maskable512: custom.maskable512 }
+    : { icon192: '/icon-192.png', icon512: '/icon-512.png', maskable512: '/icon-maskable-512.png' };
   res.type('application/manifest+json').set('Cache-Control', 'no-cache').json({
     id: '/',
     name,
@@ -25,14 +30,14 @@ manifestRouter.get('/manifest.webmanifest', async (_req, res) => {
     background_color: '#F3F5F4',
     categories: ['business', 'food', 'productivity'],
     icons: [
-      { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-      { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      { src: icons.icon192, sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: icons.icon512, sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: icons.maskable512, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
     shortcuts: [
-      { name: 'New order', short_name: 'POS', url: '/pos', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
-      { name: 'Orders', url: '/orders', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
-      { name: 'Kitchen display', short_name: 'Kitchen', url: '/kitchen', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
+      { name: 'New order', short_name: 'POS', url: '/pos', icons: [{ src: icons.icon192, sizes: '192x192' }] },
+      { name: 'Orders', url: '/orders', icons: [{ src: icons.icon192, sizes: '192x192' }] },
+      { name: 'Kitchen display', short_name: 'Kitchen', url: '/kitchen', icons: [{ src: icons.icon192, sizes: '192x192' }] },
     ],
   });
 });

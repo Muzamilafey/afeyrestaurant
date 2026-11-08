@@ -38,6 +38,9 @@ const orderItemSchema = new Schema(
     addedBy: Schema.Types.ObjectId,
     ageCheckConfirmed: Boolean,
     happyHour: Boolean,
+    /** Combo / set menu: the parts are their own lines (KSh 0) pointing at the priced combo line. */
+    parentLineId: String,
+    isCombo: Boolean,
   },
   { _id: false },
 );
@@ -49,8 +52,12 @@ const orderSchema = new Schema(
     number: { type: String, required: true },
     /** Client-generated UUID — guarantees offline sync and retried submissions never duplicate an order. */
     clientId: { type: String, required: true },
-    source: { type: String, enum: ['pos', 'offline', 'online', 'api'], default: 'pos' },
+    source: { type: String, enum: ['pos', 'offline', 'online', 'api', 'qr'], default: 'pos' },
+    /** Placed by a guest from the table's QR code and waiting for staff to accept it (not yet sent to the kitchen). */
+    qrPending: Boolean,
     type: { type: String, enum: ORDER_TYPES, default: 'dine_in' },
+    /** Which POS took the order: the restaurant or the bar (separate screens, open-order lists and sales figures). */
+    outlet: { type: String, enum: ['restaurant', 'bar'], default: 'restaurant' },
     status: { type: String, enum: ['open', 'held', 'paid', 'voided', 'merged'], default: 'open', index: true },
     paymentStatus: { type: String, enum: ['unpaid', 'partial', 'paid', 'refunded', 'partially_refunded'], default: 'unpaid' },
     tableId: { type: Schema.Types.ObjectId, ref: 'Table' },
@@ -84,8 +91,12 @@ const orderSchema = new Schema(
       paid: { ...money },
       refunded: { ...money },
       balance: { ...money },
+      /** Tips received with this order's payments (outside the bill). */
+      tips: { ...money },
     },
     taxBreakdown: [{ code: String, rateBps: Number, inclusive: Boolean, amount: Number }],
+    /** KRA eTIMS: when this paid order was given its KRA invoice number. */
+    fiscal: { queuedAt: Date, invcNo: Number },
     delivery: {
       address: String,
       landmark: String,
@@ -96,6 +107,8 @@ const orderSchema = new Schema(
       status: { type: String, enum: ['pending', 'assigned', 'picked_up', 'delivered', 'failed', 'cancelled'] },
       estimatedReadyAt: Date,
       deliveredAt: Date,
+      deliveredBy: String,
+      assignedAt: Date,
       trackingCode: String,
     },
     mergedInto: Schema.Types.ObjectId,

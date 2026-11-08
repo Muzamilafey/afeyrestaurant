@@ -10,23 +10,11 @@ import { lowStockItems } from '../inventory/routes';
  * Owner/manager dashboard: headline KPIs against the previous equal period, the sales trend, what is happening on
  * the floor right now and what needs attention. One request so the screen paints at once.
  */
+import { startOfDay } from '../../lib/time';
+
 const m = createModule('/dashboard', 'Dashboard');
 
 const DAY = 86400_000;
-
-/** Milliseconds to add to a UTC instant to get wall-clock time in `tz`. */
-function tzOffset(date: Date, tz: string) {
-  const p = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(date);
-  const g = (t: string) => Number(p.find((x) => x.type === t)!.value);
-  return Date.UTC(g('year'), g('month') - 1, g('day'), g('hour'), g('minute'), g('second')) - Math.floor(date.getTime() / 1000) * 1000;
-}
-/** Midnight of the day containing `date`, in `tz`. */
-function startOfDay(date: Date, tz: string) {
-  const off = tzOffset(date, tz);
-  const local = new Date(date.getTime() + off);
-  local.setUTCHours(0, 0, 0, 0);
-  return new Date(local.getTime() - off);
-}
 
 const RANGES = ['today', 'yesterday', '7d', '30d'] as const;
 type Range = (typeof RANGES)[number];
@@ -83,7 +71,7 @@ m.route(
     const bucket = p.hourly ? { $hour: { date: '$paidAt', timezone: tz } } : { $dateToString: { format: '%Y-%m-%d', date: '$paidAt', timezone: tz } };
     const series = (from: Date, to: Date) => Order.aggregate<{ _id: number | string; revenue: number; orders: number }>([{ $match: paid(from, to) }, { $group: { _id: bucket, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }]);
 
-    const [cur, prev, curSeries, prevSeries, hourly, payments, byType, topItems, staff, refunds, voids] = await Promise.all([
+    const [cur, prev, curSeries, prevSeries, hourly, payments, byType, topItems, staff, refunds, voids, byOutlet] = await Promise.all([
       summary(p.from, p.to),
       summary(p.prevFrom, p.prevTo),
       series(p.from, p.to),
@@ -99,6 +87,7 @@ m.route(
       Order.aggregate([{ $match: { ...paid(p.from, p.to), waiterName: { $ne: null } } }, { $group: { _id: '$waiterId', name: { $first: '$waiterName' }, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $sort: { revenue: -1 } }, { $limit: 5 }]),
       Refund.aggregate([{ $match: { ...base, createdAt: { $gte: p.from, $lt: p.to } } }, { $group: { _id: null, amount: { $sum: '$amount' }, count: { $sum: 1 } } }]),
       Order.aggregate([{ $match: { ...base, updatedAt: { $gte: p.from, $lt: p.to } } }, { $unwind: '$items' }, { $match: { 'items.voided': true } }, { $group: { _id: null, count: { $sum: 1 }, value: { $sum: { $multiply: ['$items.qty', '$items.unitPrice'] } } } }]),
+      Order.aggregate([{ $match: paid(p.from, p.to) }, { $group: { _id: { $ifNull: ['$outlet', { $cond: [{ $eq: ['$type', 'bar_counter'] }, 'bar', 'restaurant'] }] }, revenue: { $sum: '$totals.total' }, orders: { $sum: 1 } } }, { $sort: { revenue: -1 } }]),
     ]);
 
     // Align current and previous buckets by position (hour 0–23, or day 1..n of the period).
@@ -132,6 +121,8 @@ m.route(
     ]);
     const tableTotal = tables.reduce((a, t) => a + t.count, 0);
 
+    // M-Pesa codes typed in while a till was offline and not yet matched to Safaricom's confirmation.
+    const [unconfirmed] = await Payment.aggregate([{ $match: { ...base, method: 'mpesa', status: 'provisional' } }, { $group: { _id: null, count: { $sum: 1 }, amount: { $sum: '$amount' }, reused: { $sum: { $cond: [{ $ifNull: ['$claimedReference', false] }, 1, 0] } } } }]);
     const canStock = ctx.permissions.has(P.INVENTORY_VIEW) || ctx.permissions.has(P.REPORTS_INVENTORY);
     const lowStock = canStock ? (await Promise.all(branchIds.map((b) => lowStockItems(ctx.tenantId, b)))).flat() : [];
 
@@ -143,6 +134,7 @@ m.route(
       hourly: hourly.map((h) => ({ hour: h._id as number, revenue: h.revenue, orders: h.orders })),
       payments: payments.map((x) => ({ method: x._id as string, amount: x.amount, count: x.count })),
       byType: byType.map((x) => ({ type: x._id as string, revenue: x.revenue, orders: x.orders })),
+      byOutlet: byOutlet.map((x) => ({ outlet: x._id as string, revenue: x.revenue, orders: x.orders })),
       topItems: topItems.map((x) => ({ name: x.name, qty: x.qty, revenue: x.revenue })),
       staff: staff.map((x) => ({ name: x.name, revenue: x.revenue, orders: x.orders })),
       live: {
@@ -162,6 +154,7 @@ m.route(
         voids: voids[0] ?? { count: 0, value: 0 },
         refunds: refunds[0] ? { count: refunds[0].count, amount: refunds[0].amount } : { count: 0, amount: 0 },
         discounts: cur.discounts,
+        unconfirmedMpesa: unconfirmed ? { count: unconfirmed.count, amount: unconfirmed.amount, reused: unconfirmed.reused } : { count: 0, amount: 0, reused: 0 },
       },
     };
   },

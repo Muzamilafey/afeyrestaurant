@@ -14,6 +14,11 @@ till the moment they change (tills update each other in real time).
           (Wi-Fi / LAN)          ▲ receipt printers 9100 · kitchen/bar printers · ZKTeco 4370
 ```
 
+> **Shortcut:** steps 2–5 and the certificate/firewall parts are automated by one command on the server PC
+> (PowerShell as Administrator, in the project folder):
+> `powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1` — it prints the links and the setup
+> token when done. Then continue with step 7 on the other tills.
+
 Pick where the server runs:
 
 | | **A. Server PC in the restaurant** (this guide) | **B. Cloud server** ([DEPLOYMENT.md](DEPLOYMENT.md)) |
@@ -28,6 +33,26 @@ The rest of this guide is option **A on Windows**, because that is the setup you
 same for the tills (steps 7–10) — only the server part differs.
 
 ---
+
+> Prefer one address that works everywhere (tills, phones, the owner at home) with offline selling when the
+> internet drops? Host it on a cloud server instead: see [HOSTING.md](HOSTING.md). Or keep this server and add a
+> view-only live copy online (Settings → Live server): see [HOSTING.md § 8](HOSTING.md#8-or-tills-on-a-restaurant-server-with-a-live-copy-online).
+
+## Phones can't reach the server? Use Tailscale
+
+If tills or phones show "This site can't be reached" although the server works on the PC itself (common causes:
+the router's client/AP isolation, a VPN on the phone, a Wi-Fi extender on another network), run the installer with
+`-Tailscale` on the server PC:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1 -Tailscale
+```
+
+It installs Tailscale, signs the PC in (a browser opens — a free account is fine), and publishes Chili POS at a
+private address such as `https://afey.your-tailnet.ts.net` with a real certificate. On each phone/tablet: install the
+**Tailscale** app, sign in with the **same account**, turn it on, open that address. No router settings, no
+certificate to install, and it also works on mobile data (handy for the owner's dashboard). Needs internet; the
+local `https://<PC IP>` address keeps working on the LAN.
 
 ## 1. Plan the network
 
@@ -271,9 +296,9 @@ The tills and the database work without internet. These need internet on the ser
 
 - **SMS (Talk Sasa) and email**: just need outbound internet. Messages queue and send when it returns.
 - **M-Pesa STK push**: Safaricom must reach a **public HTTPS callback URL**, which a local IP is not. Options:
-  run a tunnel (e.g. Cloudflare Tunnel) for `/api/v1/mpesa/*` only and set `PUBLIC_API_URL` to the tunnel address;
-  or rely on Chili POS asking Safaricom for the payment status (automatic, about every 30 seconds after the prompt
-  expires — slower to confirm);
+  run a tunnel (e.g. Cloudflare Tunnel) for `/api/v1/payhooks/*` only and set `PUBLIC_API_URL` to the tunnel address;
+  or rely on Chili POS asking Safaricom for the payment status (automatic, every few seconds while the prompt is
+  open; the sale completes as soon as Safaricom says it is paid);
   or use option B (cloud) if M-Pesa is your main payment method. Till-number (C2B) payments can always be matched
   manually under the order with the M-Pesa code.
 

@@ -4,6 +4,8 @@ import { Product, Order, Payment, StockLedger, NotificationJob, Customer, Biomet
 import { notify, processNotificationQueue } from '../src/services/notify';
 import { MockSmsProvider } from '../src/integrations/sms/provider';
 import { saveIntegration } from '../src/services/integrations';
+import { MpesaC2BTransaction, Tenant } from '../src/models';
+import { confirmOfflineMpesa, upgradeOfflinePaymentSettings } from '../src/services/offlineMpesa';
 
 let seed: Awaited<ReturnType<typeof setupDb>>;
 let cashier: Session;
@@ -34,6 +36,66 @@ describe('offline synchronisation', () => {
     expect(pays).toHaveLength(1);
     expect(pays[0].verification).toBe('offline_cash');
     expect(await StockLedger.countDocuments({ tenantId: seed.tenantId, refId: orders[0]._id })).toBe(1);
+  });
+});
+
+describe('offline card and M-Pesa sales', () => {
+  const sale = async (payments: Array<Record<string, unknown>>) => {
+    const coke = await Product.findOne({ tenantId: seed.tenantId, sku: 'SD-001' }).lean();
+    return { clientId: uuid(), terminalId: 'T1', createdAt: new Date().toISOString(), type: 'takeaway', items: [{ lineId: uuid(), productId: String(coke!._id), qty: 1, unitPrice: 15000 }], payments: payments.map((p) => ({ clientPaymentId: uuid(), amount: 15000, ...p })) };
+  };
+  const pay = async (clientId: string) => Payment.findOne({ tenantId: seed.tenantId, orderId: (await Order.findOne({ tenantId: seed.tenantId, clientId }).lean())!._id }).lean();
+
+  it('records an offline card payment as a confirmed manual card payment', async () => {
+    const o = await sale([{ method: 'card', reference: 'APR123' }]);
+    expect((await cashier.as(api().post('/api/v1/sync/orders').send({ orders: [o] }))).body.data.results[0].status).toBe('created');
+    expect(await pay(o.clientId)).toMatchObject({ method: 'card', reference: 'APR123', status: 'confirmed', verification: 'manual' });
+    expect((await Order.findOne({ tenantId: seed.tenantId, clientId: o.clientId }).lean())!.status).toBe('paid');
+  });
+
+  it('keeps an offline M-Pesa code provisional until the Till/Paybill confirmation arrives, then confirms it', async () => {
+    const o = await sale([{ method: 'mpesa', reference: 'sjk8h2lq1p', phone: '0712345678' }]);
+    expect((await cashier.as(api().post('/api/v1/sync/orders').send({ orders: [o] }))).body.data.results[0].status).toBe('created');
+    expect(await pay(o.clientId)).toMatchObject({ method: 'mpesa', reference: 'SJK8H2LQ1P', status: 'provisional', verification: 'offline_mpesa' });
+    // Safaricom's confirmation comes in later
+    await MpesaC2BTransaction.create({ tenantId: seed.tenantId, transId: 'SJK8H2LQ1P', amount: 15000, msisdn: '254712345678' });
+    expect(await confirmOfflineMpesa(seed.tenantId as never, 'SJK8H2LQ1P')).toBe(true);
+    expect(await pay(o.clientId)).toMatchObject({ status: 'confirmed', verification: 'provider' });
+    expect((await MpesaC2BTransaction.findOne({ tenantId: seed.tenantId, transId: 'SJK8H2LQ1P' }).lean())!.status).toBe('matched');
+  });
+
+  it('confirms immediately when the confirmation is already on the server, and flags a code used twice', async () => {
+    await MpesaC2BTransaction.create({ tenantId: seed.tenantId, transId: 'QWE1234567', amount: 15000 });
+    const first = await sale([{ method: 'mpesa', reference: 'QWE1234567' }]);
+    const second = await sale([{ method: 'mpesa', reference: 'QWE1234567' }]);
+    const r = await cashier.as(api().post('/api/v1/sync/orders').send({ orders: [first, second] }));
+    expect(r.body.data.results.map((x: { status: string }) => x.status)).toEqual(['created', 'created']); // the sale is never lost
+    expect(await pay(first.clientId)).toMatchObject({ status: 'confirmed', verification: 'provider' });
+    expect(await pay(second.clientId)).toMatchObject({ status: 'provisional', claimedReference: 'QWE1234567' });
+    expect((await pay(second.clientId))!.reference).toBeUndefined();
+  });
+
+  it('does not confirm when Safaricom received less than the sale amount', async () => {
+    await MpesaC2BTransaction.create({ tenantId: seed.tenantId, transId: 'LOW0000001', amount: 100 });
+    const o = await sale([{ method: 'mpesa', reference: 'LOW0000001' }]);
+    await cashier.as(api().post('/api/v1/sync/orders').send({ orders: [o] }));
+    expect(await pay(o.clientId)).toMatchObject({ status: 'provisional' });
+  });
+
+  it('needs the M-Pesa code, and respects the offline payment settings', async () => {
+    expect((await cashier.as(api().post('/api/v1/sync/orders').send({ orders: [await sale([{ method: 'mpesa' }])] }))).status).toBe(400);
+    await Tenant.updateOne({ _id: seed.tenantId }, { $set: { 'settings.offlineAllowedActions': ['browse', 'create_order', 'cash_payment', 'print'] } });
+    const r = await cashier.as(api().post('/api/v1/sync/orders').send({ orders: [await sale([{ method: 'card' }])] }));
+    expect(r.body.data.results[0]).toMatchObject({ status: 'rejected', error: expect.stringMatching(/card payments are disabled/) });
+    // One-time upgrade for businesses set up before card/M-Pesa offline existed
+    await Tenant.updateOne({ _id: seed.tenantId }, { $set: { 'settings.offlineMethodsUpgraded': false } });
+    await upgradeOfflinePaymentSettings();
+    const t = await Tenant.findById(seed.tenantId).lean();
+    expect(t!.settings!.offlineAllowedActions).toEqual(expect.arrayContaining(['cash_payment', 'card_payment', 'mpesa_payment']));
+    await upgradeOfflinePaymentSettings(); // runs once only: switching card off again sticks
+    await Tenant.updateOne({ _id: seed.tenantId }, { $pull: { 'settings.offlineAllowedActions': 'card_payment' } });
+    await upgradeOfflinePaymentSettings();
+    expect((await Tenant.findById(seed.tenantId).lean())!.settings!.offlineAllowedActions).not.toContain('card_payment');
   });
 });
 

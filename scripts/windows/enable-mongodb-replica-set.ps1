@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Converts a local Windows MongoDB service from standalone to a single-node replica set so Chili POS can use
-  transactions. Existing databases are kept as they are — nothing is deleted, dropped or re-created.
+  transactions. Existing databases are kept as they are - nothing is deleted, dropped or re-created.
 
 .DESCRIPTION
   Dry run by default: it only inspects and prints what it would change. Add -Apply to make the changes.
@@ -12,7 +12,7 @@
     4. if access control (security.authorization: enabled) is on and no keyFile is set, creates a keyfile readable
        only by Administrators, SYSTEM and the service account, and adds security.keyFile (MongoDB requires one for
        replica sets with authorization);
-    5. restarts the service — and restores the backup and restarts again if it fails to come up;
+    5. restarts the service - and restores the backup and restarts again if it fails to come up;
     6. runs rs.initiate() ONLY if rs.status() reports NotYetInitialized (an initiated set is never re-initiated),
        waits for the member to become primary and prints rs.hello().
 
@@ -102,7 +102,7 @@ if ($needKeyFile) {
   else { $new = $new.TrimEnd() + "$nl${nl}security:$nl  keyFile: $KeyFilePath$nl" }
   Plan "create keyfile $KeyFilePath (Administrators, SYSTEM and the service account only) and set security.keyFile"; $changes++
 }
-Plan "restart the service, then rs.initiate() only if rs.status() says NotYetInitialized (member host 127.0.0.1:$port)"
+Plan "restart MongoDB only if its configuration changed (dependent services are not restarted), then rs.initiate() only if rs.status() says NotYetInitialized (member host 127.0.0.1:$port)"
 $uriAuth = if ($authOn) { '<user>:<password>@' } else { '' }
 $authSrc = if ($authOn) { '&authSource=admin' } else { '' }
 Info ''
@@ -146,13 +146,25 @@ function Wait-Port([int]$p, [int]$seconds) {
   return $false
 }
 
-Step "Restarting service $($svc.Name)"
-Restart-Service -Name $svc.Name -Force
+# Restart MongoDB only. Restart-Service would also restart services that depend on MongoDB (such as the Chili POS
+# backend) while the database is still coming up, and report a failure for them; stopping with -Force and starting
+# only MongoDB leaves those for their own installer to start afterwards.
+function Restart-Mongo {
+  Stop-Service -Name $svc.Name -Force
+  Start-Service -Name $svc.Name
+}
+$running = (Get-Service -Name $svc.Name).Status -eq 'Running'
+if ($changes -eq 0 -and $running) {
+  Step 'MongoDB configuration unchanged - no restart needed'
+} else {
+  Step "Restarting service $($svc.Name)"
+  Restart-Mongo
+}
 if (-not (Wait-Port $port 60)) {
   Warn 'MongoDB did not come back up with the new configuration.'
   if ($backup) {
     Copy-Item -LiteralPath $backup -Destination $ConfigPath -Force
-    Restart-Service -Name $svc.Name -Force
+    Restart-Mongo
     Warn "Restored $backup and restarted the service. Check the mongod log (systemLog.path in mongod.cfg) for the reason."
   }
   exit 1

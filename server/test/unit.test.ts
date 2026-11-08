@@ -115,3 +115,65 @@ describe('receipt layout', () => {
     expect(docToText(receiptDoc(data, 'duplicate'))).toContain('*** DUPLICATE COPY ***');
   });
 });
+
+describe('Daraja callback URLs', () => {
+  it('rejects addresses Safaricom refuses or cannot reach, with a reason', async () => {
+    const { checkCallbackBase } = await import('../src/modules/mpesa/routes');
+    expect(() => checkCallbackBase('https://172.17.88.153')).toThrow(/private\/local address/);
+    expect(() => checkCallbackBase('https://localhost')).toThrow(/private\/local address/);
+    expect(() => checkCallbackBase('http://pos.example.co.ke')).toThrow(/https/);
+    expect(() => checkCallbackBase('https://mpesa.example.co.ke')).toThrow(/containing "mpesa"/);
+    expect(() => checkCallbackBase('https://pos.example.co.ke/M-Pesa')).toThrow(/containing "M-Pesa"/);
+    expect(() => checkCallbackBase('https://pos.example.co.ke')).not.toThrow();
+    expect(() => checkCallbackBase('https://afey.taile3d401.ts.net')).not.toThrow();
+  });
+});
+
+describe('Daraja STK status query', () => {
+  const realFetch = globalThis.fetch;
+  const answer = (status: number, body: unknown) => {
+    globalThis.fetch = (async (url: string) => (String(url).includes('oauth') ? new Response(JSON.stringify({ access_token: 't', expires_in: '3599' }), { status: 200 }) : new Response(JSON.stringify(body), { status }))) as typeof fetch;
+  };
+  it('treats "still under processing" (any form) and throttling as pending, and final codes as final', async () => {
+    const { DarajaClient } = await import('../src/integrations/mpesa/daraja');
+    const c = new DarajaClient({ environment: 'sandbox', consumerKey: 'k', consumerSecret: 's', shortCode: '174379', passkey: 'p', transactionType: 'CustomerPayBillOnline' });
+    try {
+      answer(200, { ResponseCode: '0', ResultCode: '4999', ResultDesc: 'The transaction is still under processing' });
+      expect((await c.stkQuery('ws_CO_1')).pending).toBe(true);
+      answer(500, { errorCode: '500.001.1001', errorMessage: 'The transaction is being processed' });
+      expect((await c.stkQuery('ws_CO_1')).pending).toBe(true);
+      answer(500, { errorCode: '500.003.02', errorMessage: 'Spike arrest violation' });
+      expect((await c.stkQuery('ws_CO_1')).pending).toBe(true);
+      answer(200, { ResponseCode: '0', ResultCode: '0', ResultDesc: 'The service request is processed successfully.' });
+      expect(await c.stkQuery('ws_CO_1')).toMatchObject({ pending: false, resultCode: 0 });
+      answer(200, { ResponseCode: '0', ResultCode: '1032', ResultDesc: 'Request cancelled by user' });
+      expect(await c.stkQuery('ws_CO_1')).toMatchObject({ pending: false, resultCode: 1032 });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+describe('M-Pesa payer name (Transaction Status API)', () => {
+  it('reads the registered name, phone and receipt from the status result', async () => {
+    const { parseStatusResult } = await import('../src/integrations/mpesa/daraja');
+    const r = parseStatusResult({ Result: { ResultType: 0, ResultCode: 0, ResultDesc: 'The service request is processed successfully.', OriginatorConversationID: 'x', ConversationID: 'y', TransactionID: 'TJK8XYZ123',
+      ResultParameters: { ResultParameter: [{ Key: 'DebitPartyName', Value: '254712345678 - JANE WANJIKU DOE' }, { Key: 'ReceiptNo', Value: 'TJK8XYZ123' }, { Key: 'Amount', Value: 240 }, { Key: 'TransactionStatus', Value: 'Completed' }] } } });
+    expect(r).toMatchObject({ resultCode: 0, payerName: 'JANE WANJIKU DOE', payerPhone: '254712345678', receipt: 'TJK8XYZ123', amount: 240, transactionStatus: 'Completed' });
+    expect(parseStatusResult({ Result: { ResultCode: 2001, ResultDesc: 'The initiator information is invalid.' } })).toMatchObject({ resultCode: 2001, payerName: undefined });
+    expect(parseStatusResult({ nope: true })).toBeNull();
+  });
+
+  it('encrypts the initiator password with the Safaricom certificate, even when the PEM lost its line breaks', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const crypto = await import('node:crypto');
+    const { securityCredential } = await import('../src/integrations/mpesa/daraja');
+    const cert = fs.readFileSync(path.join(__dirname, 'fixtures/test-daraja-cert.pem'), 'utf8');
+    const key = fs.readFileSync(path.join(__dirname, 'fixtures/test-daraja-key.pem'), 'utf8');
+    const oneLine = cert.replace(/\n/g, ' ');
+    const enc = securityCredential('Safaricom999!*!', oneLine);
+    const plain = crypto.privateDecrypt({ key, padding: crypto.constants.RSA_PKCS1_PADDING }, Buffer.from(enc, 'base64')).toString();
+    expect(plain).toBe('Safaricom999!*!');
+  });
+});

@@ -21,6 +21,33 @@ with any number of branches, terminals and staff.
 - **Offline**: menu cached on the device; cash sales recorded offline sync idempotently when back online.
 - **Light and dark themes**, installable PWA, responsive from phone to desktop.
 
+## One-command install on Windows (local use)
+
+In the project folder, open **PowerShell as Administrator** and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1
+```
+
+(or double-click `install-windows.cmd`). It first checks the PC and lists every tool it needs with the version found —
+Node.js 20+, npm, Git, MongoDB Server 5.0+, mongosh, MongoDB Database Tools, NSSM, Caddy, plus winget,
+administrator rights, disk space and ports 4000/443/80 — then installs or upgrades only what is missing or too old,
+checks again, makes MongoDB a
+replica set (keeping existing data), builds the app, runs the backend and the HTTPS web front end as Windows services
+that start with the PC, trusts the certificate on this PC, opens the firewall for the local network, and prints the
+links — `https://localhost` on that PC and `https://<PC IP>` for other tills — plus the first-run setup token.
+Add `-Tailscale` so phones and tablets can open it on **any** Wi-Fi or mobile data without installing a certificate
+(they install the free Tailscale app and sign in with the same account) — use this when phones can't reach the PC
+on the local Wi-Fi. Add `-CheckOnly` to only see that report (changes nothing). Run it again with `-Update` to pull the latest code and
+restart; `-Uninstall` removes the services (data is kept).
+The manual steps it automates are described in [docs/MULTI-TILL.md](docs/MULTI-TILL.md).
+
+**Hosted online (cloud server) with offline selling:** on an Ubuntu VPS whose domain points at it, run
+`sudo bash scripts/linux/install.sh --domain pos.example.co.ke --email you@example.co.ke`. It installs MongoDB,
+the app, HTTPS (Let's Encrypt), a firewall and nightly backups. Tills keep selling when the internet drops and sync
+when it returns. See [docs/HOSTING.md](docs/HOSTING.md). A restaurant server can also send a view-only live copy to
+such a server (**Settings → Live server**).
+
 ## Repository layout
 
 | Path | What |
@@ -66,9 +93,10 @@ needs credentials or hardware, and what is unverified.
 ## Documentation
 
 - [Setup & configuration](docs/SETUP.md)
+- [Hosting on a cloud server, one command, offline selling and sync](docs/HOSTING.md)
 - [Production deployment (Nginx, PM2, Let's Encrypt, backups)](docs/DEPLOYMENT.md)
 - [Several tills sharing one server and database (Windows server PC, HTTPS, step by step)](docs/MULTI-TILL.md)
 - [MongoDB on Windows: enable transactions](docs/MONGODB-WINDOWS.md)
-- [M-Pesa Daraja](docs/integrations/mpesa.md) · [Talk Sasa SMS](docs/integrations/sms.md) · [SMTP email](docs/integrations/email.md)
+- [M-Pesa Daraja](docs/integrations/mpesa.md) · [Talk Sasa SMS](docs/integrations/sms.md) · [WhatsApp](docs/integrations/whatsapp.md) · [SMTP email](docs/integrations/email.md)
 - [Printers](docs/integrations/printers.md) · [Biometric devices & attendance](docs/integrations/biometrics.md) · [Fingerprint device setup, step by step](docs/FINGERPRINT-DEVICES.md) · [Chili Bridge](bridge/README.md)
 - [Security notes](docs/SECURITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)

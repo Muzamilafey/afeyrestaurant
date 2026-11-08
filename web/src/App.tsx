@@ -1,13 +1,18 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
 import { AppShell } from '@/layout/AppShell';
 import Login from '@/pages/Login';
 import { ForgotPassword, ResetPassword } from '@/pages/PasswordReset';
 import { Skeleton, Empty } from '@/components/ui';
+import { get } from '@/lib/api';
+import { applyDocumentBranding, type AppIcons } from '@/lib/appIcons';
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const PosPage = lazy(() => import('@/pages/pos/PosPage'));
+const CustomerDisplay = lazy(() => import('@/pages/CustomerDisplay'));
+const GuestTable = lazy(() => import('@/pages/GuestTable'));
 const TablesPage = lazy(() => import('@/pages/TablesPage'));
 const OrdersBoard = lazy(() => import('@/pages/OrdersBoard'));
 const StationPage = lazy(() => import('@/pages/StationPage'));
@@ -51,25 +56,38 @@ function Home() {
   return <Empty title={`Welcome, ${session?.user.name}`} hint="Use the menu to get started." />;
 }
 
+/** Browser tab icon, home-screen icon and window title follow the business name and logo. */
+function BrandingSync() {
+  const { data } = useQuery<{ name: string; logoUrl: string | null; icons: AppIcons | null; primaryColor: string }>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000 });
+  useEffect(() => {
+    if (data) applyDocumentBranding(data);
+  }, [data]);
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <BrandingSync />
       <Suspense fallback={<Loading />}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/track/:code" element={<TrackOrder />} />
+          <Route path="/display" element={<CustomerDisplay />} />
+          <Route path="/t/:token" element={<GuestTable />} />
           <Route element={<Guard><AppShell /></Guard>}>
             <Route index element={<Home />} />
             <Route path="dashboard" element={<Guard perms={['reports.sales']}><DashboardPage /></Guard>} />
-            <Route path="pos" element={<Guard perms={['orders.create']}><PosPage /></Guard>} />
+            <Route path="pos" element={<Guard perms={['orders.create']}><PosPage outlet="restaurant" /></Guard>} />
+            <Route path="bar-pos" element={<Guard perms={['orders.create']}><PosPage outlet="bar" /></Guard>} />
             <Route path="orders" element={<Guard perms={['orders.view']}><OrdersBoard /></Guard>} />
             <Route path="tables" element={<Guard perms={['tables.view']}><TablesPage /></Guard>} />
             <Route path="kitchen" element={<Guard perms={['kitchen.view']}><StationPage station="kitchen" /></Guard>} />
             <Route path="bar" element={<Guard perms={['bar.view']} feature="bar"><StationPage station="bar" /></Guard>} />
             <Route path="reservations" element={<Guard perms={['reservations.view']}><ReservationsPage /></Guard>} />
-            <Route path="delivery" element={<Guard perms={['delivery.view']}><DeliveryPage /></Guard>} />
+            <Route path="delivery" element={<Guard perms={['delivery.view', 'orders.view']}><DeliveryPage /></Guard>} />
             <Route path="inventory" element={<Guard perms={['inventory.view']}><InventoryPage /></Guard>} />
             <Route path="recipes" element={<Guard perms={['recipes.manage', 'inventory.view']}><RecipesPage /></Guard>} />
             <Route path="purchasing" element={<Guard perms={['procurement.view']}><PurchasingPage /></Guard>} />

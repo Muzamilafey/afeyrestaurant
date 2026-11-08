@@ -99,7 +99,11 @@ const deliveryZoneSchema = new Schema(
 export const DeliveryZone = model('DeliveryZone', deliveryZoneSchema);
 
 const riderSchema = new Schema(
-  { tenantId: tenantRef, branchId: branchRef, name: { type: String, required: true }, phone: String, active: { type: Boolean, default: true } },
+  {
+    tenantId: tenantRef, branchId: branchRef, name: { type: String, required: true }, phone: String, active: { type: Boolean, default: true },
+    /** e.g. "Motorbike", "Bicycle", "On foot"; plate for motor vehicles; free notes (ID number, area covered). */
+    vehicle: String, plate: String, notes: String,
+  },
   schemaOpts,
 );
 export const Rider = model('Rider', riderSchema);

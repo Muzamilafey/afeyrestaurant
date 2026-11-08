@@ -1,5 +1,8 @@
 # Production deployment (Ubuntu 22.04/24.04, no Docker)
 
+> Quicker route: `scripts/linux/install.sh` does all of this in one command (Caddy instead of Nginx/PM2). See
+> [HOSTING.md](HOSTING.md). This page describes the manual setup.
+
 ## Server packages
 
 ```bash

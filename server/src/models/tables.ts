@@ -20,10 +20,15 @@ const tableSchema = new Schema(
     waiterId: { type: Schema.Types.ObjectId, ref: 'User' },
     occupiedSince: Date,
     active: { type: Boolean, default: true },
+    /** QR ordering: the code printed on the table's sticker (regenerate it to retire an old sticker). */
+    qrToken: String,
+    /** A guest asked for a waiter or the bill from the table's QR page. */
+    call: { reason: { type: String, enum: ['waiter', 'bill'] }, at: Date },
   },
   schemaOpts,
 );
 tableSchema.index({ tenantId: 1, branchId: 1, number: 1 }, { unique: true });
+tableSchema.index({ qrToken: 1 }, { unique: true, partialFilterExpression: { qrToken: { $type: 'string' } } });
 export const Table = model('Table', tableSchema);
 
 const reservationSchema = new Schema(

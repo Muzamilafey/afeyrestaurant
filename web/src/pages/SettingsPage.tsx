@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Upload } from 'lucide-react';
-import { api, get, patch, post, put } from '@/lib/api';
+import { CloudOff, ExternalLink, Globe, Plus, RefreshCw, Unplug, Upload } from 'lucide-react';
+import { api, ApiError, get, patch, post, put } from '@/lib/api';
 import { dateTime, fromCents, money, titleCase, toCents } from '@/lib/format';
-import { Button, Card, DataTable, Field, Input, Modal, PageHeader, Pill, Select, StatusPill, Tabs, Textarea, Toggle } from '@/components/ui';
+import { Button, Card, cx, DataTable, Field, Input, Modal, PageHeader, Pill, Select, StatusPill, Tabs, Textarea, Toggle } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
+import { makeAppIcons } from '@/lib/appIcons';
 import { AccountMenu } from '@/layout/AccountMenu';
+import { QrOrderingSettings } from '@/components/QrOrderingSettings';
 
-type TabId = 'business' | 'branches' | 'users' | 'roles' | 'menu' | 'taxes' | 'tables' | 'audit' | 'account';
+type TabId = 'live' | 'business' | 'branches' | 'users' | 'roles' | 'menu' | 'taxes' | 'tables' | 'audit' | 'account';
 
 export default function SettingsPage() {
   const { can } = useAuth();
@@ -23,6 +25,7 @@ export default function SettingsPage() {
         { id: 'users', label: 'Users', hidden: !can('users.manage') },
         { id: 'roles', label: 'Roles', hidden: !can('roles.manage') },
         { id: 'taxes', label: 'Taxes', hidden: !can('settings.manage') },
+        { id: 'live', label: 'Live server', hidden: !can('settings.manage') },
         { id: 'tables', label: 'Tables', hidden: !can('tables.manage') },
         { id: 'audit', label: 'Audit log', hidden: !can('audit.view') },
         { id: 'account', label: 'My account' },
@@ -33,14 +36,15 @@ export default function SettingsPage() {
       {tab === 'users' && <Users />}
       {tab === 'roles' && <Roles />}
       {tab === 'taxes' && <Taxes />}
-      {tab === 'tables' && <TablesAdmin />}
+      {tab === 'live' && <LiveServer />}
+      {tab === 'tables' && <div className="space-y-4"><TablesAdmin /><QrOrderingSettings /></div>}
       {tab === 'audit' && <Audit />}
       {tab === 'account' && <Account />}
     </div>
   );
 }
 
-interface Product { _id: string; name: string; categoryId: string; price: number; sku?: string; barcode?: string; plu?: string; status: string; imageUrl?: string; description?: string; dietary: string[]; allergens: string[]; ageRestricted: boolean; modifierGroupIds: string[]; taxRateIds: string[]; happyHourPrice?: number | null; station: string; variants: Array<{ name: string; price: number }>; branchPrices: Array<{ branchId: string; price: number }> }
+interface Product { _id: string; name: string; categoryId: string; price: number; sku?: string; barcode?: string; plu?: string; status: string; imageUrl?: string; description?: string; dietary: string[]; allergens: string[]; ageRestricted: boolean; modifierGroupIds: string[]; taxRateIds: string[]; happyHourPrice?: number | null; station: string; variants: Array<{ name: string; price: number }>; branchPrices: Array<{ branchId: string; price: number }>; combo?: { isCombo: boolean; items: Array<{ productId: string; qty: number }> }; etims?: { itemClsCd?: string; taxTyCd?: string } }
 interface Cat { _id: string; name: string; icon: string; kind: string; station: string; sortOrder: number }
 
 function Menu() {
@@ -58,7 +62,7 @@ function Menu() {
 
   async function saveProduct() {
     if (!edit) return;
-    const body = { categoryId: edit.categoryId, name: edit.name, description: edit.description || undefined, imageUrl: edit.imageUrl || undefined, sku: edit.sku || undefined, barcode: edit.barcode || undefined, plu: edit.plu || undefined, price: edit.price, happyHourPrice: edit.happyHourPrice ?? null, status: edit.status, dietary: edit.dietary, allergens: edit.allergens, ageRestricted: edit.ageRestricted, modifierGroupIds: edit.modifierGroupIds, taxRateIds: edit.taxRateIds, station: edit.station, variants: edit.variants };
+    const body = { categoryId: edit.categoryId, name: edit.name, description: edit.description || undefined, imageUrl: edit.imageUrl || undefined, sku: edit.sku || undefined, barcode: edit.barcode || undefined, plu: edit.plu || undefined, price: edit.price, happyHourPrice: edit.happyHourPrice ?? null, status: edit.status, dietary: edit.dietary, allergens: edit.allergens, ageRestricted: edit.ageRestricted, modifierGroupIds: edit.modifierGroupIds, taxRateIds: edit.taxRateIds, station: edit.station, variants: edit.variants, combo: edit.combo?.isCombo ? { isCombo: true, items: (edit.combo.items ?? []).filter((c) => c.productId && c.qty > 0) } : { isCombo: false, items: [] }, etims: { itemClsCd: edit.etims?.itemClsCd?.trim() ?? '', taxTyCd: edit.etims?.taxTyCd ?? '' } };
     try {
       if (edit._id) {
         let reason: string | undefined;
@@ -124,7 +128,29 @@ function Menu() {
             <Field label="Allergens (comma separated)" className="md:col-span-2"><Input value={(edit.allergens ?? []).join(', ')} onChange={(e) => setEdit({ ...edit, allergens: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} /></Field>
             <div className="flex items-end"><Toggle checked={!!edit.ageRestricted} onChange={(v) => setEdit({ ...edit, ageRestricted: v })} label="Age-restricted (18+)" /></div>
             <div className="md:col-span-3"><p className="label">Modifier groups</p><div className="flex flex-wrap gap-2">{groups.data?.map((g) => <button type="button" key={g._id} onClick={() => setEdit({ ...edit, modifierGroupIds: edit.modifierGroupIds?.includes(g._id) ? edit.modifierGroupIds.filter((x) => x !== g._id) : [...(edit.modifierGroupIds ?? []), g._id] })} className={`rounded-full border px-3 py-1 text-xs font-semibold ${edit.modifierGroupIds?.includes(g._id) ? 'border-brand bg-brand-pale text-brand-dark' : 'border-line'}`}>{g.name}</button>)}</div></div>
+            <Field label="KRA eTIMS item classification" hint="Blank = the default under Integrations → KRA eTIMS"><Input inputMode="numeric" value={edit.etims?.itemClsCd ?? ''} onChange={(e) => setEdit({ ...edit, etims: { ...edit.etims, itemClsCd: e.target.value.replace(/\D/g, '').slice(0, 10) } })} placeholder="Default" /></Field>
+            <Field label="KRA tax type"><Select value={edit.etims?.taxTyCd ?? ''} onChange={(e) => setEdit({ ...edit, etims: { ...edit.etims, taxTyCd: e.target.value } })}><option value="">From the taxes below</option><option value="B">B — VAT 16%</option><option value="E">E — VAT 8%</option><option value="A">A — Exempt</option><option value="C">C — Zero-rated</option><option value="D">D — Non-VAT</option></Select></Field>
+            <div />
             <div className="md:col-span-3"><p className="label">Taxes</p><div className="flex flex-wrap gap-2">{taxes.data?.map((t) => <button type="button" key={t._id} onClick={() => setEdit({ ...edit, taxRateIds: edit.taxRateIds?.includes(t._id) ? edit.taxRateIds.filter((x) => x !== t._id) : [...(edit.taxRateIds ?? []), t._id] })} className={`rounded-full border px-3 py-1 text-xs font-semibold ${edit.taxRateIds?.includes(t._id) ? 'border-brand bg-brand-pale text-brand-dark' : 'border-line'}`}>{t.name}{!t.active && ' (inactive)'}</button>)}</div></div>
+            <div className="md:col-span-3 rounded-2xl border border-line p-3">
+              <Toggle checked={!!edit.combo?.isCombo} onChange={(v) => setEdit({ ...edit, combo: { isCombo: v, items: edit.combo?.items?.length ? edit.combo.items : [{ productId: '', qty: 1 }] } })} label="Combo / set menu (one price for several items)" />
+              {edit.combo?.isCombo && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-xs text-ink-soft">Each part goes to its own station (kitchen or bar) and deducts its own recipe stock; the price above is charged once for the combo.</p>
+                  {(edit.combo.items ?? []).map((c, i) => (
+                    <div key={i} className="flex gap-2">
+                      <Select value={c.productId} onChange={(e) => setEdit({ ...edit, combo: { ...edit.combo!, items: edit.combo!.items.map((x, j) => (j === i ? { ...x, productId: e.target.value } : x)) } })} aria-label="Combo part">
+                        <option value="">Choose an item…</option>
+                        {products.data?.filter((p) => p._id !== edit._id && !p.combo?.isCombo && p.status !== 'archived').map((p) => <option key={p._id} value={p._id}>{p.name}</option>)}
+                      </Select>
+                      <Input inputMode="decimal" className="w-20" value={String(c.qty)} onChange={(e) => setEdit({ ...edit, combo: { ...edit.combo!, items: edit.combo!.items.map((x, j) => (j === i ? { ...x, qty: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 } : x)) } })} aria-label="Quantity" />
+                      <Button variant="ghost" size="sm" onClick={() => setEdit({ ...edit, combo: { ...edit.combo!, items: edit.combo!.items.filter((_, j) => j !== i) } })}>✕</Button>
+                    </div>
+                  ))}
+                  <Button size="sm" variant="ghost" icon={<Plus className="h-4 w-4" />} onClick={() => setEdit({ ...edit, combo: { ...edit.combo!, items: [...(edit.combo!.items ?? []), { productId: '', qty: 1 }] } })}>Add part</Button>
+                </div>
+              )}
+            </div>
             <div className="md:col-span-3"><p className="label">Sizes / variants</p>{(edit.variants ?? []).map((v, i) => <div key={i} className="mb-2 flex gap-2"><Input value={v.name} placeholder="e.g. Glass" onChange={(e) => setEdit({ ...edit, variants: edit.variants!.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} /><Input inputMode="decimal" value={fromCents(v.price)} onChange={(e) => setEdit({ ...edit, variants: edit.variants!.map((x, j) => (j === i ? { ...x, price: toCents(e.target.value || 0) } : x)) })} /><Button variant="ghost" size="sm" onClick={() => setEdit({ ...edit, variants: edit.variants!.filter((_, j) => j !== i) })}>✕</Button></div>)}<Button size="sm" variant="ghost" onClick={() => setEdit({ ...edit, variants: [...(edit.variants ?? []), { name: '', price: edit.price ?? 0 }] })}>Add size</Button></div>
           </div>
         </Modal>
@@ -164,7 +190,24 @@ function Business() {
       setUploading(false);
     }
   };
+<<<<<<< HEAD
   const save = () => patch('/admin/tenant', { name: f.name, kraPin: f.kraPin, contactEmail: f.contactEmail || undefined, contactPhone: f.contactPhone, branding: { primaryColor: f.branding.primaryColor, receiptHeader: f.branding.receiptHeader, receiptFooter: f.branding.receiptFooter, logoUrl: f.branding.logoUrl ?? '' }, settings: { discountApprovalThresholdBps: Number(s.discountApprovalThresholdBps), loyaltyPointsPer100: Number(s.loyaltyPointsPer100), costingPolicy: s.costingPolicy, allowNegativeStock: s.allowNegativeStock, mpesaTimeoutSeconds: Number(s.mpesaTimeoutSeconds), offlineAllowedActions: s.offlineAllowedActions, alertEmails: s.alertEmails, dailySummary: s.dailySummary, lowStockAlerts: s.lowStockAlerts, barEnabled: !!s.barEnabled } }).then(async () => { await refreshSession(); qc.invalidateQueries({ queryKey: ['public-business'] }); toast('Business settings saved'); }).catch(handleError);
+=======
+  const save = async () => {
+    // The logo also becomes the app icon (browser tab, home screen, installed app): make PNG icons when it changes.
+    let appIcons = f.branding.appIcons ?? null;
+    if (!f.branding.logoUrl) appIcons = null;
+    else if (!appIcons || appIcons.source !== f.branding.logoUrl) {
+      try {
+        appIcons = await makeAppIcons(f.branding.logoUrl);
+      } catch (e) {
+        appIcons = null;
+        toast(`Logo saved, but the app icon could not be made: ${(e as Error).message}`, 'info');
+      }
+    }
+    return patch('/admin/tenant', { name: f.name, kraPin: f.kraPin, contactEmail: f.contactEmail || undefined, contactPhone: f.contactPhone, branding: { primaryColor: f.branding.primaryColor, receiptHeader: f.branding.receiptHeader, receiptFooter: f.branding.receiptFooter, logoUrl: f.branding.logoUrl ?? '', appIcons }, settings: { discountApprovalThresholdBps: Number(s.discountApprovalThresholdBps), loyaltyPointsPer100: Number(s.loyaltyPointsPer100), costingPolicy: s.costingPolicy, allowNegativeStock: s.allowNegativeStock, mpesaTimeoutSeconds: Number(s.mpesaTimeoutSeconds), offlineAllowedActions: s.offlineAllowedActions, alertEmails: s.alertEmails, dailySummary: s.dailySummary, lowStockAlerts: s.lowStockAlerts } }).then(async () => { await refreshSession(); qc.invalidateQueries({ queryKey: ['public-business'] }); toast('Business settings saved'); }).catch(handleError);
+  };
+>>>>>>> aead3ab0ce54de89b25e8826ad5664d0ff84b981
   return (
     <Card title="Business settings" actions={<Button size="sm" onClick={save}>Save</Button>}>
       <div className="mb-5 flex flex-wrap items-center gap-4 rounded-2xl bg-page p-4">
@@ -177,6 +220,14 @@ function Business() {
           {f.branding.logoUrl && <Button variant="ghost" onClick={() => setF({ ...f, branding: { ...f.branding, logoUrl: '' } })}>Remove</Button>}
         </div>
         <p className="w-full text-xs text-ink-soft">Square PNG, JPG or WebP, up to 5 MB. Changes apply after you press Save.</p>
+        {f.branding.logoUrl && (
+          <div className="flex w-full items-center gap-3 rounded-xl border border-line bg-card p-3 text-xs text-ink-soft">
+            {f.branding.appIcons?.icon192 && f.branding.appIcons.source === f.branding.logoUrl
+              ? <img src={f.branding.appIcons.icon192} alt="App icon" className="h-12 w-12 shrink-0 rounded-xl shadow-soft" />
+              : <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-dashed border-line text-[10px]">Save</span>}
+            <p><b className="text-ink">App icon.</b> The logo is also the icon of the installed app (desktop, taskbar, phone home screen). An app installed before the logo was set keeps its old icon: on that till, uninstall the app (right-click its icon → Uninstall, or in the app's ⋮ menu) and install it again from the browser.</p>
+          </div>
+        )}
       </div>
       <SystemStatus />
       <div className="grid gap-3 md:grid-cols-3">
@@ -196,7 +247,7 @@ function Business() {
           <Toggle checked={!!s.dailySummary} onChange={(v) => setF({ ...f, settings: { ...s, dailySummary: v } })} label="Send daily sales summary to alert contacts" />
           <Toggle checked={s.lowStockAlerts !== false} onChange={(v) => setF({ ...f, settings: { ...s, lowStockAlerts: v } })} label="Send low-stock alerts" />
           <p className="label mt-2">Allowed offline actions</p>
-          <div className="flex flex-wrap gap-3">{['browse', 'create_order', 'cash_payment', 'print'].map((a) => <Toggle key={a} checked={s.offlineAllowedActions?.includes(a)} onChange={(v) => setF({ ...f, settings: { ...s, offlineAllowedActions: v ? [...s.offlineAllowedActions, a] : s.offlineAllowedActions.filter((x: string) => x !== a) } })} label={titleCase(a)} />)}</div>
+          <div className="flex flex-wrap gap-3">{(['browse', 'create_order', 'cash_payment', 'card_payment', 'mpesa_payment', 'print'] as const).map((a) => <Toggle key={a} checked={s.offlineAllowedActions?.includes(a)} onChange={(v) => setF({ ...f, settings: { ...s, offlineAllowedActions: v ? [...s.offlineAllowedActions, a] : s.offlineAllowedActions.filter((x: string) => x !== a) } })} label={({ browse: 'Browse menu', create_order: 'Take orders', cash_payment: 'Cash payments', card_payment: 'Card payments', mpesa_payment: 'M-Pesa (code) payments', print: 'Print receipts' } as const)[a]} />)}</div>
         </div>
       </div>
     </Card>
@@ -212,6 +263,116 @@ function SystemStatus() {
       <span>Undelivered messages: <b>{data.failedNotifications}</b></span>
       <span className="text-ink-soft">Version {data.version}</span>
     </div>
+  );
+}
+
+type LiveStatus =
+  | { role: 'live'; sourceName?: string; linkedAt?: string; lastPushAt?: string; docsReceived?: number }
+  | { role: 'local'; linked: false }
+  | { role: 'local'; linked: true; url: string; liveName?: string; linkedAt: string; linkedBy?: string; lastAttemptAt?: string; lastSuccessAt?: string; lastError?: string | null; docsSent: number; pending: number; syncing: boolean };
+
+const ago = (iso?: string | null) => {
+  if (!iso) return 'never';
+  const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  return s < 10 ? 'just now' : s < 60 ? `${s} s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : dateTime(iso);
+};
+
+/** Link this (restaurant) server to a live server on the internet, which receives a view-only copy of everything. */
+function LiveServer() {
+  const { handleError, toast, confirm } = useFeedback();
+  const qc = useQueryClient();
+  const { data: st, refetch } = useQuery<LiveStatus>({
+    queryKey: ['live-status'],
+    queryFn: () => get('/live/status'),
+    refetchInterval: (q) => ((q.state.data as { syncing?: boolean } | undefined)?.syncing ? 2_000 : 10_000),
+  });
+  const [f, setF] = useState({ url: '', setupToken: '' });
+  const [busy, setBusy] = useState(false);
+
+  async function connect(replaceEmpty = false) {
+    setBusy(true);
+    try {
+      const r = await post<{ url: string; name: string }>('/live/connect', { ...f, replaceEmpty });
+      toast(`Linked to ${r.url} — sending data now`);
+      setF({ url: '', setupToken: '' });
+      qc.invalidateQueries({ queryKey: ['live-status'] });
+    } catch (e) {
+      const d = e instanceof ApiError ? (e.details as { canReplace?: boolean; name?: string } | undefined) : undefined;
+      if (e instanceof ApiError && e.code === 'LIVE_HAS_OTHER_BUSINESS' && d?.canReplace && !replaceEmpty) {
+        const ok = await confirm({ title: 'Replace the live server\'s business?', message: <>The live server was set up on its own as <b>{d.name}</b> and has no sales yet. Replace it with this restaurant's menu, staff and sales? Sign in there with your accounts from this server afterwards.</>, confirmLabel: 'Replace and link', danger: true });
+        if (ok.ok) return connect(true);
+      } else handleError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!st) return <Card title="Live server"><p className="text-sm text-ink-soft">Loading…</p></Card>;
+
+  if (st.role === 'live') {
+    return (
+      <Card title="This is the live copy">
+        <div className="space-y-3 text-sm">
+          <p>This server receives a view-only copy of <b>{st.sourceName ?? 'the restaurant server'}</b>. Sales, reports and the dashboard here follow the restaurant; menu, staff and settings are changed on the restaurant's own server.</p>
+          <div className="flex flex-wrap gap-4 rounded-2xl border border-line p-4">
+            <span>Last update: <b>{ago(st.lastPushAt)}</b></span>
+            <span>Linked: <b>{st.linkedAt ? dateTime(st.linkedAt) : '—'}</b></span>
+            <span>Records received: <b>{(st.docsReceived ?? 0).toLocaleString('en-KE')}</b></span>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  if (!st.linked) {
+    return (
+      <Card title="Live server">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="space-y-3 text-sm text-ink-soft">
+            <p className="text-ink">Send a copy of everything on this server — sales, orders, payments, stock, menu and staff — to your live server on the internet, so you can follow the restaurant from anywhere.</p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li>The tills keep using this server: selling never depends on the internet.</li>
+              <li>Changes are sent every few seconds. When the internet is down they wait here and go out when it returns.</li>
+              <li>The live server is <b>view only</b>; make changes here.</li>
+            </ul>
+            <p>The live server is set up with <code className="rounded bg-page px-1">scripts/linux/install.sh</code>; its setup token is shown at the end of the install (and is in <code className="rounded bg-page px-1">/etc/chili-pos/chili.env</code>).</p>
+          </div>
+          <div className="space-y-3">
+            <Field label="Live server address"><Input value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} placeholder="https://pos.myrestaurant.co.ke" inputMode="url" autoComplete="off" /></Field>
+            <Field label="Live server setup token"><Input type="password" value={f.setupToken} onChange={(e) => setF({ ...f, setupToken: e.target.value })} autoComplete="off" /></Field>
+            <Button icon={<Globe className="h-4 w-4" />} loading={busy} disabled={!f.url.trim() || !f.setupToken.trim()} onClick={() => connect()}>Connect and start syncing</Button>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  const waiting = !!st.lastError;
+  return (
+    <Card
+      title="Live server"
+      actions={<>
+        <Button size="sm" variant="secondary" className="whitespace-nowrap" icon={<RefreshCw className={cx('h-4 w-4', st.syncing && 'animate-spin')} />} disabled={st.syncing} onClick={() => post('/live/sync').then(() => { toast('Syncing with the live server'); setTimeout(() => refetch(), 500); }).catch(handleError)}>Sync now</Button>
+        <Button size="sm" variant="secondary" className="whitespace-nowrap" icon={<Unplug className="h-4 w-4" />} onClick={async () => { const ok = await confirm({ title: 'Stop syncing?', message: 'The live server keeps the data it already has but stops receiving new sales. You can link again later with its setup token.', confirmLabel: 'Stop syncing', danger: true }); if (ok.ok) api('/live/connect', { method: 'DELETE' }).then(() => { qc.invalidateQueries({ queryKey: ['live-status'] }); toast('Live sync stopped'); }).catch(handleError); }}>Disconnect</Button>
+      </>}
+    >
+      <div className="space-y-4 text-sm">
+        <div className={cx('flex items-start gap-3 rounded-2xl p-4', waiting ? 'bg-warn-pale text-warn-ink' : 'bg-brand-pale text-brand-dark')}>
+          {waiting ? <CloudOff className="mt-0.5 h-5 w-5 shrink-0" /> : <Globe className="mt-0.5 h-5 w-5 shrink-0" />}
+          <div>
+            <p className="font-semibold">{waiting ? 'Waiting for the internet — nothing is lost' : st.syncing ? 'Syncing…' : 'Connected and in sync'}</p>
+            <p>{waiting ? `${st.lastError}. Changes are kept here and sent automatically when the live server can be reached.` : <>Sending to <a className="font-semibold underline" href={st.url} target="_blank" rel="noreferrer">{st.url} <ExternalLink className="inline h-3.5 w-3.5" /></a></>}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-2xl border border-line p-3"><p className="text-xs text-ink-soft">Last successful sync</p><p className="font-bold">{ago(st.lastSuccessAt)}</p></div>
+          <div className="rounded-2xl border border-line p-3"><p className="text-xs text-ink-soft">Changes waiting</p><p className="font-bold tabular-nums">{st.pending.toLocaleString('en-KE')}</p></div>
+          <div className="rounded-2xl border border-line p-3"><p className="text-xs text-ink-soft">Records sent</p><p className="font-bold tabular-nums">{st.docsSent.toLocaleString('en-KE')}</p></div>
+          <div className="rounded-2xl border border-line p-3"><p className="text-xs text-ink-soft">Linked</p><p className="font-bold">{dateTime(st.linkedAt)}</p>{st.linkedBy && <p className="text-xs text-ink-soft">by {st.linkedBy}</p>}</div>
+        </div>
+        <p className="text-ink-soft">On the live server, sign in with the same email and password as here. It shows sales, reports and the dashboard; changes are made on this server.</p>
+      </div>
+    </Card>
   );
 }
 
