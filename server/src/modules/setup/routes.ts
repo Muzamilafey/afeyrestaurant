@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createModule } from '../../http/route';
 import { setupBusiness, getBusiness } from '../../services/setup';
-import { env, isProd } from '../../config/env';
+import { env } from '../../config/env';
 import { safeEqual } from '../../lib/crypto';
 import { AppError } from '../../lib/errors';
 import { audit } from '../../services/audit';
@@ -16,8 +16,8 @@ m.route({ method: 'get', path: '/business', summary: 'Business name, logo and co
 });
 
 /**
- * First-run setup. Only works while no business exists. In production a SETUP_TOKEN must be configured and
- * supplied, so an internet-facing server that has not been set up yet cannot be claimed by someone else.
+ * First-run setup. Only works while no business exists. Installations that set SETUP_TOKEN require it here;
+ * local restaurant installs can leave it empty and complete setup without a separate token.
  */
 m.route(
   {
@@ -30,7 +30,6 @@ m.route(
     }),
   },
   async ({ body, req }) => {
-    if (isProd && !env.SETUP_TOKEN) throw new AppError(403, 'SETUP_DISABLED', 'Set SETUP_TOKEN on the server (or run `npm run setup`) to complete first-run setup');
     if (env.SETUP_TOKEN && (!body.setupToken || !safeEqual(body.setupToken, env.SETUP_TOKEN))) throw new AppError(403, 'SETUP_TOKEN_INVALID', 'Invalid setup token');
     const { setupToken: _t, ...input } = body;
     const r = await setupBusiness(input);

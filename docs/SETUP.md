@@ -38,14 +38,16 @@ Copy `server/.env.example` and set at least:
 | `JWT_ACCESS_SECRET` | `openssl rand -base64 48`. |
 | `SECRETS_ENCRYPTION_KEY` | `openssl rand -base64 32`. Encrypts integration secrets. **Back it up** — secrets cannot be decrypted without it. |
 | `COOKIE_SECURE` | `true` behind HTTPS (required in production). |
-| `SETUP_TOKEN` | Needed only to use the web first-run screen in production; remove after setup. |
+| `SETUP_TOKEN` | Optional. When set, required by the web first-run screen and used for live-copy pairing. |
 | `RUN_WORKER_IN_PROCESS` | `false` when running the separate worker with PM2. |
 
 The API refuses to start in production with development secrets.
 
 ## 3. First-run setup
 
-Either open the web app (it shows **Welcome to Chili POS**; enter the `SETUP_TOKEN`), or use the CLI:
+Open the web app (it shows **Welcome to Chili POS**) and create the business, first branch and owner. No token is
+needed unless `SETUP_TOKEN` is configured. Internet-facing installs should keep a token configured until setup is
+complete. You can also use the CLI:
 
 ```bash
 cd server && npm run build

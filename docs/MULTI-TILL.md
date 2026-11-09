@@ -14,10 +14,12 @@ till the moment they change (tills update each other in real time).
           (Wi-Fi / LAN)          ▲ receipt printers 9100 · kitchen/bar printers · ZKTeco 4370
 ```
 
-> **Shortcut:** steps 2–5 and the certificate/firewall parts are automated by one command on the server PC
-> (PowerShell as Administrator, in the project folder):
-> `powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1` — it prints the links and the setup
-> token when done. Then continue with step 7 on the other tills.
+> **One-command install (run once on the server PC):** from the project folder, double-click `install-windows.cmd`
+> or run `powershell -ExecutionPolicy Bypass -File .\scripts\windows\install.ps1` in an Administrator PowerShell.
+> It installs/configures Chili POS and starts the backend and HTTPS front end as Windows services; no setup token is
+> needed for the standard restaurant install. They start again after a PC restart and recover automatically from
+> failures. If you stop them and want to start both again, run `start-windows.cmd` (Administrator prompt). Then
+> continue with step 7 on the other tills.
 
 Pick where the server runs:
 
@@ -116,7 +118,7 @@ JWT_ACCESS_SECRET=<48+ random characters>
 SECRETS_ENCRYPTION_KEY=<32-byte base64 key — back this up, integration secrets cannot be decrypted without it>
 RUN_WORKER_IN_PROCESS=true
 UPLOAD_DIR=C:\chili-pos\server\uploads
-# Only for the first-run screen; remove after setup (or use `npm run setup -w server`)
+# Optional: protects first-run setup if the server is reachable by untrusted devices.
 SETUP_TOKEN=<any long random text>
 ```
 
@@ -220,8 +222,8 @@ Do this on every till PC, tablet or phone.
    `"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --kiosk https://192.168.1.10/pos --edge-kiosk-type=fullscreen`
    and put it in `shell:startup`.
 
-**First time only (on any one till):** complete the first-run setup screen (business, first branch, owner), using the
-`SETUP_TOKEN` from step 3. Then remove `SETUP_TOKEN` from `server\.env` and `nssm restart ChiliPOS`.
+**First time only (on any one till):** complete the first-run setup screen (business, first branch, owner). The
+standard Windows installer does not require a setup token. If you set `SETUP_TOKEN` in step 3, enter it on the screen.
 
 **Make it a till (each device)**
 

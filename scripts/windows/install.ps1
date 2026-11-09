@@ -11,8 +11,8 @@
     3. gets the code (uses the folder this script is in, or clones it), runs `npm ci` and `npm run build`;
     4. creates production settings with generated secrets (stored in C:\ProgramData\ChiliPOS, reused on every
        re-run - never regenerated) without changing an existing server\.env;
-    5. runs the backend (ChiliPOS) and the HTTPS front end (ChiliPOS-Web, Caddy) as Windows services that start
-       with the PC;
+    5. runs the backend (ChiliPOS) and HTTPS front end (ChiliPOS-Web, Caddy) as Windows services that start with
+       the PC and restart after failures;
     6. trusts the local HTTPS certificate on this PC, opens the firewall for the private network, and prints the
        links to use.
   Safe to run again: it updates the build and restarts the services. Add -Update to `git pull` first.
@@ -320,7 +320,9 @@ if (Test-Path $envFile) {
 }
 if (-not $state.jwt) { $state.jwt = if ($dotenv.JWT_ACCESS_SECRET -and -not $dotenv.JWT_ACCESS_SECRET.StartsWith('dev-')) { $dotenv.JWT_ACCESS_SECRET } else { New-Secret 48 } }
 if (-not $state.key) { $state.key = if ($dotenv.SECRETS_ENCRYPTION_KEY) { $dotenv.SECRETS_ENCRYPTION_KEY } else { New-Secret 32 } }
-if (-not $state.setupToken) { $state.setupToken = (New-Secret 12) -replace '[^A-Za-z0-9]', '' }
+# SETUP_TOKEN is optional for a restaurant's local install. Keep a value only when the operator explicitly
+# configured it in server\.env (for example, to protect first-run setup on a network reachable by others).
+if ($state.ContainsKey('setupToken')) { $state.Remove('setupToken') }
 if ($Tailscale) { $state.tailscale = $true }
 if (-not $DryRun) {
   New-Item -ItemType Directory -Force $stateDir | Out-Null
@@ -391,7 +393,7 @@ $allOrigins = (@($origins -split ',') + $extraOrigins + $tsOrigins | Select-Obje
 $apiEnv = @(
   'NODE_ENV=production', 'PORT=4000', "MONGODB_URI=$mongoUri", "CORS_ORIGINS=$allOrigins", "PUBLIC_API_URL=https://$primary",
   'COOKIE_SECURE=true', 'TRUST_PROXY=loopback', "JWT_ACCESS_SECRET=$($state.jwt)", "SECRETS_ENCRYPTION_KEY=$($state.key)",
-  "SETUP_TOKEN=$($state.setupToken)", 'RUN_WORKER_IN_PROCESS=true'
+  "SETUP_TOKEN=$($dotenv.SETUP_TOKEN)", 'RUN_WORKER_IN_PROCESS=true'
 )
 Ok "addresses: $($hosts -join ', ')"
 Ok "database:  $($mongoUri -replace '//[^@/]*@', '//****@')"
@@ -443,6 +445,8 @@ function Set-NssmService([string]$name, [string]$exe, [string]$arguments, [strin
   Quiet { & $nssm set $name AppRotateBytes 10485760 } | Out-Null
   Quiet { & $nssm set $name AppExit Default Restart } | Out-Null
   Quiet { & $nssm set $name Start SERVICE_AUTO_START } | Out-Null
+  Quiet { & "$env:SystemRoot\System32\sc.exe" failure $name 'reset=' '86400' 'actions=' 'restart/5000/restart/5000/restart/5000' } | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Could not enable Windows service recovery for $name." }
   if ($envPairs) { Quiet { & $nssm set $name AppEnvironmentExtra @envPairs } | Out-Null }
   if ($dependsOn) { Quiet { & $nssm set $name DependOnService $dependsOn } | Out-Null }
   Quiet { & $nssm start $name } | Out-Null
@@ -587,11 +591,7 @@ if ($tsName) {
   Write-Host "    2. Open https://$tsName in Chrome/Safari - no certificate needed. Add it to the home screen."
 }
 Write-Host ''
-if (-not $configured) {
-  Write-Host "  First-run setup token: $($state.setupToken)" -ForegroundColor Yellow
-  Write-Host '  (the setup screen asks for it once, to create the business and the owner account)'
-  Write-Host ''
-}
+if (-not $configured) { Write-Host '  Open the link on this PC to set up the restaurant and owner account.' -ForegroundColor Yellow; Write-Host '' }
 Write-Host '  Other tills: copy chili-root.crt from this folder to each till and install it as a'
 Write-Host '  Trusted Root certificate (docs\MULTI-TILL.md, step 7), then open the link above.'
 if ("$netCategory" -eq 'Public') { Write-Host "  ! This network is set to Public - tills cannot connect until it is Private:" -ForegroundColor Yellow; Write-Host '    Set-NetConnectionProfile -NetworkCategory Private' }
