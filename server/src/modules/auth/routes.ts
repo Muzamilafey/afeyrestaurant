@@ -14,6 +14,7 @@ import { encryptSecret, decryptSecret, randomToken, sha256 } from '../../lib/cry
 import { audit } from '../../services/audit';
 import { notify } from '../../services/notify';
 import { buildContext } from '../../middleware/auth';
+import { pinAlreadyAssigned } from '../../services/pins';
 
 const COOKIE = 'chili_rt';
 const cookieOpts = () => ({
@@ -144,6 +145,7 @@ m.route(
     if (!verified) throw badRequest(user.pinHash ? 'Current PIN is incorrect' : 'Enter your password to set your first PIN');
     const policy = pinPolicy(body.pin);
     if (policy) throw badRequest(policy);
+    if (await pinAlreadyAssigned(ctx.tenantId, body.pin, user._id)) throw badRequest('This PIN is already in use by another staff member. Set a unique PIN so sign-in can identify your account.');
     user.pinHash = await hashPassword(body.pin);
     await user.save();
     await audit(ctx, { action: 'auth.pin_changed', entity: 'User', entityId: user._id }, req);
@@ -193,14 +195,38 @@ m.route({ method: 'get', path: '/terminal/staff', summary: 'Staff who can sign i
 });
 
 m.route(
-  { method: 'post', path: '/pin-login', summary: 'Sign in with a staff PIN on a registered terminal', auth: 'public', middleware: [pinLimiter], body: z.object({ userId: z.string().regex(/^[a-f0-9]{24}$/i), pin: z.string().regex(/^\d{4,6}$/) }) },
+  { method: 'post', path: '/pin-login', summary: 'Sign in with a staff PIN on a registered terminal', auth: 'public', middleware: [pinLimiter], body: z.object({ userId: z.string().regex(/^[a-f0-9]{24}$/i).optional(), pin: z.string().regex(/^\d{4,6}$/) }) },
   async ({ body, req, res }) => {
     const t = await terminalFromRequest(req);
-    const user = await User.findOne({ tenantId: t.tenantId, _id: body.userId, active: true }).select('+pinHash');
+    let user = body.userId
+      ? await User.findOne({ tenantId: t.tenantId, _id: body.userId, active: true }).select('+pinHash')
+      : null;
+    let pinMatched = false;
+    if (!body.userId) {
+      const roles = await Role.find({ tenantId: t.tenantId }).lean();
+      const allBranchRoles = roles.filter((r) => !r.branchScoped).map((r) => r._id);
+      const staff = await User.find({
+        tenantId: t.tenantId,
+        active: true,
+        pinHash: { $exists: true, $ne: null },
+        $or: [{ branchIds: t.branchId }, { roleId: { $in: allBranchRoles } }],
+      }).select('+pinHash');
+      const matches = [];
+      for (const candidate of staff) {
+        if (candidate.pinHash && await verifyPassword(candidate.pinHash, body.pin)) matches.push(candidate);
+      }
+      if (matches.length > 1) throw new AppError(409, 'PIN_NOT_UNIQUE', 'This PIN is assigned to more than one staff account. Ask a manager to set unique PINs.');
+      if (!matches.length) {
+        await dummyVerify(body.pin);
+        throw unauthorized('Incorrect PIN');
+      }
+      user = matches[0];
+      pinMatched = true;
+    }
     if (!user) throw unauthorized('Incorrect PIN');
     if (user.lockedUntil && user.lockedUntil > new Date()) throw new AppError(423, 'ACCOUNT_LOCKED', 'Too many wrong PINs. Ask a manager or try again later.');
     if (!user.pinHash) throw new AppError(409, 'NO_PIN', 'No PIN set for this account. Sign in with email, then set a PIN.');
-    if (!(await verifyPassword(user.pinHash, body.pin))) {
+    if (!pinMatched && !(await verifyPassword(user.pinHash, body.pin))) {
       user.failedLogins = (user.failedLogins ?? 0) + 1;
       if (user.failedLogins >= env.LOGIN_MAX_ATTEMPTS) {
         user.lockedUntil = new Date(Date.now() + env.LOGIN_LOCK_MINUTES * 60_000);

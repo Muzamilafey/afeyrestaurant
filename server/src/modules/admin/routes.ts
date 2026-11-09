@@ -8,6 +8,7 @@ import { audit } from '../../services/audit';
 import { badRequest, conflict, forbidden, notFound, AppError } from '../../lib/errors';
 import { revokeAllForUser } from '../../auth/tokens';
 import { randomToken } from '../../lib/crypto';
+import { pinAlreadyAssigned } from '../../services/pins';
 
 /** Our own uploaded files only. */
 const zUpload = z.string().max(300).regex(/^\/uploads\/[\w-]+\/[\w-]+\.(png|jpg|webp)$/);
@@ -120,6 +121,7 @@ m.route({ method: 'post', path: '/users', summary: 'Create a user', auth: 'tenan
   const policy = passwordPolicy(body.password);
   if (policy) throw badRequest(policy);
   if (body.pin && pinPolicy(body.pin)) throw badRequest(pinPolicy(body.pin)!);
+  if (body.pin && await pinAlreadyAssigned(ctx.tenantId, body.pin)) throw badRequest('This PIN is already in use by another staff member. Set a unique PIN so sign-in can identify the account.');
   if (await User.exists({ tenantId: ctx.tenantId, email: body.email.toLowerCase() })) throw conflict('A user with this email already exists');
   const u = await User.create({ tenantId: ctx.tenantId, name: body.name, email: body.email.toLowerCase(), phone: body.phone, passwordHash: await hashPassword(body.password), pinHash: body.pin ? await hashPassword(body.pin) : undefined, roleId: body.roleId, branchIds: body.branchIds, defaultBranchId: body.defaultBranchId ?? body.branchIds[0], active: body.active ?? true });
   await audit(ctx, { action: 'user.created', entity: 'User', entityId: u._id, after: { email: u.email, roleId: body.roleId, branchIds: body.branchIds } }, req);
@@ -142,6 +144,7 @@ m.route({ method: 'patch', path: '/users/:id', summary: 'Update a user (role, br
   if (body.pin) {
     const pp = pinPolicy(body.pin);
     if (pp) throw badRequest(pp);
+    if (await pinAlreadyAssigned(ctx.tenantId, body.pin, u._id)) throw badRequest('This PIN is already in use by another staff member. Set a unique PIN so sign-in can identify the account.');
     u.pinHash = await hashPassword(body.pin);
     u.lockedUntil = undefined;
     u.failedLogins = 0;

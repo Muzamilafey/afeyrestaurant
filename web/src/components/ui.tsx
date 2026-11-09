@@ -83,22 +83,20 @@ export function StatusPill({ status }: { status?: string | null }) {
   return <Pill color={STATUS_COLOR[status] ?? 'gray'}>{status.replace(/_/g, ' ')}</Pill>;
 }
 
-export function Modal({ open, onClose, title, children, footer, size = 'md' }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'sm' | 'md' | 'lg' | 'xl' }) {
+export function Modal({ open, onClose, title, children, footer, size = 'md', dismissible = true }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; size?: 'sm' | 'md' | 'lg' | 'xl'; dismissible?: boolean }) {
   useEffect(() => {
     if (!open) return;
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const h = (e: KeyboardEvent) => dismissible && e.key === 'Escape' && onClose();
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [open, onClose]);
+  }, [open, onClose, dismissible]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-[2px] sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-[2px] sm:items-center sm:p-4" onMouseDown={(e) => dismissible && e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
       <div className={cx('flex max-h-[92vh] w-full flex-col rounded-t-2xl bg-card shadow-lift sm:rounded-2xl', { sm: 'sm:max-w-sm', md: 'sm:max-w-lg', lg: 'sm:max-w-2xl', xl: 'sm:max-w-4xl' }[size])}>
         <header className="flex items-center justify-between border-b border-line px-5 py-4">
           <h2 className="text-base font-semibold">{title}</h2>
-          <button className="rounded-lg p-1.5 text-ink-soft hover:bg-page" onClick={onClose} aria-label="Close">
-            <X className="h-5 w-5" />
-          </button>
+          {dismissible && <button className="rounded-lg p-1.5 text-ink-soft hover:bg-page" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>}
         </header>
         <div className="scroll-thin flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer && <footer className="flex flex-wrap justify-end gap-2 border-t border-line px-5 py-3">{footer}</footer>}

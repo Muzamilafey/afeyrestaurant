@@ -59,7 +59,7 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
       <div className="space-y-5">
         <section className="space-y-3">
           <p className="flex items-center gap-2 font-semibold"><KeyRound className="h-4 w-4 text-brand" /> Change my PIN</p>
-          <p className="text-xs text-ink-soft">Your PIN is used to sign in on POS terminals and to approve actions. 4–6 digits, numbers only; avoid 1111 or 1234.</p>
+          <p className="text-xs text-ink-soft">Use a unique PIN to sign in on POS terminals and approve actions. Choose 4–6 digits; avoid 1111 or 1234.</p>
           {usePassword ? (
             <Field label="Password"><Input type="password" value={pin.password} onChange={(e) => setPin({ ...pin, password: e.target.value })} /></Field>
           ) : (
@@ -128,7 +128,7 @@ export function AccountMenu({ onClose }: { onClose: () => void }) {
               <div className="flex items-center justify-between gap-3"><Pill color="green">This device is a registered terminal</Pill><Button size="sm" variant="ghost" onClick={() => { setTerminalToken(null); toast('PIN sign-in removed from this device'); }}>Remove</Button></div>
             ) : (
               <>
-                <p className="text-xs text-ink-soft">Registers this device for <b>{session?.branches.length ? 'the current branch' : 'your branch'}</b>. Staff then sign in by tapping their name and entering their PIN. Only do this on the restaurant’s own tills and tablets.</p>
+                <p className="text-xs text-ink-soft">Registers this device for <b>{session?.branches.length ? 'the current branch' : 'your branch'}</b>. Staff then sign in with their unique PIN. Only do this on the restaurant’s own tills and tablets.</p>
                 <div className="flex gap-2"><Input value={terminalName} onChange={(e) => setTerminalName(e.target.value)} placeholder="Device name" /><Button onClick={registerDevice}>Use this device</Button></div>
               </>
             )}

@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import {
   LayoutDashboard, LayoutGrid, Armchair, ChefHat, Wine, CalendarDays, Bike, Boxes, BookOpenText, Truck, Users, IdCard, BarChart3, Calculator, Plug, Settings, LogOut, Menu, Wifi, WifiOff, CloudUpload, Building2, X, Lock, Sun, Moon, ClipboardList, Eye, Martini, BedDouble,
@@ -6,7 +6,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, patch } from '@/lib/api';
 import { appIconsStale, makeAppIcons, type AppIcons } from '@/lib/appIcons';
-import { useAuth, shiftStaff } from '@/auth/AuthContext';
+import { useAuth } from '@/auth/AuthContext';
 import { cx } from '@/components/ui';
 import { outbox, syncOutbox } from '@/lib/offline';
 import { useFeedback } from '@/components/feedback';
@@ -122,11 +122,6 @@ export function AppShell() {
   // The sidebar starts closed (icons only) after signing in, so the screen gets the full width; ☰ opens it.
   const [collapsed, setCollapsed] = useState(true);
   const loc = useLocation();
-  const navigate = useNavigate();
-  const switchTo = async (id: string) => {
-    await logout();
-    navigate('/login', { state: { preselect: id } });
-  };
   useEffect(() => setOpen(false), [loc.pathname]);
   const stations = [can('kitchen.view') ? 'kitchen' : null, can('bar.view') && session?.business?.settings?.barEnabled === true ? 'bar' : null].filter(Boolean) as string[];
   useRealtime(branch?.id ?? null, stations);
@@ -169,19 +164,6 @@ export function AppShell() {
           </NavLink>
         ))}
       </div>
-      {terminalToken && !collapsed && shiftStaff().length > 0 && (
-        <div className="px-4 pb-2">
-          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-soft">Shift</p>
-          <div className="flex flex-col items-start gap-1.5">
-            {shiftStaff().map((s, i) => (
-              <button key={s.id} onClick={() => s.id !== session.user.id && switchTo(s.id)} title={s.id === session.user.id ? 'Signed in' : `Switch to ${s.name}`} className={cx('flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 text-xs', s.id === session.user.id ? 'border-brand bg-brand-pale text-brand-dark' : 'border-line hover:border-brand/50')}>
-                <span className={cx('grid h-5 w-5 place-items-center rounded-full text-[10px] font-bold', ['bg-[#C9C6F2] text-[#2E2A6B]', 'bg-[#C3EBDD] text-[#0F5137]', 'bg-[#F2C9D4] text-[#6B1F33]'][i % 3])}>{s.name[0]}</span>
-                {s.name.split(' ')[0]} {s.name.split(' ').slice(-1)[0]?.[0]}.
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       <div className="border-t border-line p-3">
         <button onClick={() => setAccount(true)} title="My account & PIN" className={cx('mb-2 flex w-full items-center gap-2 rounded-xl bg-page px-3 py-2 text-left hover:bg-brand-pale', collapsed && 'justify-center px-0')}>
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-pale text-sm font-bold text-brand-dark">{session.user.name[0]}</span>

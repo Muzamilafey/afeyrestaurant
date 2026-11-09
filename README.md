@@ -5,7 +5,7 @@ with any number of branches, terminals and staff.
 
 - **POS** for dine-in, takeaway, delivery, bar counter and room service, with modifiers, sizes, happy hour,
   discounts with manager approval, split bills, merge/transfer tables, held orders and barcode/PLU search.
-- **PIN sign-in** on registered tills: tap your name, enter your PIN. Quick user switching, idle auto-lock.
+- **PIN sign-in** on registered tills: enter your unique staff PIN. Idle auto-lock protects shared devices.
 - **Kitchen & bar displays** with automatic routing (food → kitchen, drinks → bar), ticket ageing, delay warnings,
   sound alerts and optional ticket printers.
 - **Payments**: cash drawer sessions, M-Pesa Daraja STK Push + C2B, card/QR (terminal reference), credit accounts,
@@ -76,8 +76,9 @@ npm run dev:web       # app on http://localhost:5173
 
 Demo accounts (password `ChiliDemo#2026`, PIN `2580`): `owner@`, `gm@`, `manager@`, `cashier@`, `waiter@`,
 `bartender@`, `chef@`, `store@`, `procurement@`, `accountant@`, `hr@`, `auditor@` — all `@chili.demo`.
-To try PIN sign-in, sign in as the manager, open the account menu (your name, bottom-left) and choose
-**Use this device**, then **Switch user**.
+The demo accounts share PIN `2580` for approvals. Before using PIN-only sign-in, set a different PIN for each staff
+account in **Settings → Users**. Then sign in as the manager, open the account menu (your name, bottom-left) and
+choose **Use this device**, then **Switch user**.
 
 On a fresh database without the seed, the app opens a **first-run setup** screen to create your business, first
 branch and owner account. Business name and logo can be changed later in **Settings → Business**.

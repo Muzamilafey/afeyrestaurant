@@ -422,7 +422,7 @@ function Users() {
           <Field label="Email"><Input disabled={!!f.id} value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
           <Field label="Role"><Select value={f.roleId} onChange={(e) => setF({ ...f, roleId: e.target.value })}>{roles.data?.roles.map((r) => <option key={r._id} value={r._id}>{r.name}</option>)}</Select></Field>
           <Field label={f.id ? 'Reset password' : 'Password'} hint="10+ chars, upper/lower case and a number"><Input type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>
-          <Field label={f.id ? 'Reset PIN (4–6 digits)' : 'PIN (4–6 digits)'} hint="For PIN sign-in and approvals"><Input type="password" inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '').slice(0, 6) })} /></Field>
+          <Field label={f.id ? 'Reset PIN (4–6 digits)' : 'PIN (4–6 digits)'} hint="Unique per staff account; used for sign-in and approvals"><Input type="password" inputMode="numeric" maxLength={6} value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, '').slice(0, 6) })} /></Field>
           <div><p className="label">Branches</p>{session?.branches.map((b) => <label key={b.id} className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-brand" checked={f.branchIds.includes(b.id)} onChange={(e) => setF({ ...f, branchIds: e.target.checked ? [...f.branchIds, b.id] : f.branchIds.filter((x: string) => x !== b.id) })} />{b.name}</label>)}</div>
           {f.id && <Toggle checked={f.active} onChange={(v) => setF({ ...f, active: v })} label="Active" />}
         </div>

@@ -60,7 +60,7 @@ const userSchema = new Schema(
     phone: String,
     name: { type: String, required: true, trim: true },
     passwordHash: { type: String, required: true, select: false },
-    /** Quick POS PIN for manager approvals (argon2 hash). */
+    /** Unique staff POS PIN for sign-in and manager approvals (argon2 hash). */
     pinHash: { type: String, select: false },
     roleId: { type: Schema.Types.ObjectId, ref: 'Role' },
     branchIds: [{ type: Schema.Types.ObjectId, ref: 'Branch' }],

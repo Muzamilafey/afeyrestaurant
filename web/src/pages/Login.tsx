@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Navigate, Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Delete, Check, Lock, Mail, Loader2, WifiOff } from 'lucide-react';
+import { Delete, Check, Lock, Mail, Loader2, WifiOff } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { Button, Field, Input, cx } from '@/components/ui';
 import { ApiError, errorMessage, get, post } from '@/lib/api';
@@ -44,53 +44,23 @@ export default function Login() {
 }
 
 // ───────────────────────── PIN sign-in (registered terminals) ─────────────────────────
-
-interface StaffResp { business: { name: string; logoUrl: string | null }; branch: { name: string }; terminal: { name: string }; staff: Array<{ id: string; displayName: string; role: string; hasPin: boolean }> }
-const AVATAR = ['bg-[#C9C6F2] text-[#2E2A6B]', 'bg-[#C3EBDD] text-[#0F5137]', 'bg-[#F2C9D4] text-[#6B1F33]', 'bg-[#F8E1B0] text-[#6B4A0B]', 'bg-[#BFDDF5] text-[#123F63]', 'bg-[#D8F0DF] text-[#087B35]'];
-const avatarClass = (i: number) => AVATAR[i % AVATAR.length];
-
-function useClock() {
-  const [now, setNow] = useState(new Date());
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 15_000);
-    return () => clearInterval(t);
-  }, []);
-  return now;
-}
-
 function PinLogin({ business, onUseEmail }: { business: PublicBusiness; onUseEmail: () => void }) {
-  const { pinLogin, terminalToken, setTerminalToken } = useAuth();
-  const now = useClock();
-  // Arriving from a "Shift" chip preselects that person so they only need to type their PIN.
-  const preselect = (useLocation().state as { preselect?: string } | null)?.preselect ?? null;
-  const [selected, setSelected] = useState<string | null>(preselect);
+  const { pinLogin, setTerminalToken } = useAuth();
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [shake, setShake] = useState(false);
   const [busy, setBusy] = useState(false);
-  const { data, error: loadError } = useQuery<StaffResp>({
-    queryKey: ['terminal-staff', terminalToken],
-    queryFn: async () => {
-      const res = await fetch('/api/v1/auth/terminal/staff', { headers: { 'X-Terminal-Token': terminalToken ?? '' } });
-      const body = await res.json();
-      if (!res.ok) throw new ApiError(res.status, body?.error?.code, body?.error?.message);
-      return body.data;
-    },
-    retry: false,
-  });
-  useEffect(() => {
-    // The device was unregistered by a manager: fall back to email sign-in.
-    if (loadError instanceof ApiError && loadError.code === 'TERMINAL_REQUIRED') setTerminalToken(null);
-  }, [loadError, setTerminalToken]);
-
-  const user = data?.staff.find((s) => s.id === selected);
   const submit = useCallback(async (value: string) => {
-    if (!selected || value.length < 4 || busy) return;
+    if (value.length < 4 || busy) return;
     setBusy(true);
     setError(null);
     try {
-      await pinLogin(selected, value);
+      await pinLogin(value);
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'TERMINAL_REQUIRED') {
+        setTerminalToken(null);
+        return;
+      }
       setError(errorMessage(e));
       setShake(true);
       setTimeout(() => setShake(false), 450);
@@ -98,10 +68,10 @@ function PinLogin({ business, onUseEmail }: { business: PublicBusiness; onUseEma
     } finally {
       setBusy(false);
     }
-  }, [selected, busy, pinLogin]);
+  }, [busy, pinLogin, setTerminalToken]);
 
   const press = useCallback((k: string) => {
-    if (!selected || busy) return;
+    if (busy) return;
     setError(null);
     if (k === 'back') return setPin((p) => p.slice(0, -1));
     if (k === 'ok') return submit(pin);
@@ -111,78 +81,42 @@ function PinLogin({ business, onUseEmail }: { business: PublicBusiness; onUseEma
       if (next.length === 6) submit(next); // 6-digit PINs submit automatically
       return next;
     });
-  }, [selected, busy, pin, submit]);
+  }, [busy, pin, submit]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (/^\d$/.test(e.key)) press(e.key);
       else if (e.key === 'Backspace') press('back');
       else if (e.key === 'Enter') press('ok');
-      else if (e.key === 'Escape') { setSelected(null); setPin(''); }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [press]);
 
-  const name = data?.business.name ?? business.name;
-  const logo = data?.business.logoUrl ?? business.logoUrl;
   return (
-    <div className="flex min-h-full items-stretch justify-center bg-[#0B0D0C] p-0 sm:p-6">
-      <div className="flex w-full max-w-6xl overflow-hidden bg-[#111412] text-white sm:rounded-[28px] sm:border sm:border-white/10">
-        {/* Staff list */}
-        <section className={cx('flex flex-1 flex-col p-6 sm:p-8', selected && 'hidden md:flex')}>
-          <header className="flex items-center gap-3">
-            <BusinessMark name={name} logoUrl={logo} dark />
-            <div className="min-w-0">
-              <p className="truncate font-bold">{name}</p>
-              <p className="truncate text-xs text-white/50">{data?.branch.name}{data?.terminal.name ? ` · ${data.terminal.name}` : ''}</p>
-            </div>
-            <p className="ml-auto hidden text-right text-xs text-white/50 sm:block">{now.toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}<br /><span className="text-base font-semibold text-white/80">{now.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })}</span></p>
-          </header>
-          <h1 className="mt-8 text-2xl font-bold">Who’s signing in?</h1>
-          <p className="text-sm text-white/50">Tap your name, then enter your PIN.</p>
-          <div className="scroll-thin mt-5 grid flex-1 content-start gap-3 overflow-y-auto pb-4 sm:grid-cols-2">
-            {!data && !loadError && Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-[72px] animate-pulse rounded-2xl bg-white/5" />)}
-            {data?.staff.map((s, i) => (
-              <button key={s.id} disabled={!s.hasPin} onClick={() => { setSelected(s.id); setPin(''); setError(null); }}
-                className={cx('flex items-center gap-4 rounded-2xl border px-4 py-3 text-left transition', selected === s.id ? 'border-brand bg-brand/20' : 'border-white/10 hover:border-white/30', !s.hasPin && 'opacity-40')}>
-                <span className={cx('grid h-12 w-12 shrink-0 place-items-center rounded-full text-lg font-bold', avatarClass(i))}>{s.displayName[0]}</span>
-                <span className="min-w-0">
-                  <span className="block truncate text-lg font-semibold">{s.displayName}</span>
-                  <span className="block truncate text-xs text-white/50">{s.hasPin ? s.role : 'No PIN set — use email sign-in'}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-          <button onClick={onUseEmail} className="mt-2 inline-flex items-center gap-2 self-start text-sm text-white/60 hover:text-white"><Mail className="h-4 w-4" /> Sign in with email instead</button>
-        </section>
-
-        {/* Keypad */}
-        <section className={cx('w-full flex-col items-center justify-center bg-[#1A1E1C] px-6 py-8 md:flex md:w-[420px]', selected ? 'flex' : 'hidden')}>
-          <div className="mb-2 flex w-full items-center md:hidden">
-            <button onClick={() => { setSelected(null); setPin(''); }} className="rounded-lg p-2 text-white/70" aria-label="Back"><ArrowLeft className="h-5 w-5" /></button>
-          </div>
-          {user ? (
-            <>
-              <p className="text-sm text-white/60">Hello {user.displayName.split(' ')[0]} — enter your PIN</p>
-              <div className={cx('my-6 flex gap-4', shake && 'animate-[shake_0.4s]')} aria-live="polite" aria-label={`${pin.length} digits entered`}>
-                {Array.from({ length: Math.max(4, Math.min(6, pin.length + (pin.length >= 4 ? 1 : 0))) }).map((_, i) => (
-                  <span key={i} className={cx('h-3.5 w-3.5 rounded-full transition', i < pin.length ? 'bg-white' : 'bg-white/20')} />
-                ))}
-              </div>
-              <p className={cx('mb-4 h-5 text-sm', error ? 'text-[#FF8A8A]' : 'text-white/40')}>{busy ? 'Signing in…' : error ?? '4 to 6 digits'}</p>
-              <div className="grid grid-cols-3 gap-3">
-                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => <Key key={d} onClick={() => press(d)}>{d}</Key>)}
-                <Key onClick={() => press('ok')} disabled={pin.length < 4} className="bg-brand hover:bg-brand-dark" label="Sign in"><Check className="h-6 w-6" /></Key>
-                <Key onClick={() => press('0')}>0</Key>
-                <Key onClick={() => press('back')} className="bg-transparent hover:bg-white/10" label="Delete"><Delete className="h-6 w-6" /></Key>
-              </div>
-            </>
-          ) : (
-            <div className="flex flex-col items-center gap-3 text-center text-white/50"><Lock className="h-10 w-10" /><p>Select your name to sign in</p></div>
-          )}
-        </section>
-      </div>
+    <div className="grid min-h-full place-items-center bg-[#0B0D0C] p-4 sm:p-6">
+      <section className="flex w-full max-w-md flex-col items-center rounded-[28px] border border-white/10 bg-[#111412] px-6 py-8 text-white sm:px-10">
+        <header className="mb-8 flex items-center gap-3 self-start">
+          <BusinessMark name={business.name} logoUrl={business.logoUrl} dark />
+          <p className="truncate font-bold">{business.name}</p>
+        </header>
+        <Lock className="mb-3 h-8 w-8 text-white/60" />
+        <h1 className="text-2xl font-bold">Enter your PIN</h1>
+        <p className="mt-1 text-sm text-white/50">Use your staff PIN to sign in.</p>
+        <div className={cx('my-6 flex min-h-5 gap-4', shake && 'animate-[shake_0.4s]')} aria-live="polite" aria-label={`${pin.length} digits entered`}>
+          {Array.from({ length: Math.max(4, Math.min(6, pin.length + (pin.length >= 4 ? 1 : 0))) }).map((_, i) => (
+            <span key={i} className={cx('h-3.5 w-3.5 rounded-full transition', i < pin.length ? 'bg-white' : 'bg-white/20')} />
+          ))}
+        </div>
+        <p className={cx('mb-4 h-5 text-center text-sm', error ? 'text-[#FF8A8A]' : 'text-white/40')} role={error ? 'alert' : undefined}>{busy ? 'Signing in…' : error ?? '4 to 6 digits'}</p>
+        <div className="grid grid-cols-3 gap-3">
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => <Key key={d} onClick={() => press(d)}>{d}</Key>)}
+          <Key onClick={() => press('ok')} disabled={pin.length < 4 || busy} className="bg-brand hover:bg-brand-dark" label="Sign in"><Check className="h-6 w-6" /></Key>
+          <Key onClick={() => press('0')} disabled={busy}>0</Key>
+          <Key onClick={() => press('back')} disabled={busy} className="bg-transparent hover:bg-white/10" label="Delete"><Delete className="h-6 w-6" /></Key>
+        </div>
+        <button onClick={onUseEmail} className="mt-7 inline-flex items-center gap-2 text-sm text-white/60 hover:text-white"><Mail className="h-4 w-4" /> Sign in with email instead</button>
+      </section>
       <style>{`@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}`}</style>
     </div>
   );

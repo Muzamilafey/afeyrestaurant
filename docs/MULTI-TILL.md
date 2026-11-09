@@ -232,7 +232,7 @@ standard Windows installer does not require a setup token. If you set `SETUP_TOK
    `Waiter tablet 1`) → **Use this device**.
 3. Same menu → **Receipt printer for this till** → choose the printer next to this till (after step 8). Tablets
    without a printer can keep *Automatic*.
-4. Sign out. From now on staff tap their name and enter their PIN on this till.
+4. Give each staff account a unique PIN in **Settings → Users**, then sign out. Staff enter that PIN on this till; no name selection is needed.
 
 ## 8. Printers and the bridge
 

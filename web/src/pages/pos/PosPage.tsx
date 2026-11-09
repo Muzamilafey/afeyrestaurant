@@ -9,6 +9,7 @@ import { ApiError, get, post, patch } from '@/lib/api';
 import { money, uuid, toCents } from '@/lib/format';
 import { cacheCatalog, cachedCatalog, queueOfflineOrder, terminalId } from '@/lib/offline';
 import { printReceipt, type ReceiptDoc } from '@/lib/printing';
+import { pickReceiptPrinter } from '@/lib/till';
 import { useOnline } from '@/lib/connectivity';
 import { OfflinePayDialog, type OfflinePayment } from './OfflinePayDialog';
 import { AssignRiderDialog, type DeliveryDetails } from './AssignRiderDialog';
@@ -109,8 +110,8 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   const [paying, setPaying] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<null | 'transfer' | 'merge' | 'split' | 'held' | 'customer'>(null);
-  /** Dine-in without a table: ask for one, then carry on with the action that was pressed. */
-  const [pickTableFor, setPickTableFor] = useState<null | 'send' | 'pay'>(null);
+  /** New dine-in orders choose a table before the product workspace. */
+  const [pickTableFor, setPickTableFor] = useState<null | 'new' | 'send' | 'pay'>(null);
   /** Delivery: confirm the address and assign a rider before the order is placed. */
   const [pickRiderFor, setPickRiderFor] = useState<null | 'send' | 'pay'>(null);
   const [offlineReceipt, setOfflineReceipt] = useState<Order | null>(null);
@@ -120,12 +121,12 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
 
   useEffect(() => {
     if (params.get('pay') === '1' && order && ['open', 'held'].includes(order.status)) {
-      setPaying(true);
+      if (can('payments.receive')) setPaying(true);
       const next = new URLSearchParams(params);
       next.delete('pay');
       setParams(next, { replace: true });
     }
-  }, [params, order]);
+  }, [params, order, can, setParams]);
 
   useEffect(() => {
     const t = params.get('table');
@@ -134,6 +135,12 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
       setMode('dine_in');
     }
   }, [params, orderId]);
+
+  useEffect(() => {
+    if (!orderId && !order && !params.get('table') && mode === 'dine_in' && !tableId && online && tablesQ.isSuccess && !pickTableFor) {
+      setPickTableFor('new');
+    }
+  }, [orderId, order, params, mode, tableId, online, tablesQ.isSuccess, pickTableFor]);
 
   const categoriesById = useMemo(() => new Map(catalog?.categories.map((c) => [c._id, c]) ?? []), [catalog]);
   const inOutlet = (categoryId: string) => (categoriesById.get(categoryId)?.station === 'bar') === (outlet === 'bar');
@@ -272,11 +279,17 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
       let sent: string | null = null;
       if (!order) {
         const o = await createFromDraft(true, table, delivery);
-        if (o) sent = `Order ${o.number} sent${o.delivery?.riderName ? ` · rider ${o.delivery.riderName}` : ''}`;
+        if (o) {
+          sent = `Order ${o.number} sent${o.delivery?.riderName ? ` · rider ${o.delivery.riderName}` : ''}`;
+          if (session?.user.role?.key === 'waiter') await printOrderBill(o._id).catch(handleError);
+        }
       } else {
         const r = await post<{ order: Order; tickets: unknown[] }>(`/orders/${order._id}/send`, { submissionKey: uuid() });
         qc.setQueryData(['order', order._id], (old: { order: Order } | undefined) => ({ ...(old ?? {}), order: r.order }));
-        if (r.tickets.length) sent = `${order.number} sent to kitchen/bar`;
+        if (r.tickets.length) {
+          sent = `${order.number} sent to kitchen/bar`;
+          if (session?.user.role?.key === 'waiter') await printOrderBill(order._id).catch(handleError);
+        }
         else toast('Nothing new to send');
       }
       // Sent: start a fresh order straight away. The sent one stays open in the strip below (tap it to add or pay).
@@ -294,6 +307,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   }
 
   async function startPayment(table = tableId, delivery?: DeliveryDetails) {
+    if (!can('payments.receive')) return;
     if (!online) return payOffline();
     if (table === tableId && needsTable()) return setPickTableFor('pay');
     if (needsRider(delivery)) return setPickRiderFor('pay');
@@ -426,6 +440,19 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
     if (!order) return;
     const r = await get<{ doc: ReceiptDoc }>(`/orders/${order._id}/receipt`).catch(handleError);
     if (r) printReceipt(r.doc, 'Bill');
+  }
+
+  /** Waiters print the open bill when they send an order; the server receipt document includes the admin header/footer. */
+  async function printOrderBill(orderId: string) {
+    const r = await get<{ text: string; doc: ReceiptDoc }>(`/orders/${orderId}/receipt`);
+    const printers = await get<Array<{ _id: string; role: string; connection: string; active: boolean; name: string }>>('/integrations/printers').catch(() => []);
+    const printer = pickReceiptPrinter(printers);
+    if (printer) {
+      await post(`/integrations/printers/${printer._id}/jobs`, { kind: 'bill', refId: orderId, copy: 'original', payload: { text: r.text, doc: r.doc }, dedupeKey: `bill:${orderId}:send:${uuid()}` });
+      toast(`Bill sent to ${printer.name}`);
+    } else {
+      printReceipt(r.doc, 'Bill');
+    }
   }
 
   // Barcode scanners type the code and press Enter.
@@ -667,13 +694,11 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
                 if (c.ok) action('void', () => withApproval((approval) => post(`/orders/${order._id}/void`, { reason: c.reason, approval })).then(() => setOrder(null)), 'Order voided');
               }}><Ban className="h-3.5 w-3.5" /> Void order</button>
             )}
-            <div className="mt-3 grid grid-cols-2 gap-2">
+            <div className={cx('mt-3 grid gap-2', !locked && !can('payments.receive') ? 'grid-cols-1' : 'grid-cols-2')}>
               <Button variant="secondary" size="lg" icon={<Send className="h-4 w-4" />} disabled={!hasNew || !!locked || !online} loading={busy === 'send'} onClick={() => placeOrder()}>Place order</Button>
               {locked ? (
                 <Button size="lg" onClick={() => setPaying(true)} disabled={order?.status !== 'paid'}>Receipt</Button>
-              ) : (
-                <Button size="lg" disabled={lines.length === 0 || (order ? order.totals.total - order.totals.paid <= 0 : false)} loading={busy === 'pay'} onClick={() => startPayment()}>{online ? 'Pay' : 'Pay (offline)'}</Button>
-              )}
+              ) : can('payments.receive') && <Button size="lg" disabled={lines.length === 0 || (order ? order.totals.total - order.totals.paid <= 0 : false)} loading={busy === 'pay'} onClick={() => startPayment()}>{online ? 'Pay' : 'Pay (offline)'}</Button>}
             </div>
           </div>
         </aside>
@@ -712,21 +737,23 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
       {offlineReceipt && <Modal open onClose={() => setOfflineReceipt(null)} title="Offline sale recorded" footer={<Button onClick={() => setOfflineReceipt(null)}>New order</Button>}><p className="text-sm">Cash sale of <b>{money(offlineReceipt.totals.total)}</b> saved on this terminal (ref {offlineReceipt.number.toUpperCase()}). It is <b>pending synchronisation</b> and will be verified by the server when the connection returns.</p></Modal>}
       {pickTableFor && (
         <TablePicker
-          title="Choose a table"
-          subtitle={`Pick the table for this dine-in order, then it will be ${pickTableFor === 'pay' ? 'sent and opened for payment' : 'sent to the kitchen and bar'}.`}
+          dismissible={pickTableFor !== 'new'}
+          title={pickTableFor === 'new' ? 'Choose a table to start' : 'Choose a table'}
+          subtitle={pickTableFor === 'new' ? 'Select the table first, then choose products for the order.' : `Pick the table for this dine-in order, then it will be ${pickTableFor === 'pay' ? 'sent and opened for payment' : 'sent to the kitchen and bar'}.`}
           tables={tables}
-          onClose={() => setPickTableFor(null)}
+          onClose={() => { if (pickTableFor !== 'new') setPickTableFor(null); }}
           onPick={(id) => {
             const action = pickTableFor;
             setPickTableFor(null);
             setTableId(id);
             if (action === 'pay') startPayment(id);
-            else placeOrder(id);
+            else if (action === 'send') placeOrder(id);
           }}
           onTakeaway={() => {
+            const action = pickTableFor;
             setPickTableFor(null);
             setMode('takeaway');
-            toast('Switched to takeaway — press the button again to continue', 'info');
+            toast(action === 'new' ? 'Takeaway selected' : 'Switched to takeaway — press the button again to continue', 'info');
           }}
         />
       )}
@@ -778,10 +805,10 @@ function CategoryCard({ active, onClick, icon, name, count }: { active: boolean;
 }
 
 const TABLE_ORDER: Record<string, number> = { available: 0, occupied: 1, reserved: 2, cleaning: 3 };
-function TablePicker({ title, subtitle, tables, onClose, onPick, onTakeaway }: { title: string; subtitle?: string; tables: TablesResp['tables']; onClose: () => void; onPick: (id: string) => void; onTakeaway?: () => void }) {
+function TablePicker({ title, subtitle, tables, onClose, onPick, onTakeaway, dismissible = true }: { title: string; subtitle?: string; tables: TablesResp['tables']; onClose: () => void; onPick: (id: string) => void; onTakeaway?: () => void; dismissible?: boolean }) {
   const sorted = [...tables].sort((a, b) => (TABLE_ORDER[a.status] ?? 9) - (TABLE_ORDER[b.status] ?? 9) || a.number.localeCompare(b.number, undefined, { numeric: true }));
   return (
-    <Modal open onClose={onClose} title={title} size="lg" footer={onTakeaway && <Button variant="secondary" onClick={onTakeaway}>Make it takeaway instead</Button>}>
+    <Modal open onClose={onClose} title={title} size="lg" dismissible={dismissible} footer={onTakeaway && <Button variant="secondary" onClick={onTakeaway}>Make it takeaway instead</Button>}>
       {subtitle && <p className="mb-4 text-sm text-ink-soft">{subtitle}</p>}
       {sorted.length === 0 ? (
         <Empty title="No tables set up" hint="Add tables in Settings → Tables, or make this a takeaway order." />
