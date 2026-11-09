@@ -67,7 +67,7 @@ export function receiptDoc(r: ReceiptData, copy: 'original' | 'duplicate' = 'ori
 
   if (copy === 'duplicate') L.push({ k: 'banner', t: 'DUPLICATE COPY' });
   if (r.order.offline) L.push({ k: 'banner', t: 'OFFLINE SALE - PENDING SYNC' });
-  L.push({ k: 'center', t: isReceipt ? 'SALES RECEIPT' : 'BILL - NOT A RECEIPT', bold: true });
+  L.push({ k: 'center', t: isReceipt ? 'SALES RECEIPT' : 'BILL', bold: true });
   L.push({ k: 'space' });
 
   // ── Order details

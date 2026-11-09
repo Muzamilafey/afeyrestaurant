@@ -489,6 +489,16 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
     .filter((o) => (o.outlet ?? 'restaurant') === outlet);
   const locked = order && !['open', 'held'].includes(order.status);
 
+  if (pickTableFor === 'new') {
+    return (
+      <TableSelectionPage
+        tables={tables}
+        onPick={(id) => { setTableId(id); setPickTableFor(null); }}
+        onTakeaway={() => { setPickTableFor(null); setMode('takeaway'); toast('Takeaway selected'); }}
+      />
+    );
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1">
@@ -737,11 +747,10 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
       {offlineReceipt && <Modal open onClose={() => setOfflineReceipt(null)} title="Offline sale recorded" footer={<Button onClick={() => setOfflineReceipt(null)}>New order</Button>}><p className="text-sm">Cash sale of <b>{money(offlineReceipt.totals.total)}</b> saved on this terminal (ref {offlineReceipt.number.toUpperCase()}). It is <b>pending synchronisation</b> and will be verified by the server when the connection returns.</p></Modal>}
       {pickTableFor && (
         <TablePicker
-          dismissible={pickTableFor !== 'new'}
-          title={pickTableFor === 'new' ? 'Choose a table to start' : 'Choose a table'}
-          subtitle={pickTableFor === 'new' ? 'Select the table first, then choose products for the order.' : `Pick the table for this dine-in order, then it will be ${pickTableFor === 'pay' ? 'sent and opened for payment' : 'sent to the kitchen and bar'}.`}
+          title="Choose a table"
+          subtitle={`Pick the table for this dine-in order, then it will be ${pickTableFor === 'pay' ? 'sent and opened for payment' : 'sent to the kitchen and bar'}.`}
           tables={tables}
-          onClose={() => { if (pickTableFor !== 'new') setPickTableFor(null); }}
+          onClose={() => setPickTableFor(null)}
           onPick={(id) => {
             const action = pickTableFor;
             setPickTableFor(null);
@@ -750,10 +759,9 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
             else if (action === 'send') placeOrder(id);
           }}
           onTakeaway={() => {
-            const action = pickTableFor;
             setPickTableFor(null);
             setMode('takeaway');
-            toast(action === 'new' ? 'Takeaway selected' : 'Switched to takeaway — press the button again to continue', 'info');
+            toast('Switched to takeaway — press the button again to continue', 'info');
           }}
         />
       )}
@@ -805,41 +813,73 @@ function CategoryCard({ active, onClick, icon, name, count }: { active: boolean;
 }
 
 const TABLE_ORDER: Record<string, number> = { available: 0, occupied: 1, reserved: 2, cleaning: 3 };
-function TablePicker({ title, subtitle, tables, onClose, onPick, onTakeaway, dismissible = true }: { title: string; subtitle?: string; tables: TablesResp['tables']; onClose: () => void; onPick: (id: string) => void; onTakeaway?: () => void; dismissible?: boolean }) {
-  const sorted = [...tables].sort((a, b) => (TABLE_ORDER[a.status] ?? 9) - (TABLE_ORDER[b.status] ?? 9) || a.number.localeCompare(b.number, undefined, { numeric: true }));
+function sortedTables(tables: TablesResp['tables']) {
+  return [...tables].sort((a, b) => (TABLE_ORDER[a.status] ?? 9) - (TABLE_ORDER[b.status] ?? 9) || a.number.localeCompare(b.number, undefined, { numeric: true }));
+}
+function TableChoices({ tables, onPick }: { tables: TablesResp['tables']; onPick: (id: string) => void }) {
   return (
-    <Modal open onClose={onClose} title={title} size="lg" dismissible={dismissible} footer={onTakeaway && <Button variant="secondary" onClick={onTakeaway}>Make it takeaway instead</Button>}>
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+      {sortedTables(tables).map((t, i) => {
+        const busy = t.orders.length > 0;
+        return (
+          <button
+            key={t._id}
+            autoFocus={i === 0}
+            onClick={() => onPick(t._id)}
+            className={cx(
+              'group flex flex-col gap-2 rounded-2xl border-2 p-3 text-left transition hover:-translate-y-0.5 hover:border-brand hover:shadow-soft focus-visible:border-brand focus-visible:outline-none',
+              t.status === 'available' ? 'border-brand/40 bg-brand-50' : 'border-line bg-card',
+            )}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-xl font-bold leading-none">{t.number}</span>
+              <StatusPill status={t.status} />
+            </div>
+            <span className="flex items-center gap-1 text-xs text-ink-soft"><Users className="h-3.5 w-3.5" /> {t.capacity} seats</span>
+            {busy ? (
+              <span className="text-xs font-medium text-ink-soft">{t.orders.length} open order{t.orders.length > 1 ? 's' : ''} · {money(t.orders.reduce((a, o) => a + o.total, 0))}</span>
+            ) : (
+              <span className="text-xs font-medium text-brand">Free</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+function TableSelectionPage({ tables, onPick, onTakeaway }: { tables: TablesResp['tables']; onPick: (id: string) => void; onTakeaway: () => void }) {
+  return (
+    <div className="flex h-full flex-col bg-page">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-card px-4 py-4 sm:px-6">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-brand-dark">New dine-in order</p>
+          <h1 className="mt-1 text-2xl font-bold">Choose a table</h1>
+          <p className="mt-1 text-sm text-ink-soft">Select a table first, then choose products for the order.</p>
+        </div>
+        <Button variant="secondary" icon={<ShoppingBag className="h-4 w-4" />} onClick={onTakeaway}>Make it takeaway</Button>
+      </header>
+      <main className="scroll-thin min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        {tables.length ? (
+          <TableChoices tables={tables} onPick={onPick} />
+        ) : (
+          <Empty
+            title="No tables set up"
+            hint="Add tables in Settings → Tables, or switch this order to takeaway."
+            action={<Button variant="secondary" icon={<ShoppingBag className="h-4 w-4" />} onClick={onTakeaway}>Make it takeaway</Button>}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
+function TablePicker({ title, subtitle, tables, onClose, onPick, onTakeaway }: { title: string; subtitle?: string; tables: TablesResp['tables']; onClose: () => void; onPick: (id: string) => void; onTakeaway?: () => void }) {
+  return (
+    <Modal open onClose={onClose} title={title} size="lg" footer={onTakeaway && <Button variant="secondary" onClick={onTakeaway}>Make it takeaway instead</Button>}>
       {subtitle && <p className="mb-4 text-sm text-ink-soft">{subtitle}</p>}
-      {sorted.length === 0 ? (
+      {tables.length === 0 ? (
         <Empty title="No tables set up" hint="Add tables in Settings → Tables, or make this a takeaway order." />
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-          {sorted.map((t) => {
-            const busy = t.orders.length > 0;
-            return (
-              <button
-                key={t._id}
-                autoFocus={t === sorted[0]}
-                onClick={() => onPick(t._id)}
-                className={cx(
-                  'group flex flex-col gap-2 rounded-2xl border-2 p-3 text-left transition hover:-translate-y-0.5 hover:border-brand hover:shadow-soft focus-visible:border-brand focus-visible:outline-none',
-                  t.status === 'available' ? 'border-brand/40 bg-brand-50' : 'border-line bg-card',
-                )}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-xl font-bold leading-none">{t.number}</span>
-                  <StatusPill status={t.status} />
-                </div>
-                <span className="flex items-center gap-1 text-xs text-ink-soft"><Users className="h-3.5 w-3.5" /> {t.capacity} seats</span>
-                {busy ? (
-                  <span className="text-xs font-medium text-ink-soft">{t.orders.length} open order{t.orders.length > 1 ? 's' : ''} · {money(t.orders.reduce((a, o) => a + o.total, 0))}</span>
-                ) : (
-                  <span className="text-xs font-medium text-brand">Free</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+        <TableChoices tables={tables} onPick={onPick} />
       )}
     </Modal>
   );
