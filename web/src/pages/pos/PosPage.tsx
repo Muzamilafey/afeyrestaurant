@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { Utensils, Beef, Salad, Sandwich, CupSoda, Beer, Martini as MartiniIcon, Wine, Pizza, Coffee, IceCream, Fish, Soup, Cake, Croissant, Drumstick, Egg, Apple, Citrus, GlassWater, LayoutGrid, Users, type LucideIcon, Search, ScanBarcode, Trash2, Minus, Plus, Send, PauseCircle, PlayCircle, ArrowRightLeft, Merge, Split, Printer, Percent, Ban, UtensilsCrossed, ShoppingBag, Bike, Martini, ChefHat, StickyNote, UserRound, CloudOff, QrCode } from 'lucide-react';
+import { Utensils, Beef, Salad, Sandwich, CupSoda, Beer, Martini as MartiniIcon, Wine, Pizza, Coffee, IceCream, Fish, Soup, Cake, Croissant, Drumstick, Egg, Apple, Citrus, GlassWater, LayoutGrid, Users, type LucideIcon, Search, ScanBarcode, Trash2, Minus, Plus, Send, PauseCircle, PlayCircle, ArrowRightLeft, Merge, Split, Printer, Percent, Ban, UtensilsCrossed, ShoppingBag, Bike, Martini, ChefHat, StickyNote, UserRound, CloudOff, QrCode, History } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { useFeedback } from '@/components/feedback';
 import { Button, Input, Modal, Pill, Select, Skeleton, StatusPill, cx, Empty, Field } from '@/components/ui';
@@ -109,7 +109,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   const [modFor, setModFor] = useState<Product | null>(null);
   const [paying, setPaying] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<null | 'transfer' | 'merge' | 'split' | 'held' | 'customer'>(null);
+  const [dialog, setDialog] = useState<null | 'transfer' | 'merge' | 'split' | 'held' | 'customer' | 'recent'>(null);
   /** New dine-in orders choose a table before the product workspace. */
   const [pickTableFor, setPickTableFor] = useState<null | 'new' | 'send' | 'pay'>(null);
   /** Delivery: confirm the address and assign a rider before the order is placed. */
@@ -720,26 +720,12 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
           <span>{money(order ? order.totals.total - order.totals.paid : draftTotal + estService)}</span>
         </button>
       )}
-      {/* ── Bottom service bar: active tables & orders ── */}
-      <div className="scroll-thin flex shrink-0 gap-2 overflow-x-auto border-t border-line bg-card px-4 py-2.5">
-        {activeChips.length === 0 ? (
-          <p className="py-1.5 text-sm text-ink-soft">{online ? (can('orders.view_all') ? `No open ${outlet === 'bar' ? 'bar' : 'restaurant'} orders.` : `You have no open ${outlet === 'bar' ? 'bar' : 'restaurant'} orders.`) : 'Offline — active orders unavailable.'}</p>
-        ) : (
-          activeChips.map((c) => (
-            <button key={c.id} onClick={() => setOrder(c.id)} title={`${c.number} · ${c.table.length <= 3 ? `Table ${c.table}` : c.table}`} className={cx('flex min-w-[170px] max-w-[230px] shrink-0 flex-col gap-1 rounded-xl border-2 px-3 py-2 text-left', orderId === c.id ? 'border-brand bg-brand-50' : 'border-line hover:border-brand/40')}>
-              <span className="flex items-center justify-between gap-2">
-                <span className="truncate text-sm font-bold tabular-nums">{c.number}</span>
-                {'qrPending' in c && c.qrPending ? <span className="whitespace-nowrap rounded-md bg-warn-pale px-1.5 py-0.5 text-[10px] font-bold text-warn-ink">QR · accept</span> : 'qr' in c && c.qr ? <span className="rounded-md bg-info-pale px-1.5 py-0.5 text-[10px] font-bold text-info">QR</span> : null}
-              </span>
-              <div className="flex items-center justify-between gap-2 text-xs text-ink-soft">
-                <span className="rounded-md bg-page px-1.5 py-0.5 font-semibold text-ink">{c.table.length <= 3 ? `T-${c.table}` : c.table}</span>
-                <span>{c.itemCount} {c.itemCount === 1 ? 'item' : 'items'}</span>
-              </div>
-              <span className="truncate text-xs text-ink-soft">{c.waiterName ?? '—'} · {money(c.total)}</span>
-              <div className="h-1.5 overflow-hidden rounded-full bg-page"><div className="h-full rounded-full bg-brand" style={{ width: `${Math.round((c.progress ?? 0) * 100)}%` }} /></div>
-            </button>
-          ))
-        )}
+      {/* Keep the POS workspace clear; open orders are available from this button. */}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-line bg-card px-4 py-2.5">
+        <p className="min-w-0 truncate text-sm text-ink-soft">{online ? `${activeChips.length} open ${activeChips.length === 1 ? 'order' : 'orders'}` : 'Offline — recent orders unavailable.'}</p>
+        <Button variant="secondary" size="sm" icon={<History className="h-4 w-4" />} disabled={!online} onClick={() => setDialog('recent')}>
+          Recent orders{activeChips.length ? ` (${activeChips.length})` : ''}
+        </Button>
       </div>
 
       {modFor && catalog && <ModifierDialog product={modFor} groups={catalog.modifierGroups} station={stationFor(modFor)} onClose={() => setModFor(null)} onConfirm={(l) => { setModFor(null); addLine(l); }} />}
@@ -786,6 +772,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
       {dialog === 'transfer' && order && <TablePicker title="Transfer to table" tables={tables.filter((t) => t._id !== order.tableId)} onClose={() => setDialog(null)} onPick={(id) => action('transfer', () => post(`/orders/${order._id}/transfer`, { tableId: id }), 'Order transferred').then(() => setDialog(null))} />}
       {dialog === 'merge' && order && <OrderPicker title="Merge another order into this one" orders={activeChips.filter((c) => c.id !== order._id)} onClose={() => setDialog(null)} onPick={(id) => action('merge', () => post(`/orders/${order._id}/merge`, { sourceOrderId: id }), 'Orders merged').then(() => setDialog(null))} />}
       {dialog === 'held' && <HeldOrders onClose={() => setDialog(null)} onPick={(id) => { setOrder(id); setDialog(null); }} />}
+      {dialog === 'recent' && <RecentOrdersDialog orders={activeChips} onClose={() => setDialog(null)} onPick={(id) => { setOrder(id); setDialog(null); }} />}
       {dialog === 'split' && order && <SplitDialog order={order} onClose={() => setDialog(null)} onDone={(newId) => { setDialog(null); toast('Bill split — new bill opened'); setOrder(newId); }} />}
       {dialog === 'customer' && order && <CustomerDialog order={order} onClose={() => setDialog(null)} />}
     </div>
@@ -889,6 +876,31 @@ function OrderPicker({ title, orders, onClose, onPick }: { title: string; orders
     <Modal open onClose={onClose} title={title}>
       {orders.length === 0 ? <Empty title="No other open orders" /> : (
         <div className="space-y-2">{orders.map((o) => <button key={o.id} onClick={() => onPick(o.id)} className="flex w-full items-center justify-between rounded-xl border border-line px-4 py-3 hover:border-brand"><span className="font-semibold">{o.number} · {o.table}</span><span>{money(o.total)}</span></button>)}</div>
+      )}
+    </Modal>
+  );
+}
+function RecentOrdersDialog({ orders, onClose, onPick }: { orders: Array<{ id: string; number: string; table: string; total: number; itemCount: number; waiterName?: string; progress?: number; qr?: boolean; qrPending?: boolean }>; onClose: () => void; onPick: (id: string) => void }) {
+  return (
+    <Modal open onClose={onClose} title="Recent orders" size="lg">
+      {orders.length === 0 ? <Empty title="No open orders" hint="Orders sent from this POS will appear here." /> : (
+        <div className="space-y-2">
+          {orders.map((o) => (
+            <button key={o.id} onClick={() => onPick(o.id)} className="w-full rounded-xl border border-line p-3 text-left transition hover:border-brand/50 hover:bg-page">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold tabular-nums">{o.number}</span>
+                    {o.qrPending ? <span className="rounded-md bg-warn-pale px-1.5 py-0.5 text-[10px] font-bold text-warn-ink">QR · accept</span> : o.qr ? <span className="rounded-md bg-info-pale px-1.5 py-0.5 text-[10px] font-bold text-info">QR</span> : null}
+                  </div>
+                  <p className="mt-1 truncate text-xs text-ink-soft">{o.table.length <= 3 ? `Table ${o.table}` : o.table} · {o.itemCount} {o.itemCount === 1 ? 'item' : 'items'} · {o.waiterName ?? '—'}</p>
+                </div>
+                <span className="shrink-0 text-sm font-semibold">{money(o.total)}</span>
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-page"><div className="h-full rounded-full bg-brand" style={{ width: `${Math.round((o.progress ?? 0) * 100)}%` }} /></div>
+            </button>
+          ))}
+        </div>
       )}
     </Modal>
   );
