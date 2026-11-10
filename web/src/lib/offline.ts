@@ -8,6 +8,12 @@ import { post } from './api';
  */
 interface ChiliDB extends DBSchema {
   catalog: { key: string; value: { branchId: string; savedAt: string; data: unknown } };
+  tables: { key: string; value: { branchId: string; savedAt: string; data: unknown } };
+  localOrders: {
+    key: string;
+    value: LocalOfflineOrder;
+    indexes: { byBranch: string; byCreatedAt: string };
+  };
   outbox: {
     key: string;
     value: { clientId: string; branchId: string; createdAt: string; status: 'pending' | 'synced' | 'rejected'; error?: string; serverNumber?: string; payload: OfflineOrderPayload };
@@ -27,13 +33,40 @@ export interface OfflineOrderPayload {
   payments: Array<{ clientPaymentId: string; method: 'cash' | 'card' | 'mpesa'; amount: number; tendered?: number; reference?: string; phone?: string }>;
 }
 
+/** Orders placed without a connection. These stay on this device and are never sent to the server. */
+export interface LocalOfflineOrder {
+  id: string;
+  branchId: string;
+  number: string;
+  createdAt: string;
+  outlet: 'restaurant' | 'bar';
+  type: 'dine_in' | 'takeaway' | 'delivery' | 'bar_counter';
+  tableId?: string;
+  tableNumber?: string;
+  customerName?: string;
+  customerPhone?: string;
+  deliveryAddress?: string;
+  items: Array<{ lineId: string; productId: string; name: string; qty: number; unitPrice: number; variant?: string; modifiers: string[]; notes?: string; station: string }>;
+  subtotal: number;
+  serviceCharge: number;
+  total: number;
+}
+
 let dbp: Promise<IDBPDatabase<ChiliDB>> | null = null;
 const db = () =>
-  (dbp ??= openDB<ChiliDB>('chili-pos', 1, {
-    upgrade(d) {
-      d.createObjectStore('catalog', { keyPath: 'branchId' });
-      const o = d.createObjectStore('outbox', { keyPath: 'clientId' });
-      o.createIndex('byStatus', 'status');
+  (dbp ??= openDB<ChiliDB>('chili-pos', 3, {
+    upgrade(d, oldVersion) {
+      if (oldVersion < 1) {
+        d.createObjectStore('catalog', { keyPath: 'branchId' });
+        const o = d.createObjectStore('outbox', { keyPath: 'clientId' });
+        o.createIndex('byStatus', 'status');
+      }
+      if (oldVersion < 2) d.createObjectStore('tables', { keyPath: 'branchId' });
+      if (oldVersion < 3) {
+        const orders = d.createObjectStore('localOrders', { keyPath: 'id' });
+        orders.createIndex('byBranch', 'branchId');
+        orders.createIndex('byCreatedAt', 'createdAt');
+      }
     },
   }));
 
@@ -43,6 +76,21 @@ export async function cacheCatalog(branchId: string, data: unknown) {
 export async function cachedCatalog<T>(branchId: string): Promise<{ savedAt: string; data: T } | null> {
   const r = await (await db()).get('catalog', branchId);
   return r ? { savedAt: r.savedAt, data: r.data as T } : null;
+}
+export async function cacheTables(branchId: string, data: unknown) {
+  await (await db()).put('tables', { branchId, savedAt: new Date().toISOString(), data });
+}
+export async function cachedTables<T>(branchId: string): Promise<{ savedAt: string; data: T } | null> {
+  const r = await (await db()).get('tables', branchId);
+  return r ? { savedAt: r.savedAt, data: r.data as T } : null;
+}
+
+export async function saveLocalOrder(order: LocalOfflineOrder) {
+  await (await db()).put('localOrders', order);
+  window.dispatchEvent(new Event('chili:local-orders'));
+}
+export async function localOrders(branchId: string): Promise<LocalOfflineOrder[]> {
+  return (await (await db()).getAllFromIndex('localOrders', 'byBranch', branchId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function queueOfflineOrder(branchId: string, payload: OfflineOrderPayload) {

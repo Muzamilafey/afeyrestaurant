@@ -7,7 +7,7 @@ import { useFeedback } from '@/components/feedback';
 import { Button, Input, Modal, Pill, Select, Skeleton, StatusPill, cx, Empty, Field } from '@/components/ui';
 import { ApiError, get, post, patch } from '@/lib/api';
 import { money, uuid, toCents } from '@/lib/format';
-import { cacheCatalog, cachedCatalog, queueOfflineOrder, terminalId } from '@/lib/offline';
+import { cacheCatalog, cachedCatalog, cacheTables, cachedTables, localOrders as getLocalOrders, queueOfflineOrder, saveLocalOrder, terminalId, type LocalOfflineOrder } from '@/lib/offline';
 import { printReceipt, type ReceiptDoc } from '@/lib/printing';
 import { pickReceiptPrinter } from '@/lib/till';
 import { useOnline } from '@/lib/connectivity';
@@ -80,7 +80,29 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   const catalog = catalogQ.data ?? offlineCatalog?.data;
   const usingCache = !catalogQ.data && !!offlineCatalog;
 
-  const tablesQ = useQuery<TablesResp>({ queryKey: ['tables', branchId], queryFn: () => get('/tables'), enabled: !!branchId && online, refetchInterval: 20_000 });
+  const [offlineTables, setOfflineTables] = useState<{ savedAt: string; data: TablesResp } | null>(null);
+  const tablesQ = useQuery<TablesResp>({
+    queryKey: ['tables', branchId],
+    queryFn: async () => {
+      const data = await get<TablesResp>('/tables');
+      cacheTables(branchId, data).catch(() => undefined);
+      return data;
+    },
+    enabled: !!branchId && online,
+    refetchInterval: 20_000,
+  });
+  useEffect(() => {
+    setOfflineTables(null);
+    if (branchId) cachedTables<TablesResp>(branchId).then(setOfflineTables).catch(() => setOfflineTables(null));
+  }, [branchId]);
+  const [deviceOrders, setDeviceOrders] = useState<LocalOfflineOrder[]>([]);
+  useEffect(() => {
+    if (!branchId) { setDeviceOrders([]); return; }
+    const refresh = () => getLocalOrders(branchId).then(setDeviceOrders).catch(() => setDeviceOrders([]));
+    refresh();
+    window.addEventListener('chili:local-orders', refresh);
+    return () => window.removeEventListener('chili:local-orders', refresh);
+  }, [branchId]);
 
   // ── Current order: either a local draft or a server order ──
   const orderId = params.get('order');
@@ -115,6 +137,8 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   /** Delivery: confirm the address and assign a rider before the order is placed. */
   const [pickRiderFor, setPickRiderFor] = useState<null | 'send' | 'pay'>(null);
   const [offlineReceipt, setOfflineReceipt] = useState<Order | null>(null);
+  const [offlineOrderSaved, setOfflineOrderSaved] = useState<LocalOfflineOrder | null>(null);
+  const [showDeviceOrders, setShowDeviceOrders] = useState(false);
   // Phones: the order panel is a full-screen sheet opened from a floating button.
   const [showCart, setShowCart] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -137,10 +161,10 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   }, [params, orderId]);
 
   useEffect(() => {
-    if (!orderId && !order && !params.get('table') && mode === 'dine_in' && !tableId && online && tablesQ.isSuccess && !pickTableFor) {
+    if (!offlineOrderSaved && !orderId && !order && !params.get('table') && mode === 'dine_in' && !tableId && (tablesQ.isSuccess || (!online && !!offlineTables)) && !pickTableFor) {
       setPickTableFor('new');
     }
-  }, [orderId, order, params, mode, tableId, online, tablesQ.isSuccess, pickTableFor]);
+  }, [offlineOrderSaved, orderId, order, params, mode, tableId, online, offlineTables, tablesQ.isSuccess, pickTableFor]);
 
   const categoriesById = useMemo(() => new Map(catalog?.categories.map((c) => [c._id, c]) ?? []), [catalog]);
   const inOutlet = (categoryId: string) => (categoriesById.get(categoryId)?.station === 'bar') === (outlet === 'bar');
@@ -272,6 +296,21 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   const needsRider = (delivery?: DeliveryDetails) => !order && online && mode === 'delivery' && !delivery;
 
   async function placeOrder(table = tableId, delivery?: DeliveryDetails) {
+    if (!online) {
+      if (order) return toast('This order is on the server. Reconnect before sending changes.', 'error');
+      if (!offlineActions.includes('create_order')) return toast('Offline ordering is switched off in Settings → Business', 'error');
+      if (!draft.length) return toast('Add products before placing the order', 'error');
+      if (mode === 'dine_in' && !table) return setPickTableFor('new');
+      setBusy('send');
+      try {
+        await saveDeviceOrder(table, delivery);
+      } catch (e) {
+        handleError(e);
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
     if (table === tableId && needsTable()) return setPickTableFor('send');
     if (needsRider(delivery)) return setPickRiderFor('send');
     setBusy('send');
@@ -332,6 +371,82 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   const offlineActions: string[] = session?.business?.settings?.offlineAllowedActions ?? ['create_order', 'cash_payment', 'card_payment', 'mpesa_payment'];
   const offlineAllowed = { cash: offlineActions.includes('cash_payment'), card: offlineActions.includes('card_payment'), mpesa: offlineActions.includes('mpesa_payment') };
   const [offlinePay, setOfflinePay] = useState(false);
+
+  async function saveDeviceOrder(table: string, delivery?: DeliveryDetails) {
+    const createdAt = new Date().toISOString();
+    const id = uuid();
+    const type = mode as LocalOfflineOrder['type'];
+    const tableNumber = tables.find((t) => t._id === table)?.number;
+    const customer = delivery?.customerName ?? customerName;
+    const phone = delivery?.customerPhone ?? customerPhone;
+    const address = delivery?.address ?? deliveryAddress;
+    const items = draft.map((d) => ({
+      lineId: d.lineId, productId: d.productId, name: d.name, qty: d.qty, unitPrice: d.unitPrice,
+      variant: d.variant, modifiers: d.modifiers.map((m) => m.name), notes: d.notes, station: d.station,
+    }));
+    const subtotal = draft.reduce((s, d) => s + d.unitPrice * d.qty, 0);
+    const serviceCharge = mode === 'dine_in' && (branch?.settings?.serviceChargeModes as string[] | undefined ?? ['dine_in']).includes('dine_in')
+      ? Math.round((subtotal * svcBps) / 10000)
+      : 0;
+    const saved: LocalOfflineOrder = {
+      id, branchId, number: `LOCAL-${id.slice(0, 6).toUpperCase()}`, createdAt, outlet, type,
+      tableId: mode === 'dine_in' ? table || undefined : undefined,
+      tableNumber: mode === 'dine_in' ? tableNumber : undefined,
+      customerName: customer || undefined, customerPhone: phone || undefined,
+      deliveryAddress: mode === 'delivery' ? address || undefined : undefined,
+      items, subtotal, serviceCharge, total: subtotal + serviceCharge,
+    };
+    await saveLocalOrder(saved);
+    setOfflineOrderSaved(saved);
+    setDraft([]);
+    setCustomerName('');
+    setCustomerPhone('');
+    setDeliveryAddress('');
+    setTableId('');
+    draftClientId.current = uuid();
+
+    const when = new Date(createdAt).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' });
+    const service = type === 'dine_in' ? `Dine in${tableNumber ? ` · Table ${tableNumber}` : ''}` : type === 'bar_counter' ? 'Bar' : type === 'delivery' ? 'Delivery' : 'Takeaway';
+    const branding = session?.business?.branding;
+    const bill: ReceiptDoc = {
+      kind: 'bill', copy: 'original',
+      lines: [
+        ...(branding?.logoUrl ? [{ k: 'logo' as const, url: branding.logoUrl }] : []),
+        { k: 'title', t: (session?.business?.name ?? 'Chili POS').toUpperCase() },
+        ...(branch?.name ? [{ k: 'center' as const, t: branch.name, bold: true }] : []),
+        ...(branding?.receiptHeader ? [{ k: 'center' as const, t: branding.receiptHeader }] : []),
+        { k: 'rule', heavy: true }, { k: 'banner', t: 'BILL · LOCAL OFFLINE ORDER' },
+        { k: 'row', l: 'Order', r: saved.number }, { k: 'row', l: 'Date', r: when }, { k: 'row', l: 'Service', r: service },
+        ...(customer ? [{ k: 'row' as const, l: 'Customer', r: customer }] : []),
+        ...(address ? [{ k: 'row' as const, l: 'Address', r: address }] : []),
+        { k: 'rule' },
+        ...items.map((item) => ({ k: 'item' as const, qty: item.qty, name: item.name, total: money(item.unitPrice * item.qty), each: item.qty > 1 ? money(item.unitPrice) : undefined, mods: [...item.modifiers, ...(item.variant ? [item.variant] : []), ...(item.notes ? [`Note: ${item.notes}`] : [])] })),
+        { k: 'rule', heavy: true }, { k: 'row', l: 'Subtotal', r: money(subtotal) },
+        ...(serviceCharge ? [{ k: 'row' as const, l: 'Service charge (estimated)', r: money(serviceCharge) }] : []),
+        { k: 'row', l: 'ESTIMATED TOTAL', r: money(saved.total), bold: true, big: true },
+        { k: 'rule' }, { k: 'center', t: 'Saved on this device only. Not sent to the server.', muted: true },
+        ...(branding?.receiptFooter ? [{ k: 'center' as const, t: branding.receiptFooter }] : []),
+      ],
+    };
+    const tickets: ReceiptDoc[] = (['kitchen', 'bar'] as const)
+      .map((station) => ({ station, stationItems: items.filter((item) => item.station === station) }))
+      .filter((group) => group.stationItems.length)
+      .map((group) => ({
+        kind: 'bill', copy: 'original', lines: [
+          { k: 'title', t: group.station.toUpperCase() }, { k: 'banner', t: 'LOCAL OFFLINE ORDER' },
+          { k: 'row', l: 'Order', r: saved.number }, { k: 'row', l: 'Service', r: service }, { k: 'row', l: 'Time', r: when },
+          ...(customer ? [{ k: 'row' as const, l: 'Customer', r: customer }] : []), { k: 'rule', heavy: true },
+          ...group.stationItems.map((item) => ({ k: 'item' as const, qty: item.qty, name: item.name, total: '', mods: [...item.modifiers, ...(item.variant ? [item.variant] : []), ...(item.notes ? [`NOTE: ${item.notes}`] : [])] })),
+          { k: 'rule' },
+        ],
+      }));
+    const docs = [...(session?.user.role?.key === 'waiter' ? [bill] : []), ...tickets];
+    if (docs.length) {
+      try { printReceipt(docs, 'Offline order'); } catch { /* printing is optional */ }
+    }
+    toast('Order saved on this device only. It will not sync to the server.');
+  }
+
   async function payOffline() {
     if (order) return toast('This order lives on the server. Reconnect to take payment.', 'error');
     if (!offlineActions.includes('create_order') || !(offlineAllowed.cash || offlineAllowed.card || offlineAllowed.mpesa)) return toast('Offline sales are switched off in Settings → Business', 'error');
@@ -483,9 +598,10 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   }, [order, draft, paying]);
   const estService = mode === 'dine_in' && (branch?.settings?.serviceChargeModes as string[] | undefined ?? ['dine_in']).includes('dine_in') ? Math.round((draftTotal * svcBps) / 10000) : 0;
   const hasNew = order ? order.items.some((i) => i.status === 'new' && !i.voided) : draft.length > 0;
-  const tables = tablesQ.data?.tables ?? [];
+  const tableData = tablesQ.data ?? offlineTables?.data;
+  const tables = tableData?.tables ?? [];
   // Only this POS's open orders (the restaurant and the bar each see their own).
-  const activeChips = [...tables.filter((t) => t.orders.length).flatMap((t) => t.orders.map((o) => ({ ...o, table: t.number, progress: t.progress }))), ...(tablesQ.data?.takeaway ?? []).map((o) => ({ ...o, table: o.type === 'delivery' ? 'DLV' : o.type === 'bar_counter' ? 'BAR' : 'TA' }))]
+  const activeChips = [...tables.filter((t) => t.orders.length).flatMap((t) => t.orders.map((o) => ({ ...o, table: t.number, progress: t.progress }))), ...(tableData?.takeaway ?? []).map((o) => ({ ...o, table: o.type === 'delivery' ? 'DLV' : o.type === 'bar_counter' ? 'BAR' : 'TA' }))]
     .filter((o) => (o.outlet ?? 'restaurant') === outlet);
   const locked = order && !['open', 'held'].includes(order.status);
 
@@ -705,7 +821,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
               }}><Ban className="h-3.5 w-3.5" /> Void order</button>
             )}
             <div className={cx('mt-3 grid gap-2', !locked && !can('payments.receive') ? 'grid-cols-1' : 'grid-cols-2')}>
-              <Button variant="secondary" size="lg" icon={<Send className="h-4 w-4" />} disabled={!hasNew || !!locked || !online} loading={busy === 'send'} onClick={() => placeOrder()}>Place order</Button>
+              <Button variant="secondary" size="lg" icon={<Send className="h-4 w-4" />} disabled={!hasNew || !!locked || (!!order && !online) || (!online && !offlineActions.includes('create_order'))} loading={busy === 'send'} onClick={() => placeOrder()}>{online ? 'Place order' : 'Save offline order'}</Button>
               {locked ? (
                 <Button size="lg" onClick={() => setPaying(true)} disabled={order?.status !== 'paid'}>Receipt</Button>
               ) : can('payments.receive') && <Button size="lg" disabled={lines.length === 0 || (order ? order.totals.total - order.totals.paid <= 0 : false)} loading={busy === 'pay'} onClick={() => startPayment()}>{online ? 'Pay' : 'Pay (offline)'}</Button>}
@@ -722,15 +838,22 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
       )}
       {/* Keep the POS workspace clear; open orders are available from this button. */}
       <div className="flex shrink-0 items-center justify-between gap-3 border-t border-line bg-card px-4 py-2.5">
-        <p className="min-w-0 truncate text-sm text-ink-soft">{online ? `${activeChips.length} open ${activeChips.length === 1 ? 'order' : 'orders'}` : 'Offline — recent orders unavailable.'}</p>
-        <Button variant="secondary" size="sm" icon={<History className="h-4 w-4" />} disabled={!online} onClick={() => setDialog('recent')}>
-          Recent orders{activeChips.length ? ` (${activeChips.length})` : ''}
-        </Button>
+        <p className="min-w-0 truncate text-sm text-ink-soft">{online ? `${activeChips.length} open ${activeChips.length === 1 ? 'order' : 'orders'}` : 'Offline · orders stay on this device.'}</p>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="secondary" size="sm" icon={<History className="h-4 w-4" />} disabled={!online} onClick={() => setDialog('recent')}>
+            Recent orders{activeChips.length ? ` (${activeChips.length})` : ''}
+          </Button>
+          <Button variant="secondary" size="sm" icon={<CloudOff className="h-4 w-4" />} disabled={!deviceOrders.length} onClick={() => setShowDeviceOrders(true)}>
+            Device orders{deviceOrders.length ? ` (${deviceOrders.length})` : ''}
+          </Button>
+        </div>
       </div>
 
       {modFor && catalog && <ModifierDialog product={modFor} groups={catalog.modifierGroups} station={stationFor(modFor)} onClose={() => setModFor(null)} onConfirm={(l) => { setModFor(null); addLine(l); }} />}
       {paying && order && <PaymentDialog order={order} onClose={() => { setPaying(false); if (order.status === 'paid' || qc.getQueryData<{ order: Order }>(['order', order._id])?.order.status === 'paid') setOrder(null); }} onPaid={(o) => { qc.setQueryData(['order', o._id], { order: o }); qc.invalidateQueries({ queryKey: ['tables'] }); qc.invalidateQueries({ queryKey: ['catalog'] }); }} />}
       {offlineReceipt && <Modal open onClose={() => setOfflineReceipt(null)} title="Offline sale recorded" footer={<Button onClick={() => setOfflineReceipt(null)}>New order</Button>}><p className="text-sm">Cash sale of <b>{money(offlineReceipt.totals.total)}</b> saved on this terminal (ref {offlineReceipt.number.toUpperCase()}). It is <b>pending synchronisation</b> and will be verified by the server when the connection returns.</p></Modal>}
+      {offlineOrderSaved && <Modal open onClose={() => setOfflineOrderSaved(null)} title="Order saved on this device" footer={<Button onClick={() => setOfflineOrderSaved(null)}>New order</Button>}><p className="text-sm"><b>{offlineOrderSaved.number}</b> · {offlineOrderSaved.items.reduce((sum, item) => sum + item.qty, 0)} items · estimated total <b>{money(offlineOrderSaved.total)}</b>.</p><p className="mt-2 text-sm text-ink-soft">This order is stored only on this device and will not sync to the server.</p></Modal>}
+      {showDeviceOrders && <LocalOrdersDialog orders={deviceOrders} onClose={() => setShowDeviceOrders(false)} />}
       {pickTableFor && (
         <TablePicker
           title="Choose a table"
@@ -899,6 +1022,30 @@ function RecentOrdersDialog({ orders, onClose, onPick }: { orders: Array<{ id: s
               </div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-page"><div className="h-full rounded-full bg-brand" style={{ width: `${Math.round((o.progress ?? 0) * 100)}%` }} /></div>
             </button>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+function LocalOrdersDialog({ orders, onClose }: { orders: LocalOfflineOrder[]; onClose: () => void }) {
+  return (
+    <Modal open onClose={onClose} title="Orders on this device" size="lg">
+      <div className="mb-4 rounded-xl bg-warn-pale p-3 text-sm text-warn-ink">These orders are stored on this device only. They are not sent to the server.</div>
+      {!orders.length ? <Empty title="No device orders" /> : (
+        <div className="max-h-[65vh] space-y-3 overflow-y-auto">
+          {orders.map((order) => (
+            <article key={order.id} className="rounded-xl border border-line p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div><p className="font-bold">{order.number}</p><p className="mt-1 text-xs text-ink-soft">{new Date(order.createdAt).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' })} · {order.type === 'dine_in' ? `Table ${order.tableNumber ?? '—'}` : order.type.replace('_', ' ')}</p></div>
+                <p className="font-semibold">{money(order.total)} <span className="text-xs font-normal text-ink-soft">estimated</span></p>
+              </div>
+              {order.customerName && <p className="mt-2 text-xs text-ink-soft">Customer: {order.customerName}{order.customerPhone ? ` · ${order.customerPhone}` : ''}</p>}
+              <div className="mt-3 space-y-1 border-t border-line pt-2">
+                {order.items.map((item) => <div key={item.lineId} className="flex justify-between gap-3 text-sm"><span>{item.qty} × {item.name}{item.variant ? ` · ${item.variant}` : ''}{item.modifiers.length ? ` · ${item.modifiers.join(', ')}` : ''}</span><span className="shrink-0">{money(item.qty * item.unitPrice)}</span></div>)}
+              </div>
+              {order.deliveryAddress && <p className="mt-2 text-xs text-ink-soft">Delivery: {order.deliveryAddress}</p>}
+            </article>
           ))}
         </div>
       )}

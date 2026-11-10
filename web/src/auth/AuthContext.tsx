@@ -4,7 +4,7 @@ import { api, ApiError, post, refreshSession, setAccessToken, setActiveBranch, s
 export interface Branch { id: string; name: string; code: string; settings?: Record<string, any> }
 export interface Session {
   user: { id: string; name: string; email: string; role: { key: string; name: string } | null; mfaEnabled: boolean };
-  business: { id: string; name: string; branding?: { primaryColor?: string; logoUrl?: string }; settings?: Record<string, any> } | null;
+  business: { id: string; name: string; branding?: { primaryColor?: string; logoUrl?: string; receiptHeader?: string; receiptFooter?: string }; settings?: Record<string, any> } | null;
   branches: Branch[];
   activeBranchId: string | null;
   permissions: string[];

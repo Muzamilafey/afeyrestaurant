@@ -79,6 +79,7 @@ $binDir = Join-Path $stateDir 'bin'
 $stateFile = Join-Path $stateDir 'install.json'
 $apiService = 'ChiliPOS'
 $webService = 'ChiliPOS-Web'
+$startupShortcut = Join-Path $programData 'Microsoft\Windows\Start Menu\Programs\StartUp\Chili POS.lnk'
 # -Tailscale is remembered, so later runs (e.g. -Update) keep publishing to Tailscale.
 if (-not $Tailscale -and (Test-Path $stateFile)) { try { if ((Get-Content $stateFile -Raw | ConvertFrom-Json).tailscale) { $Tailscale = $true } } catch { } }
 $tsPort = 8088
@@ -95,6 +96,7 @@ $nssm = Join-Path $binDir 'nssm.exe'
 
 if ($Uninstall) {
   Step 'Removing Chili POS services (the database, settings and code are kept)'
+  if (-not $DryRun -and (Test-Path $startupShortcut)) { Remove-Item -LiteralPath $startupShortcut -Force; Ok 'removed automatic POS launch at sign-in' }
   $tsExe = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
   if (-not $DryRun -and (Test-Path $tsExe)) { Quiet { & $tsExe serve reset } | Out-Null; Ok 'stopped publishing Chili POS on Tailscale' }
   foreach ($s in @($webService, $apiService)) {
@@ -573,6 +575,22 @@ if (-not $DryRun) {
 }
 
 # -- 7. Done ------------------------------------------------------------------------------------
+if ($DryRun) {
+  Info '[dry run] add a common Startup shortcut to open Chili POS after services are ready'
+} else {
+  $startupDir = Split-Path $startupShortcut -Parent
+  New-Item -ItemType Directory -Force $startupDir | Out-Null
+  $openPosScript = Join-Path $root 'scripts\windows\open-pos-at-logon.ps1'
+  $powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $shell = New-Object -ComObject WScript.Shell
+  $shortcut = $shell.CreateShortcut($startupShortcut)
+  $shortcut.TargetPath = $powershellExe
+  $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$openPosScript`""
+  $shortcut.WorkingDirectory = $root
+  $shortcut.Description = 'Open Chili POS after Windows sign-in'
+  $shortcut.Save()
+  Ok 'POS will open automatically after sign-in; backend services start with Windows'
+}
 $configured = $false
 if (-not $DryRun) { try { $configured = (Invoke-RestMethod 'http://127.0.0.1:4000/api/v1/business' -TimeoutSec 5).data.configured } catch { } }
 $netCategory = try { (Get-NetConnectionProfile -ErrorAction Stop | Select-Object -First 1).NetworkCategory } catch { 'Unknown' }
