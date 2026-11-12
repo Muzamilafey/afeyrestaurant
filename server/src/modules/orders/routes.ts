@@ -36,6 +36,25 @@ m.route(
   },
 );
 
+m.route({
+  method: 'get', path: '/sales', summary: 'Paginated sales order list for selected dates', permission: P.ORDERS_VIEW,
+  query: z.object({ from: z.coerce.date(), to: z.coerce.date(), q: z.string().max(80).optional(), page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(50) }),
+}, async ({ ctx, query }) => {
+  if (query.to < query.from) throw badRequest('The end date must be on or after the start date');
+  if (query.to.getTime() - query.from.getTime() > 400 * 86400_000) throw badRequest('Maximum sales range is 400 days');
+  const filter: Record<string, unknown> = { tenantId: ctx.tenantId, branchId: ctx.branchId, createdAt: { $gte: query.from, $lte: query.to } };
+  if (query.q?.trim()) {
+    const term = query.q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = { $regex: term, $options: 'i' };
+    filter.$or = [{ number: re }, { receiptNumber: re }, { tableNumber: re }, { customerName: re }, { waiterName: re }];
+  }
+  const [orders, total] = await Promise.all([
+    Order.find(filter).sort({ createdAt: -1 }).skip((query.page - 1) * query.limit).limit(query.limit).lean(),
+    Order.countDocuments(filter),
+  ]);
+  return { orders, total, page: query.page, limit: query.limit, pages: Math.ceil(total / query.limit) };
+});
+
 m.route({ method: 'get', path: '/:id', summary: 'Order with payments and attempts', permission: P.ORDERS_VIEW }, async ({ ctx, params }) => {
   const order = await svc.loadOrder(ctx, params.id);
   const [payments, attempts, refunds] = await Promise.all([
