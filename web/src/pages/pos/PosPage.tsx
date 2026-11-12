@@ -25,6 +25,12 @@ const KIND_FILTERS = [
   { id: 'cocktail', label: 'Cocktails' }, { id: 'beer', label: 'Beer' }, { id: 'wine', label: 'Wine' }, { id: 'spirit', label: 'Spirits' }, { id: 'other', label: 'Other' },
 ];
 const ALCOHOL = ['alcohol', 'cocktail', 'beer', 'wine', 'spirit'];
+const QUICK_CATEGORIES = [
+  { id: 'quick:breakfast', name: 'Breakfast', icon: 'croissant', tone: 'bg-amber-50 text-amber-700' },
+  { id: 'quick:lunch', name: 'Lunch', icon: 'utensils', tone: 'bg-orange-50 text-orange-700' },
+  { id: 'quick:drinks', name: 'Drinks', icon: 'cup-soda', tone: 'bg-sky-50 text-sky-700' },
+  { id: 'quick:snacks', name: 'Snacks', icon: 'sandwich', tone: 'bg-violet-50 text-violet-700' },
+] as const;
 const MODES = [
   { id: 'dine_in', label: 'Dine-in', icon: UtensilsCrossed },
   { id: 'takeaway', label: 'Takeaway', icon: ShoppingBag },
@@ -41,6 +47,18 @@ export const CATEGORY_ICON_NAMES = Object.keys(CATEGORY_ICONS);
 function CategoryIcon({ name, className }: { name: string; className?: string }) {
   const I = CATEGORY_ICONS[name] ?? Utensils;
   return <I className={className} />;
+}
+function isQuickCategory(id: string, product: Product, category?: { name: string; kind: string }) {
+  const categoryName = category?.name.toLowerCase() ?? '';
+  const productName = product.name.toLowerCase();
+  const kind = category?.kind ?? 'other';
+  const breakfast = /breakfast|morning/.test(categoryName) || /\b(egg|omelet|omelette|pancake|waffle|toast|porridge|oatmeal|mandazi|croissant|sausage)\b/.test(productName);
+  const snack = /snack|starter|side|dessert|pastry|bakery/.test(categoryName) || /\b(chips|fries|samosa|nuggets|cake|cookie|crisps|popcorn|mandazi|spring roll)\b/.test(productName);
+  if (id === 'quick:breakfast') return breakfast;
+  if (id === 'quick:lunch') return /lunch|mains?|grill|pizza|burger|main course/.test(categoryName) || (kind === 'food' && !breakfast && !snack);
+  if (id === 'quick:drinks') return kind === 'soft_drink' || ALCOHOL.includes(kind) || /drink|beverage|bar|coffee|tea|juice|soda|water/.test(categoryName) || /\b(tea|coffee|juice|soda|water|cola|lemonade)\b/.test(productName);
+  if (id === 'quick:snacks') return snack;
+  return false;
 }
 
 export type Outlet = 'restaurant' | 'bar';
@@ -191,7 +209,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
     const term = q.trim().toLowerCase();
     return outletProducts.filter((p) => {
       const c = categoriesById.get(p.categoryId);
-      if (category !== 'all' && p.categoryId !== category) return false;
+      if (category !== 'all' && (category.startsWith('quick:') ? !isQuickCategory(category, p, c) : p.categoryId !== category)) return false;
       if (kind !== 'all' && !(kind === 'alcohol' ? ALCOHOL.includes(c?.kind ?? '') : c?.kind === kind)) return false;
       if (term && !(p.name.toLowerCase().includes(term) || p.sku?.toLowerCase() === term || p.barcode === term || p.plu === term)) return false;
       return true;
@@ -663,6 +681,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
           )}
           <div className="scroll-thin flex gap-3 overflow-x-auto px-4 py-3">
             <CategoryCard active={category === 'all'} onClick={() => setCategory('all')} icon="layout-grid" name="All items" count={outletProducts.length} />
+            {QUICK_CATEGORIES.map((c) => <CategoryCard key={c.id} active={category === c.id} onClick={() => setCategory(c.id)} icon={c.icon} name={c.name} count={outletProducts.filter((p) => isQuickCategory(c.id, p, categoriesById.get(p.categoryId))).length} tone={c.tone} />)}
             {outletCategories.map((c) => <CategoryCard key={c._id} active={category === c._id} onClick={() => setCategory(c._id)} icon={c.icon} name={c.name} count={outletProducts.filter((p) => p.categoryId === c._id).length} />)}
           </div>
           <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 pb-4">
@@ -927,10 +946,10 @@ function IconBtn({ icon: I, label, onClick, disabled }: { icon: LucideIcon; labe
     </button>
   );
 }
-function CategoryCard({ active, onClick, icon, name, count }: { active: boolean; onClick: () => void; icon: string; name: string; count: number }) {
+function CategoryCard({ active, onClick, icon, name, count, tone }: { active: boolean; onClick: () => void; icon: string; name: string; count: number; tone?: string }) {
   return (
-    <button onClick={onClick} className={cx('flex min-w-[118px] flex-col items-start gap-2 rounded-2xl border-2 bg-card p-3 text-left shadow-soft transition', active ? 'border-brand' : 'border-transparent hover:border-brand/30')}>
-      <span className={cx('grid h-9 w-9 place-items-center rounded-xl', active ? 'bg-brand text-white' : 'bg-brand-pale text-brand-dark')}><CategoryIcon name={icon} className="h-5 w-5" /></span>
+    <button onClick={onClick} className={cx('flex min-w-[132px] flex-col items-start gap-2 rounded-2xl border-2 bg-card p-3 text-left shadow-soft transition', active ? 'border-brand' : 'border-transparent hover:border-brand/30')}>
+      <span className={cx('grid h-11 w-11 place-items-center rounded-2xl', active ? 'bg-brand text-white' : tone ?? 'bg-brand-pale text-brand-dark')}><CategoryIcon name={icon} className="h-6 w-6" /></span>
       <span className="text-sm font-semibold leading-tight">{name}</span>
       <span className="text-xs text-ink-soft">{count} items</span>
     </button>

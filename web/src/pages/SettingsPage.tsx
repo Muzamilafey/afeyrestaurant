@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CloudOff, ExternalLink, Globe, Plus, RefreshCw, Unplug, Upload } from 'lucide-react';
+import { CloudOff, Croissant, CupSoda, ExternalLink, Globe, Plus, RefreshCw, Sandwich, Unplug, Upload, Utensils } from 'lucide-react';
 import { api, ApiError, get, patch, post, put } from '@/lib/api';
 import { dateTime, fromCents, money, titleCase, toCents } from '@/lib/format';
 import { Button, Card, cx, DataTable, Field, Input, Modal, PageHeader, Pill, Select, StatusPill, Tabs, Textarea, Toggle } from '@/components/ui';
@@ -46,6 +46,12 @@ export default function SettingsPage() {
 
 interface Product { _id: string; name: string; categoryId: string; price: number; sku?: string; barcode?: string; plu?: string; status: string; imageUrl?: string; description?: string; dietary: string[]; allergens: string[]; ageRestricted: boolean; modifierGroupIds: string[]; taxRateIds: string[]; happyHourPrice?: number | null; station: string; variants: Array<{ name: string; price: number }>; branchPrices: Array<{ branchId: string; price: number }>; combo?: { isCombo: boolean; items: Array<{ productId: string; qty: number }> }; etims?: { itemClsCd?: string; taxTyCd?: string } }
 interface Cat { _id: string; name: string; icon: string; kind: string; station: string; sortOrder: number }
+const PRODUCT_QUICK_CATEGORIES = [
+  { name: 'Breakfast', iconName: 'croissant', Icon: Croissant, kind: 'food', station: 'kitchen', tone: 'bg-amber-50 text-amber-700' },
+  { name: 'Lunch', iconName: 'utensils', Icon: Utensils, kind: 'food', station: 'kitchen', tone: 'bg-orange-50 text-orange-700' },
+  { name: 'Drinks', iconName: 'cup-soda', Icon: CupSoda, kind: 'soft_drink', station: 'bar', tone: 'bg-sky-50 text-sky-700' },
+  { name: 'Snacks', iconName: 'sandwich', Icon: Sandwich, kind: 'food', station: 'kitchen', tone: 'bg-violet-50 text-violet-700' },
+] as const;
 
 function Menu() {
   const { handleError, toast , prompt } = useFeedback();
@@ -56,10 +62,32 @@ function Menu() {
   const taxes = useQuery<Array<{ _id: string; name: string; active: boolean }>>({ queryKey: ['taxes'], queryFn: () => get('/admin/taxes') });
   const [edit, setEdit] = useState<Partial<Product> | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [creatingQuickCategory, setCreatingQuickCategory] = useState<string | null>(null);
   const [cat, setCat] = useState<Partial<Cat> | null>(null);
   const [grp, setGrp] = useState<null | { _id?: string; name: string; minSelect: number; maxSelect: number; options: Array<{ _id?: string; name: string; priceDelta: number }> }>(null);
   const cname = (id: string) => cats.data?.find((c) => c._id === id)?.name ?? '—';
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['products'] }); qc.invalidateQueries({ queryKey: ['catalog'] }); qc.invalidateQueries({ queryKey: ['categories'] }); qc.invalidateQueries({ queryKey: ['modifier-groups'] }); };
+
+  async function chooseQuickCategory(choice: typeof PRODUCT_QUICK_CATEGORIES[number]) {
+    if (!edit || !cats.data || creatingQuickCategory) return;
+    const existing = cats.data.find((c) => c.name.trim().toLowerCase() === choice.name.toLowerCase());
+    if (existing) {
+      setEdit((current) => current ? { ...current, categoryId: existing._id, station: 'inherit' } : current);
+      return;
+    }
+    setCreatingQuickCategory(choice.name);
+    try {
+      const created = await post<Cat>('/menu/categories', { name: choice.name, icon: choice.iconName, kind: choice.kind, station: choice.station, sortOrder: cats.data.length });
+      qc.setQueryData<Cat[]>(['categories'], (current) => [...(current ?? []), created]);
+      qc.invalidateQueries({ queryKey: ['catalog'] });
+      setEdit((current) => current ? { ...current, categoryId: created._id, station: 'inherit' } : current);
+      toast(`${choice.name} category added`);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setCreatingQuickCategory(null);
+    }
+  }
 
   async function saveProduct() {
     if (!edit) return;
@@ -120,6 +148,21 @@ function Menu() {
           <div className="grid gap-3 md:grid-cols-3">
             <Field label="Name" className="md:col-span-2"><Input value={edit.name ?? ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <Field label="Category"><Select value={edit.categoryId ?? ''} onChange={(e) => setEdit({ ...edit, categoryId: e.target.value })}>{cats.data?.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}</Select></Field>
+            <div className="md:col-span-3">
+              <p className="label">Quick categories</p>
+              <p className="mb-2 text-xs text-ink-soft">Choose a category, or add it to your menu if it does not exist yet.</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {PRODUCT_QUICK_CATEGORIES.map((choice) => {
+                  const { name, Icon, tone } = choice;
+                  const existing = cats.data?.find((c) => c.name.trim().toLowerCase() === name.toLowerCase());
+                  const selected = !!existing && edit.categoryId === existing._id;
+                  return <button key={name} type="button" disabled={!cats.data || !!creatingQuickCategory} onClick={() => void chooseQuickCategory(choice)} className={cx('flex items-center gap-2 rounded-xl border-2 p-2.5 text-left text-sm font-semibold transition disabled:opacity-60', selected ? 'border-brand bg-brand-pale text-brand-dark' : 'border-line bg-card hover:border-brand/40')}>
+                    <span className={cx('grid h-10 w-10 shrink-0 place-items-center rounded-xl', selected ? 'bg-brand text-white' : tone)}>{creatingQuickCategory === name ? <span className="h-5 w-5 animate-spin rounded-full border-2 border-current border-r-transparent" /> : <Icon className="h-5 w-5" />}</span>
+                    <span className="min-w-0"><span className="block truncate">{name}</span><span className="block text-[11px] font-normal text-ink-soft">{existing ? 'Select' : 'Add & select'}</span></span>
+                  </button>;
+                })}
+              </div>
+            </div>
             <Field label="Price (KSh)"><Input inputMode="decimal" value={fromCents(edit.price ?? 0)} onChange={(e) => setEdit({ ...edit, price: toCents(e.target.value || 0) })} /></Field>
             <Field label="Happy-hour price (KSh)" hint="Optional"><Input inputMode="decimal" value={edit.happyHourPrice != null ? fromCents(edit.happyHourPrice) : ''} onChange={(e) => setEdit({ ...edit, happyHourPrice: e.target.value ? toCents(e.target.value) : null })} /></Field>
             <Field label="Status"><Select value={edit.status} onChange={(e) => setEdit({ ...edit, status: e.target.value })}>{['available', 'sold_out', 'seasonal', 'archived'].map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}</Select></Field>
