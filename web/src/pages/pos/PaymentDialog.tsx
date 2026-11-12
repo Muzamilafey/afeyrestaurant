@@ -198,7 +198,7 @@ export function PaymentDialog({ order, onClose, onPaid }: { order: Order; onClos
             </div>
           )}
           <Button size="lg" className="w-full" loading={busy} disabled={cents <= 0 || cents > balance || !!waiting || (method === 'cash' && tenderedCents < cents + tipCents) || (method === 'card' && !reference) || (method === 'account' && !customerId)} onClick={pay}>
-            {method === 'mpesa' ? (attempt && !waiting ? 'Send prompt again' : 'Send M-Pesa prompt') : method === 'mpesa_manual' ? `Complete sale · ${money(cents + tipCents)}` : `Charge ${money(cents + tipCents)}`}
+            {method === 'mpesa' ? (attempt && !waiting ? 'Send prompt again' : 'Send M-Pesa prompt') : method === 'mpesa_manual' ? `Complete sale · ${money(cents + tipCents)}` : method === 'cash' && cents === balance ? `Mark as paid · ${money(cents + tipCents)}` : method === 'cash' ? `Receive payment · ${money(cents + tipCents)}` : `Charge ${money(cents + tipCents)}`}
           </Button>
         </div>
       </div>

@@ -74,6 +74,7 @@ export const PERMISSIONS = {
   REPORTS_FINANCIAL: 'reports.financial',
   REPORTS_STAFF: 'reports.staff',
   // Administration
+  SIDEBAR_VIEW: 'navigation.sidebar_view',
   USERS_MANAGE: 'users.manage',
   ROLES_MANAGE: 'roles.manage',
   BRANCHES_MANAGE: 'branches.manage',
@@ -112,6 +113,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
       P.ORDERS_DISCOUNT, P.ORDERS_DISCOUNT_APPROVE, P.ORDERS_TRANSFER, P.ORDERS_MERGE, P.ORDERS_COMPLIMENTARY,
       P.PAYMENTS_RECEIVE, P.PAYMENTS_MANUAL_CONFIRM, P.PAYMENTS_REFUND, P.PAYMENTS_CREDIT_SALE, P.RECEIPTS_REPRINT,
       P.KITCHEN_VIEW, P.KITCHEN_UPDATE, P.BAR_VIEW, P.BAR_UPDATE, P.TABLES_VIEW, P.TABLES_MANAGE,
+      P.SIDEBAR_VIEW,
       P.RESERVATIONS_VIEW, P.RESERVATIONS_MANAGE, P.DELIVERY_VIEW, P.DELIVERY_MANAGE, P.MENU_VIEW, P.MENU_MANAGE,
       P.ACCOMMODATION_VIEW, P.ACCOMMODATION_MANAGE,
       P.INVENTORY_VIEW, P.INVENTORY_MANAGE, P.INVENTORY_ADJUST, P.INVENTORY_ADJUST_APPROVE, P.INVENTORY_OVERRIDE,
@@ -128,7 +130,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
     permissions: [
       P.ORDERS_VIEW, P.ORDERS_CREATE, P.ORDERS_UPDATE, P.ORDERS_VOID_ITEM, P.ORDERS_DISCOUNT, P.ORDERS_TRANSFER,
       P.PAYMENTS_RECEIVE, P.CASH_SESSION, P.TABLES_VIEW, P.MENU_VIEW, P.CUSTOMERS_VIEW, P.RESERVATIONS_VIEW,
-      P.DELIVERY_VIEW, P.KITCHEN_VIEW, P.BAR_VIEW,
+      P.DELIVERY_VIEW, P.KITCHEN_VIEW, P.BAR_VIEW, P.SIDEBAR_VIEW,
     ],
     branchScoped: true,
   },
@@ -144,31 +146,31 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
   receptionist: {
     name: 'Receptionist',
     description: 'Manages accommodation rooms, bookings and guest check-in/out',
-    permissions: [P.ACCOMMODATION_VIEW, P.ACCOMMODATION_MANAGE],
+    permissions: [P.ACCOMMODATION_VIEW, P.ACCOMMODATION_MANAGE, P.SIDEBAR_VIEW],
     branchScoped: true,
   },
   bartender: {
     name: 'Bartender',
     description: 'Prepares drinks against authorised bar tickets',
-    permissions: [P.BAR_VIEW, P.BAR_UPDATE, P.ORDERS_VIEW, P.ORDERS_CREATE, P.ORDERS_UPDATE, P.MENU_VIEW, P.TABLES_VIEW, P.INVENTORY_VIEW],
+    permissions: [P.BAR_VIEW, P.BAR_UPDATE, P.ORDERS_VIEW, P.ORDERS_CREATE, P.ORDERS_UPDATE, P.MENU_VIEW, P.TABLES_VIEW, P.INVENTORY_VIEW, P.SIDEBAR_VIEW],
     branchScoped: true,
   },
   chef: {
     name: 'Kitchen Staff / Chef',
     description: 'Works the kitchen display; no payment access',
-    permissions: [P.KITCHEN_VIEW, P.KITCHEN_UPDATE, P.ORDERS_VOID_SENT_ITEM, P.MENU_VIEW, P.INVENTORY_VIEW],
+    permissions: [P.KITCHEN_VIEW, P.KITCHEN_UPDATE, P.ORDERS_VOID_SENT_ITEM, P.MENU_VIEW, P.INVENTORY_VIEW, P.SIDEBAR_VIEW],
     branchScoped: true,
   },
   storekeeper: {
     name: 'Storekeeper',
     description: 'Manages stock movements and counts',
-    permissions: [P.INVENTORY_VIEW, P.INVENTORY_MANAGE, P.INVENTORY_ADJUST, P.PROCUREMENT_VIEW, P.REPORTS_INVENTORY, P.MENU_VIEW],
+    permissions: [P.INVENTORY_VIEW, P.INVENTORY_MANAGE, P.INVENTORY_ADJUST, P.PROCUREMENT_VIEW, P.REPORTS_INVENTORY, P.MENU_VIEW, P.SIDEBAR_VIEW],
     branchScoped: true,
   },
   procurement: {
     name: 'Procurement Officer',
     description: 'Raises purchase orders and manages suppliers',
-    permissions: [P.PROCUREMENT_VIEW, P.PROCUREMENT_MANAGE, P.INVENTORY_VIEW, P.REPORTS_INVENTORY],
+    permissions: [P.PROCUREMENT_VIEW, P.PROCUREMENT_MANAGE, P.INVENTORY_VIEW, P.REPORTS_INVENTORY, P.SIDEBAR_VIEW],
     branchScoped: false,
   },
   accountant: {
@@ -176,7 +178,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
     description: 'Financial reports, reconciliation and expenses',
     permissions: [
       P.ACCOUNTING_VIEW, P.REPORTS_SALES, P.REPORTS_FINANCIAL, P.REPORTS_INVENTORY, P.CASH_SESSION_VIEW_ALL,
-      P.EXPENSES_MANAGE, P.PROCUREMENT_VIEW, P.ORDERS_VIEW, P.CUSTOMERS_VIEW,
+      P.EXPENSES_MANAGE, P.PROCUREMENT_VIEW, P.ORDERS_VIEW, P.CUSTOMERS_VIEW, P.SIDEBAR_VIEW,
     ],
     branchScoped: false,
   },
@@ -185,7 +187,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
     description: 'Staff records, shifts and attendance',
     permissions: [
       P.STAFF_VIEW, P.STAFF_MANAGE, P.ATTENDANCE_VIEW, P.ATTENDANCE_MANAGE, P.ATTENDANCE_APPROVE, P.BIOMETRIC_ENROLL,
-      P.DEVICES_MANAGE, P.REPORTS_STAFF,
+      P.DEVICES_MANAGE, P.REPORTS_STAFF, P.SIDEBAR_VIEW,
     ],
     branchScoped: false,
   },
@@ -194,7 +196,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
     description: 'Read-only access to reports and audit trail',
     permissions: [
       P.ORDERS_VIEW, P.REPORTS_SALES, P.REPORTS_FINANCIAL, P.REPORTS_INVENTORY, P.REPORTS_STAFF, P.AUDIT_VIEW,
-      P.ACCOUNTING_VIEW, P.INVENTORY_VIEW, P.CASH_SESSION_VIEW_ALL,
+      P.ACCOUNTING_VIEW, P.INVENTORY_VIEW, P.CASH_SESSION_VIEW_ALL, P.SIDEBAR_VIEW,
     ],
     branchScoped: false,
   },

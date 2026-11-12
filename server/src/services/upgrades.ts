@@ -35,4 +35,18 @@ export async function runUpgrades() {
     await Role.updateMany({ tenantId: t._id, key: 'chef' }, { $addToSet: { permissions: P.ORDERS_VOID_SENT_ITEM } });
     await Tenant.updateOne({ _id: t._id }, { $set: { 'settings.kitchenCancelPermissionUpgraded': true } });
   }
+
+  // Sidebar navigation is a role permission; waiters remain focused on table selection unless an admin grants access.
+  const sidebarPending = await Tenant.find({ 'settings.sidebarPermissionUpgraded': { $ne: true } }).select('_id').lean();
+  for (const t of sidebarPending) {
+    await Role.updateMany({ tenantId: t._id, key: { $ne: 'waiter' } }, { $addToSet: { permissions: P.SIDEBAR_VIEW } });
+    await Tenant.updateOne({ _id: t._id }, { $set: { 'settings.sidebarPermissionUpgraded': true } });
+  }
+
+  // Cashiers must be able to receive payments on existing installations, as on new cashier roles.
+  const cashierPaymentsPending = await Tenant.find({ 'settings.cashierPaymentsUpgraded': { $ne: true } }).select('_id').lean();
+  for (const t of cashierPaymentsPending) {
+    await Role.updateMany({ tenantId: t._id, key: 'cashier' }, { $addToSet: { permissions: P.PAYMENTS_RECEIVE } });
+    await Tenant.updateOne({ _id: t._id }, { $set: { 'settings.cashierPaymentsUpgraded': true } });
+  }
 }

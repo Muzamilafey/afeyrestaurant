@@ -49,6 +49,8 @@ const tenantSchema = new Schema(
       accommodationEnabled: { type: Boolean, default: false },
       accommodationRolesUpgraded: { type: Boolean, default: true },
       kitchenCancelPermissionUpgraded: { type: Boolean, default: true },
+      sidebarPermissionUpgraded: { type: Boolean, default: true },
+      cashierPaymentsUpgraded: { type: Boolean, default: true },
     },
   },
   schemaOpts,

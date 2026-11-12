@@ -85,9 +85,9 @@ export async function recordPayment(ctx: BranchContext, orderId: string, input: 
     let change = 0;
     let cashSessionId: Types.ObjectId | undefined;
     if (method === 'cash') {
-      const { drawer: cs, mode } = await findOpenDrawer(ctx, session);
-      if (!cs) throw new AppError(409, 'NO_CASH_SESSION', noDrawerMessage(mode, 'before accepting cash'));
-      cashSessionId = cs._id;
+      // Cash sales may be received without opening a drawer. If one is open, still attach the payment for cash-up.
+      const { drawer: cs } = await findOpenDrawer(ctx, session);
+      cashSessionId = cs?._id;
       tendered = input.tendered ?? input.amount + tip;
       if (tendered < input.amount + tip) throw badRequest(tip ? 'Cash tendered is less than the amount plus tip' : 'Cash tendered is less than the amount');
       change = tendered - input.amount - tip;

@@ -147,7 +147,7 @@ export default function OrdersBoard() {
                   <div className="mt-3 flex gap-2">
                     {can('orders.void') && o.totals.paid === 0 && <button onClick={() => voidOrder(o)} className="grid h-10 w-10 place-items-center rounded-xl border border-line text-ink-soft hover:border-danger hover:text-danger" aria-label="Void order"><Trash2 className="h-4 w-4" /></button>}
                     <button onClick={() => nav(`/pos?order=${o._id}`)} className="grid h-10 w-10 place-items-center rounded-xl border border-line text-ink-soft hover:border-brand hover:text-brand-dark" aria-label="Edit order"><Pencil className="h-4 w-4" /></button>
-                    {can('payments.receive') && <Button className="flex-1" onClick={() => nav(`/pos?order=${o._id}&pay=1`)}>Receive payment</Button>}
+                    {can('payments.receive') && balance > 0 && ['open', 'held'].includes(o.status) && <Button className="flex-1" onClick={() => nav(`/pos?order=${o._id}&pay=1`)}>Mark as paid</Button>}
                   </div>
                 )}
               </article>
@@ -173,7 +173,7 @@ export default function OrdersBoard() {
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-1 text-[11px] text-warn-ink"><CloudOff className="h-3.5 w-3.5" /> This device only</span>
-                  {!paid && can('payments.receive') && <Button size="sm" onClick={() => { setPaymentMethod('cash'); setPayingLocal(o); }}>Receive payment</Button>}
+                  {!paid && can('payments.receive') && <Button size="sm" onClick={() => { setPaymentMethod('cash'); setPayingLocal(o); }}>Mark as paid</Button>}
                 </div>
               </article>
             );
