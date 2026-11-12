@@ -48,14 +48,23 @@ m.route({
     const re = { $regex: term, $options: 'i' };
     filter.$or = [{ number: re }, { receiptNumber: re }, { tableNumber: re }, { customerName: re }, { waiterName: re }];
   }
-  const [orders, total, [totals]] = await Promise.all([
+  const [orders, total, [totals], methodTotals] = await Promise.all([
     Order.find(filter).sort({ createdAt: -1 }).skip((query.page - 1) * query.limit).limit(query.limit).lean(),
     Order.countDocuments(filter),
     Order.aggregate([{ $match: filter }, { $group: { _id: null, totalValue: { $sum: { $ifNull: ['$totals.total', 0] } }, paid: { $sum: { $ifNull: ['$totals.paid', 0] } } } }]),
+    Order.aggregate([
+      { $match: filter },
+      { $lookup: { from: Payment.collection.name, localField: '_id', foreignField: 'orderId', as: 'payments' } },
+      { $unwind: '$payments' },
+      { $match: { 'payments.status': 'confirmed', 'payments.method': { $in: ['cash', 'mpesa'] } } },
+      { $group: { _id: '$payments.method', amount: { $sum: '$payments.amount' } } },
+    ]),
   ]);
   const totalValue = totals?.totalValue ?? 0;
   const paid = totals?.paid ?? 0;
-  return { orders, total, page: query.page, limit: query.limit, pages: Math.ceil(total / query.limit), summary: { orders: total, totalValue, paid, balance: Math.max(0, totalValue - paid) } };
+  const cash = methodTotals.find((row) => row._id === 'cash')?.amount ?? 0;
+  const mpesa = methodTotals.find((row) => row._id === 'mpesa')?.amount ?? 0;
+  return { orders, total, page: query.page, limit: query.limit, pages: Math.ceil(total / query.limit), summary: { orders: total, totalValue, paid, balance: Math.max(0, totalValue - paid), cash, mpesa } };
 });
 
 m.route({ method: 'get', path: '/:id', summary: 'Order with payments and attempts', permission: P.ORDERS_VIEW }, async ({ ctx, params }) => {
@@ -124,6 +133,14 @@ m.route(
   { method: 'post', path: '/:id/payments', summary: 'Record a cash/card/QR/account payment or a manual M-Pesa payment', permission: P.PAYMENTS_RECEIVE, body: z.object({ method: z.enum(['cash', 'card', 'qr', 'account', 'mpesa_manual']), amount: zMoney, tendered: zMoney.optional(), reference: z.string().max(40).optional(), customerId: zId.optional(), reason: z.string().max(200).optional(), tip: zMoney.optional(), idempotencyKey: z.string().min(8).max(80), approval: zApproval }) },
   async ({ ctx, params, body, res }) => {
     const r = await pay.recordPayment(ctx, params.id, body);
+    res.status(r.duplicate ? 200 : 201);
+    return r;
+  },
+);
+m.route(
+  { method: 'post', path: '/:id/payments/split', summary: 'Settle an order using both cash and manually confirmed M-Pesa', permission: P.PAYMENTS_RECEIVE, body: z.object({ cashAmount: zMoney, mpesaAmount: zMoney, idempotencyKey: z.string().min(8).max(60) }) },
+  async ({ ctx, params, body, res }) => {
+    const r = await pay.recordSplitPayment(ctx, params.id, body);
     res.status(r.duplicate ? 200 : 201);
     return r;
   },

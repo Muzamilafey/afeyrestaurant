@@ -125,6 +125,53 @@ export async function recordPayment(ctx: BranchContext, orderId: string, input: 
   return { ...result, duplicate: false };
 }
 
+/** Record a fully settled order paid with both cash and manually confirmed M-Pesa in one transaction. */
+export async function recordSplitPayment(ctx: BranchContext, orderId: string, input: { cashAmount: number; mpesaAmount: number; idempotencyKey: string }) {
+  if (input.cashAmount <= 0 || input.mpesaAmount <= 0) throw badRequest('Enter a positive amount for both cash and M-Pesa');
+  const cashKey = `${input.idempotencyKey}:cash`;
+  const mpesaKey = `${input.idempotencyKey}:mpesa`;
+  const existing = await Payment.find({ tenantId: ctx.tenantId, idempotencyKey: { $in: [cashKey, mpesaKey] } }).lean();
+  if (existing.length === 2 && existing.every((p) => String(p.orderId) === orderId)) {
+    const order = await Order.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: orderId });
+    if (!order) throw notFound('Order');
+    return { order, payments: existing, duplicate: true };
+  }
+  if (existing.length) throw conflict('This split payment has already been used. Refresh the order before retrying.', 'DUPLICATE_PAYMENT');
+
+  const result = await withTransaction(async (session) => {
+    const order = await Order.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: orderId }).session(session);
+    if (!order) throw notFound('Order');
+    if (!['open', 'held'].includes(order.status)) throw conflict(`Order is ${order.status}`, 'ORDER_LOCKED');
+    const balance = order.totals!.total - order.totals!.paid;
+    const received = input.cashAmount + input.mpesaAmount;
+    if (balance <= 0) throw conflict('Order is already fully paid', 'ALREADY_PAID');
+    if (received !== balance) throw badRequest(`Cash and M-Pesa must add up to the outstanding balance of ${toMajor(balance).toFixed(2)}`);
+
+    const { drawer } = await findOpenDrawer(ctx, session);
+    const [cashPayment, mpesaPayment] = await Payment.create([
+      {
+        tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, orderNumber: order.number, method: 'cash',
+        amount: input.cashAmount, tendered: input.cashAmount, change: 0, verification: 'cash', receivedBy: ctx.userId,
+        cashSessionId: drawer?._id, idempotencyKey: cashKey,
+      },
+      {
+        tenantId: ctx.tenantId, branchId: ctx.branchId, orderId: order._id, orderNumber: order.number, method: 'mpesa',
+        amount: input.mpesaAmount, tendered: input.mpesaAmount, change: 0, verification: 'manual',
+        manualConfirmation: { by: ctx.userId, reason: 'Confirmed at the till' }, receivedBy: ctx.userId, idempotencyKey: mpesaKey,
+      },
+    ], { session });
+    order.totals!.paid += received;
+    order.totals!.balance = order.totals!.total - order.totals!.paid;
+    order.paymentStatus = 'paid';
+    await finalizePaidOrder(order, session);
+    await order.save({ session });
+    return { order, payments: [cashPayment, mpesaPayment] };
+  });
+  await audit(ctx, { action: 'payment.split', entity: 'Order', entityId: result.order._id, reason: 'Cash and M-Pesa split payment', meta: { cashAmount: input.cashAmount, mpesaAmount: input.mpesaAmount } });
+  await afterPayment(result.order);
+  return { ...result, duplicate: false };
+}
+
 /**
  * Close a fully paid order: receipt number, stock deduction (exactly once), loyalty and table release.
  * Runs inside the payment transaction.

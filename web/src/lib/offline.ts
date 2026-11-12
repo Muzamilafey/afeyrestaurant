@@ -52,7 +52,8 @@ export interface LocalOfflineOrder {
   serviceCharge: number;
   total: number;
   paymentStatus?: 'unpaid' | 'paid';
-  paymentMethod?: 'cash' | 'card' | 'mpesa';
+  paymentMethod?: 'cash' | 'card' | 'mpesa' | 'split';
+  paymentBreakdown?: { cash: number; mpesa: number };
   paidAt?: string;
   paidBy?: string;
 }
@@ -99,11 +100,11 @@ export async function localOrders(branchId?: string): Promise<LocalOfflineOrder[
   const orders = branchId ? await d.getAllFromIndex('localOrders', 'byBranch', branchId) : await d.getAll('localOrders');
   return orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
-export async function markLocalOrderPaid(id: string, paymentMethod: 'cash' | 'card' | 'mpesa', paidBy: string) {
+export async function markLocalOrderPaid(id: string, paymentMethod: 'cash' | 'card' | 'mpesa' | 'split', paidBy: string, paymentBreakdown?: { cash: number; mpesa: number }) {
   const d = await db();
   const order = await d.get('localOrders', id);
   if (!order || order.paymentStatus === 'paid') return order ?? null;
-  const paid = { ...order, paymentStatus: 'paid' as const, paymentMethod, paidAt: new Date().toISOString(), paidBy };
+  const paid = { ...order, paymentStatus: 'paid' as const, paymentMethod, paymentBreakdown, paidAt: new Date().toISOString(), paidBy };
   await d.put('localOrders', paid);
   window.dispatchEvent(new Event('chili:local-orders'));
   return paid;

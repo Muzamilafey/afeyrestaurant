@@ -3,8 +3,8 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, Pencil, Search, Plus, CloudOff, ChevronDown, ChevronRight, Banknote, ClipboardList, Wallet } from 'lucide-react';
 import { get, post } from '@/lib/api';
-import { dateTime, money, time, uuid } from '@/lib/format';
-import { Button, Empty, Input, Modal, PageHeader, Pill, Select, Skeleton, StatusPill, Stat, cx } from '@/components/ui';
+import { dateTime, money, time, toCents, uuid } from '@/lib/format';
+import { Button, Empty, Field, Input, Modal, PageHeader, Pill, Select, Skeleton, StatusPill, Stat, cx } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
 import { localOrders as readLocalOrders, markLocalOrderPaid, type LocalOfflineOrder } from '@/lib/offline';
@@ -12,7 +12,7 @@ import type { Order } from './pos/types';
 
 type OrdersView = 'current' | 'held' | 'paid' | 'device' | 'sales';
 type DatePreset = 'today' | 'yesterday' | '7d' | '30d' | 'custom';
-interface SalesPageResponse { orders: Order[]; total: number; page: number; limit: number; pages: number; summary: { orders: number; totalValue: number; paid: number; balance: number } }
+interface SalesPageResponse { orders: Order[]; total: number; page: number; limit: number; pages: number; summary: { orders: number; totalValue: number; paid: number; balance: number; cash: number; mpesa: number } }
 interface SalesRow { id: string; number: string; createdAt: string; location: string; waiter: string; amount: number; status: string; device: boolean; items: Array<{ lineId: string; qty: number; name: string; detail?: string; amount: number; voided: boolean }> }
 
 function dateInputValue(date: Date) {
@@ -39,9 +39,16 @@ export default function OrdersBoard({ initialView = 'current' }: { initialView?:
   const [salesTodayKey, setSalesTodayKey] = useState(() => dateInputValue(new Date()));
   const [deviceOrders, setDeviceOrders] = useState<LocalOfflineOrder[]>([]);
   const [payingLocal, setPayingLocal] = useState<LocalOfflineOrder | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'mpesa'>('cash');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'mpesa' | 'split'>('cash');
+  const [splitCash, setSplitCash] = useState('');
+  const [splitMpesa, setSplitMpesa] = useState('');
   const [payingOrder, setPayingOrder] = useState<Order | null>(null);
   const [savingPayment, setSavingPayment] = useState(false);
+  useEffect(() => {
+    const routeView = location.pathname === '/sales' ? 'sales' : new URLSearchParams(location.search).get('view');
+    const next = routeView && ['current', 'held', 'paid', 'device', 'sales'].includes(routeView) ? routeView as OrdersView : initialView;
+    setView(next);
+  }, [location.pathname, location.search, initialView]);
   useEffect(() => {
     const timer = window.setInterval(() => setSalesTodayKey(dateInputValue(new Date())), 30_000);
     return () => window.clearInterval(timer);
@@ -131,13 +138,21 @@ export default function OrdersBoard({ initialView = 'current' }: { initialView?:
     totalValue: summary.totalValue + order.total,
     paid: summary.paid + (order.paymentStatus === 'paid' ? order.total : 0),
     balance: summary.balance + (order.paymentStatus === 'paid' ? 0 : order.total),
-  }), { totalValue: 0, paid: 0, balance: 0 });
+    cash: summary.cash + (order.paymentStatus === 'paid' ? order.paymentBreakdown?.cash ?? (order.paymentMethod === 'cash' ? order.total : 0) : 0),
+    mpesa: summary.mpesa + (order.paymentStatus === 'paid' ? order.paymentBreakdown?.mpesa ?? (order.paymentMethod === 'mpesa' ? order.total : 0) : 0),
+  }), { totalValue: 0, paid: 0, balance: 0, cash: 0, mpesa: 0 });
   const salesSummary = {
     orders: (salesQuery.data?.summary.orders ?? 0) + (view === 'sales' ? visibleDeviceOrders.length : 0),
     totalValue: (salesQuery.data?.summary.totalValue ?? 0) + localSalesSummary.totalValue,
     paid: (salesQuery.data?.summary.paid ?? 0) + localSalesSummary.paid,
     balance: (salesQuery.data?.summary.balance ?? 0) + localSalesSummary.balance,
+    cash: (salesQuery.data?.summary.cash ?? 0) + localSalesSummary.cash,
+    mpesa: (salesQuery.data?.summary.mpesa ?? 0) + localSalesSummary.mpesa,
   };
+  const splitCashCents = Number.isFinite(Number(splitCash)) ? toCents(splitCash || '0') : 0;
+  const splitMpesaCents = Number.isFinite(Number(splitMpesa)) ? toCents(splitMpesa || '0') : 0;
+  const paymentBalance = payingOrder ? payingOrder.totals.total - payingOrder.totals.paid : payingLocal?.total ?? 0;
+  const splitAmountsValid = splitCashCents > 0 && splitMpesaCents > 0 && splitCashCents + splitMpesaCents === paymentBalance;
   const changeView = (next: OrdersView) => {
     setView(next);
     if (next === 'sales') {
@@ -150,11 +165,14 @@ export default function OrdersBoard({ initialView = 'current' }: { initialView?:
     }
     setSearchParams(next === 'current' ? {} : { view: next }, { replace: true });
   };
+  const openLocalPayment = (order: LocalOfflineOrder) => { setPaymentMethod('cash'); setSplitCash(''); setSplitMpesa(''); setPayingLocal(order); };
+  const openOrderPayment = (order: Order) => { setPaymentMethod('cash'); setSplitCash(''); setSplitMpesa(''); setPayingOrder(order); };
 
   async function confirmLocalPaid() {
     if (!payingLocal) return;
+    if (paymentMethod === 'split' && !splitAmountsValid) return;
     try {
-      await markLocalOrderPaid(payingLocal.id, paymentMethod, session?.user.name ?? 'Cashier');
+      await markLocalOrderPaid(payingLocal.id, paymentMethod === 'split' ? 'split' : paymentMethod, session?.user.name ?? 'Cashier', paymentMethod === 'split' ? { cash: splitCashCents, mpesa: splitMpesaCents } : undefined);
       setPayingLocal(null);
       toast('Device order marked as paid');
     } catch (e) {
@@ -164,15 +182,20 @@ export default function OrdersBoard({ initialView = 'current' }: { initialView?:
 
   async function confirmOrderPaid() {
     if (!payingOrder || savingPayment) return;
+    if (paymentMethod === 'split' && !splitAmountsValid) return;
     setSavingPayment(true);
     try {
       const balance = payingOrder.totals.total - payingOrder.totals.paid;
-      await post(`/orders/${payingOrder._id}/payments`, {
-        method: paymentMethod === 'mpesa' ? 'mpesa_manual' : 'cash',
-        amount: balance,
-        idempotencyKey: uuid(),
-        ...(paymentMethod === 'mpesa' ? { reason: 'M-Pesa payment confirmed at the till' } : {}),
-      });
+      if (paymentMethod === 'split') {
+        await post(`/orders/${payingOrder._id}/payments/split`, { cashAmount: splitCashCents, mpesaAmount: splitMpesaCents, idempotencyKey: uuid() });
+      } else {
+        await post(`/orders/${payingOrder._id}/payments`, {
+          method: paymentMethod === 'mpesa' ? 'mpesa_manual' : 'cash',
+          amount: balance,
+          idempotencyKey: uuid(),
+          ...(paymentMethod === 'mpesa' ? { reason: 'M-Pesa payment confirmed at the till' } : {}),
+        });
+      }
       setPayingOrder(null);
       await qc.invalidateQueries({ queryKey: ['orders'] });
       toast('Order marked as paid');
@@ -211,10 +234,12 @@ export default function OrdersBoard({ initialView = 'current' }: { initialView?:
           ))}
           {datePreset === 'custom' && <div className="flex flex-wrap items-center gap-2"><Input aria-label="From date" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /><span className="text-sm text-ink-soft">to</span><Input aria-label="To date" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></div>}
         </div>
-        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
           <Stat label="Orders" value={salesQuery.isLoading ? '—' : salesSummary.orders} icon={<ClipboardList className="h-5 w-5" />} />
           <Stat label="Total value" value={salesQuery.isLoading ? '—' : money(salesSummary.totalValue)} icon={<Banknote className="h-5 w-5" />} tone="green" />
-          <Stat label="Paid" value={salesQuery.isLoading ? '—' : money(salesSummary.paid)} icon={<Banknote className="h-5 w-5" />} />
+          <Stat label="Total collected" value={salesQuery.isLoading ? '—' : money(salesSummary.paid)} icon={<Banknote className="h-5 w-5" />} />
+          <Stat label="Cash collected" value={salesQuery.isLoading ? '—' : money(salesSummary.cash)} icon={<Banknote className="h-5 w-5" />} />
+          <Stat label="M-Pesa collected" value={salesQuery.isLoading ? '—' : money(salesSummary.mpesa)} icon={<Wallet className="h-5 w-5" />} />
           <Stat label="Balance due" value={salesQuery.isLoading ? '—' : money(salesSummary.balance)} icon={<Wallet className="h-5 w-5" />} tone={salesSummary.balance > 0 ? 'yellow' : 'default'} />
         </div>
         <SalesOrdersList rows={salesRows} isLoading={salesQuery.isLoading} page={salesPage} pages={Math.max(1, salesQuery.data?.pages ?? 1)} total={salesTotal} onPageChange={setSalesPage} />
@@ -257,7 +282,7 @@ export default function OrdersBoard({ initialView = 'current' }: { initialView?:
                   <div className="mt-3 flex gap-2">
                     {can('orders.void') && o.totals.paid === 0 && <button onClick={() => voidOrder(o)} className="grid h-10 w-10 place-items-center rounded-xl border border-line text-ink-soft hover:border-danger hover:text-danger" aria-label="Void order"><Trash2 className="h-4 w-4" /></button>}
                     <button onClick={() => nav(`/pos?order=${o._id}`)} className="grid h-10 w-10 place-items-center rounded-xl border border-line text-ink-soft hover:border-brand hover:text-brand-dark" aria-label="Edit order"><Pencil className="h-4 w-4" /></button>
-                    {can('payments.receive') && balance > 0 && ['open', 'held'].includes(o.status) && <Button className="flex-1" onClick={() => { setPaymentMethod('cash'); setPayingOrder(o); }}>Mark as paid</Button>}
+                    {can('payments.receive') && balance > 0 && ['open', 'held'].includes(o.status) && <Button className="flex-1" onClick={() => openOrderPayment(o)}>Mark as paid</Button>}
                   </div>
                 )}
               </article>
@@ -278,27 +303,35 @@ export default function OrdersBoard({ initialView = 'current' }: { initialView?:
                   {o.items.map((item) => <div key={item.lineId} className="flex justify-between gap-3"><span>{item.qty} × {item.name}{item.variant ? ` · ${item.variant}` : ''}{item.modifiers.length ? <span className="block text-xs text-ink-soft">{item.modifiers.join(', ')}</span> : null}</span><span className="shrink-0 tabular-nums">{money(item.qty * item.unitPrice)}</span></div>)}
                 </div>
                 <div className="mt-3 flex items-center justify-between border-t border-line pt-3">
-                  <span className="text-xs text-ink-soft">{paid ? `Paid${o.paymentMethod ? ` · ${o.paymentMethod}` : ''}${o.paidBy ? ` by ${o.paidBy}` : ''}` : 'Unpaid'}</span>
+                  <span className="text-xs text-ink-soft">{paid ? `Paid${o.paymentMethod ? ` · ${o.paymentMethod === 'split' ? 'M-Pesa + Cash' : o.paymentMethod}` : ''}${o.paidBy ? ` by ${o.paidBy}` : ''}` : 'Unpaid'}</span>
                   <span className="font-bold">{money(o.total)} <span className="text-[10px] font-normal text-ink-soft">est.</span></span>
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-1 text-[11px] text-warn-ink"><CloudOff className="h-3.5 w-3.5" /> This device only</span>
-                  {!paid && can('payments.receive') && <Button size="sm" onClick={() => { setPaymentMethod('cash'); setPayingLocal(o); }}>Mark as paid</Button>}
+                  {!paid && can('payments.receive') && <Button size="sm" onClick={() => openLocalPayment(o)}>Mark as paid</Button>}
                 </div>
               </article>
             );
           })}
         </div>
       ))}
-      {payingLocal && <Modal open onClose={() => setPayingLocal(null)} title="Mark device order as paid" footer={<><Button variant="secondary" onClick={() => setPayingLocal(null)}>Cancel</Button><Button onClick={confirmLocalPaid}>Mark as paid</Button></>}>
-                <p className="mb-3 text-sm">{payingLocal.number} · {money(payingLocal.total)} estimated. This payment record stays on this device.</p>
+      {payingLocal && <Modal open onClose={() => setPayingLocal(null)} title="Mark device order as paid" footer={<><Button variant="secondary" onClick={() => setPayingLocal(null)}>Cancel</Button><Button disabled={paymentMethod === 'split' && !splitAmountsValid} onClick={confirmLocalPaid}>Mark as paid</Button></>}>
+        <p className="mb-3 text-sm">{payingLocal.number} · {money(payingLocal.total)} estimated. This payment record stays on this device.</p>
         <label className="label" htmlFor="local-payment-method">Payment method</label>
-        <Select id="local-payment-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option></Select>
+        <Select id="local-payment-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="split">M-Pesa + Cash</option></Select>
+        {paymentMethod === 'split' && <div className="mt-3 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2"><Field label="M-Pesa amount (KSh)"><Input inputMode="decimal" type="number" min="0" step="0.01" value={splitMpesa} onChange={(e) => setSplitMpesa(e.target.value)} /></Field><Field label="Cash amount (KSh)"><Input inputMode="decimal" type="number" min="0" step="0.01" value={splitCash} onChange={(e) => setSplitCash(e.target.value)} /></Field></div>
+          <p className={cx('text-xs', splitAmountsValid ? 'text-brand-dark' : 'text-ink-soft')}>Entered: {money(splitCashCents + splitMpesaCents)} · Due: {money(paymentBalance)}{splitCashCents + splitMpesaCents !== paymentBalance ? ' · amounts must equal the due amount' : ''}</p>
+        </div>}
       </Modal>}
-      {payingOrder && <Modal open onClose={() => !savingPayment && setPayingOrder(null)} title="Mark order as paid" dismissible={!savingPayment} footer={<><Button variant="secondary" disabled={savingPayment} onClick={() => setPayingOrder(null)}>Cancel</Button><Button loading={savingPayment} onClick={confirmOrderPaid}>Mark as paid</Button></>}>
+      {payingOrder && <Modal open onClose={() => !savingPayment && setPayingOrder(null)} title="Mark order as paid" dismissible={!savingPayment} footer={<><Button variant="secondary" disabled={savingPayment} onClick={() => setPayingOrder(null)}>Cancel</Button><Button disabled={paymentMethod === 'split' && !splitAmountsValid} loading={savingPayment} onClick={confirmOrderPaid}>Mark as paid</Button></>}>
         <p className="mb-3 text-sm">{payingOrder.number} due: {money(payingOrder.totals.total - payingOrder.totals.paid)}</p>
         <label className="label" htmlFor="order-payment-method">Payment method</label>
-        <Select id="order-payment-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option></Select>
+        <Select id="order-payment-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="split">M-Pesa + Cash</option></Select>
+        {paymentMethod === 'split' && <div className="mt-3 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2"><Field label="M-Pesa amount (KSh)"><Input inputMode="decimal" type="number" min="0" step="0.01" value={splitMpesa} onChange={(e) => setSplitMpesa(e.target.value)} /></Field><Field label="Cash amount (KSh)"><Input inputMode="decimal" type="number" min="0" step="0.01" value={splitCash} onChange={(e) => setSplitCash(e.target.value)} /></Field></div>
+          <p className={cx('text-xs', splitAmountsValid ? 'text-brand-dark' : 'text-ink-soft')}>Entered: {money(splitCashCents + splitMpesaCents)} · Due: {money(paymentBalance)}{splitCashCents + splitMpesaCents !== paymentBalance ? ' · amounts must equal the due amount' : ''}</p>
+        </div>}
       </Modal>}
     </div>
   );
