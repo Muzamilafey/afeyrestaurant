@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, Pencil, Search, Plus, CloudOff } from 'lucide-react';
 import { get, post } from '@/lib/api';
-import { dateTime, money, time } from '@/lib/format';
+import { dateTime, money, time, uuid } from '@/lib/format';
 import { Button, Empty, Input, Modal, PageHeader, Select, Skeleton, StatusPill, cx } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
@@ -31,7 +31,9 @@ export default function OrdersBoard() {
   const [dateTo, setDateTo] = useState('');
   const [deviceOrders, setDeviceOrders] = useState<LocalOfflineOrder[]>([]);
   const [payingLocal, setPayingLocal] = useState<LocalOfflineOrder | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'mpesa'>('cash');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'mpesa'>('cash');
+  const [payingOrder, setPayingOrder] = useState<Order | null>(null);
+  const [savingPayment, setSavingPayment] = useState(false);
   useEffect(() => {
     if (!branch?.id) { setDeviceOrders([]); return; }
     const refresh = () => readLocalOrders(branch.id).then(setDeviceOrders).catch(() => setDeviceOrders([]));
@@ -81,6 +83,27 @@ export default function OrdersBoard() {
       toast('Device order marked as paid');
     } catch (e) {
       handleError(e);
+    }
+  }
+
+  async function confirmOrderPaid() {
+    if (!payingOrder || savingPayment) return;
+    setSavingPayment(true);
+    try {
+      const balance = payingOrder.totals.total - payingOrder.totals.paid;
+      await post(`/orders/${payingOrder._id}/payments`, {
+        method: paymentMethod === 'mpesa' ? 'mpesa_manual' : 'cash',
+        amount: balance,
+        idempotencyKey: uuid(),
+        ...(paymentMethod === 'mpesa' ? { reason: 'M-Pesa payment confirmed at the till' } : {}),
+      });
+      setPayingOrder(null);
+      await qc.invalidateQueries({ queryKey: ['orders'] });
+      toast('Order marked as paid');
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setSavingPayment(false);
     }
   }
 
@@ -147,7 +170,7 @@ export default function OrdersBoard() {
                   <div className="mt-3 flex gap-2">
                     {can('orders.void') && o.totals.paid === 0 && <button onClick={() => voidOrder(o)} className="grid h-10 w-10 place-items-center rounded-xl border border-line text-ink-soft hover:border-danger hover:text-danger" aria-label="Void order"><Trash2 className="h-4 w-4" /></button>}
                     <button onClick={() => nav(`/pos?order=${o._id}`)} className="grid h-10 w-10 place-items-center rounded-xl border border-line text-ink-soft hover:border-brand hover:text-brand-dark" aria-label="Edit order"><Pencil className="h-4 w-4" /></button>
-                    {can('payments.receive') && balance > 0 && ['open', 'held'].includes(o.status) && <Button className="flex-1" onClick={() => nav(`/pos?order=${o._id}&pay=1`)}>Mark as paid</Button>}
+                    {can('payments.receive') && balance > 0 && ['open', 'held'].includes(o.status) && <Button className="flex-1" onClick={() => { setPaymentMethod('cash'); setPayingOrder(o); }}>Mark as paid</Button>}
                   </div>
                 )}
               </article>
@@ -180,10 +203,15 @@ export default function OrdersBoard() {
           })}
         </div>
       )}
-      {payingLocal && <Modal open onClose={() => setPayingLocal(null)} title="Receive payment" footer={<><Button variant="secondary" onClick={() => setPayingLocal(null)}>Cancel</Button><Button onClick={confirmLocalPaid}>Receive payment</Button></>}>
+      {payingLocal && <Modal open onClose={() => setPayingLocal(null)} title="Mark device order as paid" footer={<><Button variant="secondary" onClick={() => setPayingLocal(null)}>Cancel</Button><Button onClick={confirmLocalPaid}>Mark as paid</Button></>}>
                 <p className="mb-3 text-sm">{payingLocal.number} · {money(payingLocal.total)} estimated. This payment record stays on this device.</p>
         <label className="label" htmlFor="local-payment-method">Payment method</label>
-        <Select id="local-payment-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}><option value="cash">Cash</option><option value="card">Card</option><option value="mpesa">M-Pesa</option></Select>
+        <Select id="local-payment-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option></Select>
+      </Modal>}
+      {payingOrder && <Modal open onClose={() => !savingPayment && setPayingOrder(null)} title="Mark order as paid" dismissible={!savingPayment} footer={<><Button variant="secondary" disabled={savingPayment} onClick={() => setPayingOrder(null)}>Cancel</Button><Button loading={savingPayment} onClick={confirmOrderPaid}>Mark as paid</Button></>}>
+        <p className="mb-3 text-sm">{payingOrder.number} due: {money(payingOrder.totals.total - payingOrder.totals.paid)}</p>
+        <label className="label" htmlFor="order-payment-method">Payment method</label>
+        <Select id="order-payment-method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as typeof paymentMethod)}><option value="cash">Cash</option><option value="mpesa">M-Pesa</option></Select>
       </Modal>}
     </div>
   );
