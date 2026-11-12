@@ -99,18 +99,15 @@ function PinLogin({ business, onUseEmail }: { business: PublicBusiness; onUseEma
   return (
     <div className="min-h-dvh w-full bg-[#0B0D0C] p-3 sm:p-6 lg:p-8">
       <section className="mx-auto grid min-h-[calc(100dvh-1.5rem)] w-full max-w-6xl overflow-hidden rounded-[28px] border border-white/10 bg-[#111412] text-white shadow-2xl sm:min-h-[calc(100dvh-3rem)] lg:min-h-[calc(100dvh-4rem)] lg:grid-cols-[0.9fr_1.1fr]">
-        <aside className="hidden flex-col justify-between bg-gradient-to-br from-[#17211B] via-[#111412] to-[#0B0D0C] p-10 lg:flex xl:p-14">
+        <aside className="hidden flex-col bg-gradient-to-br from-[#17211B] via-[#111412] to-[#0B0D0C] p-10 lg:flex xl:p-14">
           <header className="flex items-center gap-4">
             <BusinessMark name={business.name} logoUrl={business.logoUrl} size={56} dark />
             <p className="max-w-[18rem] truncate text-lg font-bold">{business.name}</p>
           </header>
-          <div className="flex max-w-md flex-col items-start">
-            <BusinessMark name={business.name} logoUrl={business.logoUrl} size={160} dark />
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Staff access</p>
+          <div className="my-auto flex max-w-md flex-col items-start">
+            <BusinessMark name={business.name} logoUrl={business.logoUrl} size={192} dark />
             <h2 className="mt-4 text-4xl font-bold leading-tight xl:text-5xl">Welcome back</h2>
-            <p className="mt-4 text-base leading-relaxed text-white/60">Enter your staff PIN to open the point of sale.</p>
           </div>
-          <p className="text-xs text-white/35">Chili POS · Secure staff sign-in</p>
         </aside>
 
         <div className="flex min-w-0 flex-col items-center px-5 py-7 sm:px-10 sm:py-9 lg:px-12 lg:py-10">
@@ -172,14 +169,12 @@ function EmailLogin({ business, onUsePin }: { business: PublicBusiness; onUsePin
   });
   return (
     <div className="grid min-h-full lg:grid-cols-2">
-      <div className="hidden flex-col justify-between bg-brand p-10 text-white lg:flex">
+      <div className="hidden flex-col bg-brand p-10 text-white lg:flex">
         <div className="flex items-center gap-3 text-xl font-bold"><BusinessMark name={business.name} logoUrl={business.logoUrl} size={44} /> {business.name}</div>
-        <div>
-          <BusinessMark name={business.name} logoUrl={business.logoUrl} size={160} />
+        <div className="my-auto">
+          <BusinessMark name={business.name} logoUrl={business.logoUrl} size={192} />
           <h1 className="mt-8 text-4xl font-bold leading-tight">Welcome back</h1>
-          <p className="mt-3 max-w-md text-white/80">Sign in to continue to {business.name}.</p>
         </div>
-        <p className="text-sm text-white/60">Powered by Chili POS</p>
       </div>
       <div className="flex items-center justify-center p-6">
         <form onSubmit={submit} className="w-full max-w-sm space-y-4" noValidate>
