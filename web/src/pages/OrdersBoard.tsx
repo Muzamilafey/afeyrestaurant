@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Pencil, Search, Plus, CloudOff, ChevronDown, ChevronRight } from 'lucide-react';
+import { Trash2, Pencil, Search, Plus, CloudOff, ChevronDown, ChevronRight, Banknote, ClipboardList, Wallet } from 'lucide-react';
 import { get, post } from '@/lib/api';
 import { dateTime, money, time, uuid } from '@/lib/format';
-import { Button, Empty, Input, Modal, PageHeader, Pill, Select, Skeleton, StatusPill, cx } from '@/components/ui';
+import { Button, Empty, Input, Modal, PageHeader, Pill, Select, Skeleton, StatusPill, Stat, cx } from '@/components/ui';
 import { useFeedback } from '@/components/feedback';
 import { useAuth } from '@/auth/AuthContext';
 import { localOrders as readLocalOrders, markLocalOrderPaid, type LocalOfflineOrder } from '@/lib/offline';
@@ -12,7 +12,7 @@ import type { Order } from './pos/types';
 
 type OrdersView = 'current' | 'held' | 'paid' | 'device' | 'sales';
 type DatePreset = 'today' | 'yesterday' | '7d' | '30d' | 'custom';
-interface SalesPageResponse { orders: Order[]; total: number; page: number; limit: number; pages: number }
+interface SalesPageResponse { orders: Order[]; total: number; page: number; limit: number; pages: number; summary: { orders: number; totalValue: number; paid: number; balance: number } }
 interface SalesRow { id: string; number: string; createdAt: string; location: string; waiter: string; amount: number; status: string; device: boolean; items: Array<{ lineId: string; qty: number; name: string; detail?: string; amount: number; voided: boolean }> }
 
 function dateInputValue(date: Date) {
@@ -127,6 +127,17 @@ export default function OrdersBoard({ initialView = 'current' }: { initialView?:
     return [...serverRows, ...localRows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [salesQuery.data?.orders, view, salesPage, visibleDeviceOrders]);
   const salesTotal = (salesQuery.data?.total ?? 0) + (view === 'sales' ? visibleDeviceOrders.length : 0);
+  const localSalesSummary = visibleDeviceOrders.reduce((summary, order) => ({
+    totalValue: summary.totalValue + order.total,
+    paid: summary.paid + (order.paymentStatus === 'paid' ? order.total : 0),
+    balance: summary.balance + (order.paymentStatus === 'paid' ? 0 : order.total),
+  }), { totalValue: 0, paid: 0, balance: 0 });
+  const salesSummary = {
+    orders: (salesQuery.data?.summary.orders ?? 0) + (view === 'sales' ? visibleDeviceOrders.length : 0),
+    totalValue: (salesQuery.data?.summary.totalValue ?? 0) + localSalesSummary.totalValue,
+    paid: (salesQuery.data?.summary.paid ?? 0) + localSalesSummary.paid,
+    balance: (salesQuery.data?.summary.balance ?? 0) + localSalesSummary.balance,
+  };
   const changeView = (next: OrdersView) => {
     setView(next);
     if (next === 'sales') {
@@ -199,6 +210,12 @@ export default function OrdersBoard({ initialView = 'current' }: { initialView?:
             <button key={tab.id} role="tab" aria-selected={datePreset === tab.id} onClick={() => setDatePreset(tab.id)} className={cx('rounded-xl border px-4 py-2 text-sm font-semibold', datePreset === tab.id ? 'border-brand bg-brand-pale text-brand-dark' : 'border-line bg-card text-ink-soft hover:text-ink')}>{tab.label}</button>
           ))}
           {datePreset === 'custom' && <div className="flex flex-wrap items-center gap-2"><Input aria-label="From date" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /><span className="text-sm text-ink-soft">to</span><Input aria-label="To date" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></div>}
+        </div>
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Stat label="Orders" value={salesQuery.isLoading ? '—' : salesSummary.orders} icon={<ClipboardList className="h-5 w-5" />} />
+          <Stat label="Total value" value={salesQuery.isLoading ? '—' : money(salesSummary.totalValue)} icon={<Banknote className="h-5 w-5" />} tone="green" />
+          <Stat label="Paid" value={salesQuery.isLoading ? '—' : money(salesSummary.paid)} icon={<Banknote className="h-5 w-5" />} />
+          <Stat label="Balance due" value={salesQuery.isLoading ? '—' : money(salesSummary.balance)} icon={<Wallet className="h-5 w-5" />} tone={salesSummary.balance > 0 ? 'yellow' : 'default'} />
         </div>
         <SalesOrdersList rows={salesRows} isLoading={salesQuery.isLoading} page={salesPage} pages={Math.max(1, salesQuery.data?.pages ?? 1)} total={salesTotal} onPageChange={setSalesPage} />
       </>}

@@ -48,11 +48,14 @@ m.route({
     const re = { $regex: term, $options: 'i' };
     filter.$or = [{ number: re }, { receiptNumber: re }, { tableNumber: re }, { customerName: re }, { waiterName: re }];
   }
-  const [orders, total] = await Promise.all([
+  const [orders, total, [totals]] = await Promise.all([
     Order.find(filter).sort({ createdAt: -1 }).skip((query.page - 1) * query.limit).limit(query.limit).lean(),
     Order.countDocuments(filter),
+    Order.aggregate([{ $match: filter }, { $group: { _id: null, totalValue: { $sum: { $ifNull: ['$totals.total', 0] } }, paid: { $sum: { $ifNull: ['$totals.paid', 0] } } } }]),
   ]);
-  return { orders, total, page: query.page, limit: query.limit, pages: Math.ceil(total / query.limit) };
+  const totalValue = totals?.totalValue ?? 0;
+  const paid = totals?.paid ?? 0;
+  return { orders, total, page: query.page, limit: query.limit, pages: Math.ceil(total / query.limit), summary: { orders: total, totalValue, paid, balance: Math.max(0, totalValue - paid) } };
 });
 
 m.route({ method: 'get', path: '/:id', summary: 'Order with payments and attempts', permission: P.ORDERS_VIEW }, async ({ ctx, params }) => {
