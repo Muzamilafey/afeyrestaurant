@@ -19,6 +19,7 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
   const qc = useQueryClient();
   const [view, setView] = useState<'active' | 'recent'>('active');
   const [soldOut, setSoldOut] = useState(false);
+  const [updatingTicket, setUpdatingTicket] = useState<string | null>(null);
   const [sound, setSound] = useState(() => localStorage.getItem(`chili.sound.${station}`) !== 'off');
   const [now, setNow] = useState(Date.now());
   const { data, isLoading, dataUpdatedAt } = useQuery<{ delayMinutes: number; tickets: Ticket[] }>({ queryKey: ['tickets', station, view, branch?.id], queryFn: () => get(`/stations/${station}/tickets`, { include: view }), refetchInterval: 20_000 });
@@ -29,8 +30,15 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
   useEffect(() => onSocket('ticket.created', () => sound && chime()), [sound]);
   useEffect(() => localStorage.setItem(`chili.sound.${station}`, sound ? 'on' : 'off'), [sound, station]);
 
-  const advance = (t: Ticket, status: string) => post(`/stations/tickets/${t._id}/status`, { status }).then(() => qc.invalidateQueries({ queryKey: ['tickets', station] })).catch(handleError);
+  const advance = (t: Ticket, status: string) => {
+    setUpdatingTicket(t._id);
+    return post(`/stations/tickets/${t._id}/status`, { status })
+      .then(() => qc.invalidateQueries({ queryKey: ['tickets', station] }))
+      .catch(handleError)
+      .finally(() => setUpdatingTicket(null));
+  };
   const canUpdate = can(station === 'bar' ? 'bar.update' : 'kitchen.update');
+  const canCancelKitchen = station === 'kitchen' && can('orders.void_sent_item');
   const delay = (data?.delayMinutes ?? 15) * 60;
   // Server-computed age at fetch time plus local time elapsed since, so terminal clock skew does not matter.
   const age = (t: Ticket) => t.ageSeconds + (dataUpdatedAt > 0 ? Math.max(0, now - dataUpdatedAt) / 1000 : 0);
@@ -50,7 +58,7 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
           {tickets.map((t) => {
             const a = age(t);
             const late = a > delay && !['ready', 'completed', 'cancelled'].includes(t.status);
-            const next = NEXT[t.status];
+            const next = station === 'bar' ? NEXT[t.status] : undefined;
             return (
               <article key={t._id} className={cx('flex flex-col rounded-2xl border-2 bg-card shadow-soft', late ? 'border-danger' : t.priority ? 'border-warn' : t.status === 'ready' ? 'border-brand' : 'border-line')}>
                 <header className={cx('flex items-center justify-between rounded-t-2xl px-4 py-3', late ? 'bg-danger-pale' : 'bg-page')}>
@@ -77,10 +85,16 @@ export default function StationPage({ station }: { station: 'kitchen' | 'bar' })
                     </li>
                   ))}
                 </ul>
+                {view === 'active' && canUpdate && station === 'kitchen' && (
+                  <div className="flex gap-2 border-t border-line p-3">
+                    {canCancelKitchen && <Button variant="danger" className="flex-1" loading={updatingTicket === t._id} onClick={() => advance(t, 'cancelled')}>Cancel</Button>}
+                    <Button size="lg" className="flex-1" loading={updatingTicket === t._id} onClick={() => advance(t, 'completed')}>Serve</Button>
+                  </div>
+                )}
                 {view === 'active' && next && canUpdate && (
                   <div className="flex gap-2 border-t border-line p-3">
-                    {t.status === 'pending' && <Button variant="secondary" className="flex-1" onClick={() => advance(t, 'preparing')}>Start now</Button>}
-                    <Button size="lg" className="flex-1" onClick={() => advance(t, next.status)}>{next.label}</Button>
+                    {t.status === 'pending' && <Button variant="secondary" className="flex-1" loading={updatingTicket === t._id} onClick={() => advance(t, 'preparing')}>Start now</Button>}
+                    <Button size="lg" className="flex-1" loading={updatingTicket === t._id} onClick={() => advance(t, next.status)}>{next.label}</Button>
                   </div>
                 )}
               </article>

@@ -156,7 +156,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; description: string; p
   chef: {
     name: 'Kitchen Staff / Chef',
     description: 'Works the kitchen display; no payment access',
-    permissions: [P.KITCHEN_VIEW, P.KITCHEN_UPDATE, P.MENU_VIEW, P.INVENTORY_VIEW],
+    permissions: [P.KITCHEN_VIEW, P.KITCHEN_UPDATE, P.ORDERS_VOID_SENT_ITEM, P.MENU_VIEW, P.INVENTORY_VIEW],
     branchScoped: true,
   },
   storekeeper: {

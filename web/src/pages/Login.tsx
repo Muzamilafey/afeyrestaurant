@@ -25,7 +25,10 @@ export default function Login() {
   const [mode, setMode] = useState<'pin' | 'email'>(terminalToken ? 'pin' : 'email');
   const { data: business, isLoading, isError, isFetching, refetch } = useQuery<PublicBusiness>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000 });
   useEffect(() => setMode(terminalToken ? 'pin' : 'email'), [terminalToken]);
-  if (session) return <Navigate to={from && from !== '/login' ? from : '/'} replace />;
+  if (session) {
+    const roleHome = session.user.role?.key === 'waiter' ? '/pos' : session.user.role?.key === 'cashier' ? '/orders' : null;
+    return <Navigate to={roleHome ?? (from && from !== '/login' ? from : '/')} replace />;
+  }
   // Signing in needs the server; say so instead of spinning forever (refetches automatically when back online).
   if (isError && !business)
     return (

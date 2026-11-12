@@ -46,6 +46,9 @@ function Guard({ perms, feature, children }: { perms?: string[]; feature?: 'bar'
 
 function Home() {
   const { session, can } = useAuth();
+  const role = session?.user.role?.key;
+  if (role === 'waiter') return <Navigate to="/pos" replace />;
+  if (role === 'cashier') return <Navigate to="/orders" replace />;
   // Owners and managers land on the business dashboard; tills, kitchen and bar go straight to their screen.
   if (can('reports.sales')) return <Navigate to="/dashboard" replace />;
   if (can('orders.create')) return <Navigate to="/pos" replace />;

@@ -141,6 +141,7 @@ export function AppShell() {
     return () => { offOrder(); offCall(); };
   }, [branch?.id, floorStaff, notify]);
   if (!session) return null;
+  const isWaiter = session.user.role?.key === 'waiter';
   const items = NAV.filter((n) => can(...n.perms) && (!n.feature || session.business?.settings?.[`${n.feature}Enabled`] === true));
   const isPos = loc.pathname.startsWith('/pos') || loc.pathname.startsWith('/bar-pos');
 
@@ -183,8 +184,8 @@ export function AppShell() {
 
   return (
     <div className="flex h-full">
-      <aside className={cx('hidden shrink-0 border-r border-line bg-card transition-all lg:block', collapsed ? 'w-[76px]' : 'w-60')}>{renderNav(collapsed)}</aside>
-      {open && (
+      {!isWaiter && <aside className={cx('hidden shrink-0 border-r border-line bg-card transition-all lg:block', collapsed ? 'w-[76px]' : 'w-60')}>{renderNav(collapsed)}</aside>}
+      {!isWaiter && open && (
         <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
           <aside className="absolute left-0 top-0 h-full w-72 max-w-[85vw] bg-card shadow-lift" onClick={(e) => e.stopPropagation()}>
@@ -195,9 +196,9 @@ export function AppShell() {
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-card px-3 sm:px-4">
-          <button className="rounded-lg p-2 text-ink-soft hover:bg-page" onClick={() => (window.innerWidth >= 1024 ? setCollapsed(!collapsed) : setOpen(true))} aria-label="Toggle navigation">
+          {!isWaiter && <button className="rounded-lg p-2 text-ink-soft hover:bg-page" onClick={() => (window.innerWidth >= 1024 ? setCollapsed(!collapsed) : setOpen(true))} aria-label="Toggle navigation">
             <Menu className="h-5 w-5" />
-          </button>
+          </button>}
           {session.branches.length > 1 && (
             <label className="flex items-center gap-2 text-sm">
               <Building2 className="h-4 w-4 text-ink-soft" />
@@ -216,6 +217,7 @@ export function AppShell() {
               <Lock className="h-4 w-4" /> Switch user
             </button>
           )}
+          {isWaiter && !terminalToken && <button onClick={logout} className="rounded-xl border border-line px-3 py-1.5 text-sm font-semibold" title="Log out">Log out</button>}
         </header>
         <LiveCopyBanner />
         <AppIconRepair />

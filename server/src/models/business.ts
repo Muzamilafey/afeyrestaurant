@@ -48,6 +48,7 @@ const tenantSchema = new Schema(
       /** Turns on the separate accommodation rooms and stays module. */
       accommodationEnabled: { type: Boolean, default: false },
       accommodationRolesUpgraded: { type: Boolean, default: true },
+      kitchenCancelPermissionUpgraded: { type: Boolean, default: true },
     },
   },
   schemaOpts,

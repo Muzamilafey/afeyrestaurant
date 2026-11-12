@@ -5,6 +5,7 @@ import { PERMISSIONS as P } from '../../auth/permissions';
 import { badRequest, forbidden, notFound } from '../../lib/errors';
 import { emitStation, emitBranch } from '../../realtime/bus';
 import { notify } from '../../services/notify';
+import * as orderService from '../../services/orders';
 
 const m = createModule('/stations', 'Kitchen & Bar');
 
@@ -24,14 +25,40 @@ m.route({ method: 'get', path: '/:station/tickets', summary: 'Active tickets for
 const NEXT: Record<string, string[]> = { pending: ['accepted', 'preparing', 'cancelled'], accepted: ['preparing', 'ready'], preparing: ['ready'], ready: ['completed'], completed: [], cancelled: [] };
 const ITEM_STATUS: Record<string, string> = { accepted: 'accepted', preparing: 'preparing', ready: 'ready', completed: 'served', cancelled: 'cancelled' };
 
-m.route({ method: 'post', path: '/tickets/:id/status', summary: 'Advance a ticket: accepted → preparing → ready → completed', permission: [P.KITCHEN_UPDATE, P.BAR_UPDATE], body: z.object({ status: z.enum(['accepted', 'preparing', 'ready', 'completed', 'cancelled']) }) }, async ({ ctx, params, body }) => {
+m.route({ method: 'post', path: '/tickets/:id/status', summary: 'Serve, cancel, or advance a station ticket', permission: [P.KITCHEN_UPDATE, P.BAR_UPDATE], body: z.object({ status: z.enum(['accepted', 'preparing', 'ready', 'completed', 'cancelled']) }) }, async ({ ctx, params, body }) => {
   const t = await KitchenTicket.findOne({ tenantId: ctx.tenantId, branchId: ctx.branchId, _id: params.id });
   if (!t) throw notFound('Ticket');
   if (!ctx.permissions.has(updatePerm(t.station))) throw forbidden();
   // Already completed (e.g. cleared automatically when the order was paid): tapping "Served" again is a no-op.
   if (t.status === 'completed' && body.status === 'completed') return t;
-  if (!NEXT[t.status].includes(body.status)) throw badRequest(`Cannot move a ${t.status} ticket to ${body.status}`);
-  if (body.status === 'cancelled' && !ctx.permissions.has(P.ORDERS_VOID_SENT_ITEM)) throw forbidden('Cancelling a ticket requires manager permission — void the items from the POS');
+  const kitchenServe = t.station === 'kitchen' && body.status === 'completed' && ['pending', 'accepted', 'preparing', 'ready'].includes(t.status);
+  const kitchenCancel = t.station === 'kitchen' && body.status === 'cancelled' && ['pending', 'accepted', 'preparing', 'ready'].includes(t.status);
+  if (!kitchenServe && !kitchenCancel && !NEXT[t.status].includes(body.status)) throw badRequest(`Cannot move a ${t.status} ticket to ${body.status}`);
+
+  if (kitchenCancel) {
+    if (!ctx.permissions.has(P.ORDERS_VOID_SENT_ITEM)) throw forbidden('Cancelling kitchen items requires the void sent items permission');
+    // Cancel through the order service so totals, combo parts, tickets, and the audit trail stay in sync.
+    const order = await orderService.loadOrder(ctx, String(t.orderId));
+    const roots = new Set<string>();
+    for (const ticketItem of t.items) {
+      if (ticketItem.status === 'cancelled') continue;
+      const line = order.items.find((item) => item.lineId === ticketItem.lineId);
+      if (line && !line.voided) roots.add(line.parentLineId ?? line.lineId);
+    }
+    for (const lineId of roots) {
+      const line = order.items.find((item) => item.lineId === lineId);
+      if (line && !line.voided) await orderService.voidItem(ctx, String(order._id), lineId, 'Cancelled from kitchen display');
+    }
+    const now = new Date();
+    t.status = 'cancelled';
+    t.handledBy = ctx.userId;
+    for (const item of t.items) item.status = 'cancelled';
+    await t.save();
+    emitBranch(ctx.tenantId, ctx.branchId, 'order.updated', { id: String(order._id), number: order.number });
+    emitStation(ctx.tenantId, ctx.branchId, t.station, 'ticket.updated', { id: String(t._id), status: t.status, at: now });
+    return t;
+  }
+
   const now = new Date();
   t.status = body.status;
   if (body.status === 'accepted') t.acceptedAt = now;

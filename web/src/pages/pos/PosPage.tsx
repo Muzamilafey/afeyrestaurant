@@ -113,9 +113,9 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
     const list = OUTLET_MODES[outlet].filter((m) => enabled.includes(m));
     return list.length ? list : ['takeaway'];
   }, [branch, outlet]);
-  const [mode, setMode] = useState<string>(() => modes[0]);
+  const [mode, setMode] = useState<string>(() => session?.user.role?.key === 'waiter' && outlet === 'restaurant' ? 'dine_in' : modes[0]);
   // Switching between the restaurant and bar POS (same page component): reset to that POS's default mode.
-  useEffect(() => { setMode(modes[0]); }, [outlet]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setMode(session?.user.role?.key === 'waiter' && outlet === 'restaurant' ? 'dine_in' : modes[0]); }, [outlet, session?.user.role?.key]); // eslint-disable-line react-hooks/exhaustive-deps
   /** Off: only this POS's part of the menu (bar = categories prepared at the bar). On: the whole menu. */
   const [fullMenu, setFullMenu] = useState(false);
   const [soldOutOpen, setSoldOutOpen] = useState(false);
@@ -142,6 +142,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   // Phones: the order panel is a full-screen sheet opened from a floating button.
   const [showCart, setShowCart] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const waiter = session?.user.role?.key === 'waiter';
 
   useEffect(() => {
     if (params.get('pay') === '1' && order && ['open', 'held'].includes(order.status)) {
@@ -161,10 +162,10 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   }, [params, orderId]);
 
   useEffect(() => {
-    if (!offlineOrderSaved && !orderId && !order && !params.get('table') && mode === 'dine_in' && !tableId && (tablesQ.isSuccess || (!online && !!offlineTables)) && !pickTableFor) {
+    if (!offlineOrderSaved && !orderId && !order && !params.get('table') && mode === 'dine_in' && !tableId && (waiter || tablesQ.isSuccess || (!online && !!offlineTables)) && !pickTableFor) {
       setPickTableFor('new');
     }
-  }, [offlineOrderSaved, orderId, order, params, mode, tableId, online, offlineTables, tablesQ.isSuccess, pickTableFor]);
+  }, [offlineOrderSaved, orderId, order, params, mode, tableId, online, offlineTables, tablesQ.isSuccess, pickTableFor, waiter]);
 
   const categoriesById = useMemo(() => new Map(catalog?.categories.map((c) => [c._id, c]) ?? []), [catalog]);
   const inOutlet = (categoryId: string) => (categoriesById.get(categoryId)?.station === 'bar') === (outlet === 'bar');
@@ -609,6 +610,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
     return (
       <TableSelectionPage
         tables={tables}
+        loading={!tableData && online && tablesQ.isLoading}
         onPick={(id) => { setTableId(id); setPickTableFor(null); }}
         onTakeaway={() => { setPickTableFor(null); setMode('takeaway'); toast('Takeaway selected'); }}
       />
@@ -957,7 +959,7 @@ function TableChoices({ tables, onPick }: { tables: TablesResp['tables']; onPick
     </div>
   );
 }
-function TableSelectionPage({ tables, onPick, onTakeaway }: { tables: TablesResp['tables']; onPick: (id: string) => void; onTakeaway: () => void }) {
+function TableSelectionPage({ tables, loading, onPick, onTakeaway }: { tables: TablesResp['tables']; loading: boolean; onPick: (id: string) => void; onTakeaway: () => void }) {
   return (
     <div className="flex h-full flex-col bg-page">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-card px-4 py-4 sm:px-6">
@@ -969,7 +971,9 @@ function TableSelectionPage({ tables, onPick, onTakeaway }: { tables: TablesResp
         <Button variant="secondary" icon={<ShoppingBag className="h-4 w-4" />} onClick={onTakeaway}>Make it takeaway</Button>
       </header>
       <main className="scroll-thin min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-        {tables.length ? (
+        {loading ? (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <Skeleton key={i} className="h-28" />)}</div>
+        ) : tables.length ? (
           <TableChoices tables={tables} onPick={onPick} />
         ) : (
           <Empty

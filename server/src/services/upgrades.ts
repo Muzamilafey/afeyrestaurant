@@ -28,4 +28,11 @@ export async function runUpgrades() {
     );
     await Tenant.updateOne({ _id: t._id }, { $set: { 'settings.accommodationRolesUpgraded': true } });
   }
+
+  // Kitchen staff can cancel an item from their station ticket; the order service still records the void and audit log.
+  const kitchenCancelPending = await Tenant.find({ 'settings.kitchenCancelPermissionUpgraded': { $ne: true } }).select('_id').lean();
+  for (const t of kitchenCancelPending) {
+    await Role.updateMany({ tenantId: t._id, key: 'chef' }, { $addToSet: { permissions: P.ORDERS_VOID_SENT_ITEM } });
+    await Tenant.updateOne({ _id: t._id }, { $set: { 'settings.kitchenCancelPermissionUpgraded': true } });
+  }
 }

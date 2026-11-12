@@ -89,7 +89,7 @@ m.route({ method: 'get', path: '/sales', summary: 'Sales dashboard: revenue, tre
   return {
     range: { from: s.from, to: s.to },
     summary: { revenue: rev, orders: summary?.orders ?? 0, averageOrderValue: summary?.orders ? Math.round(rev / summary.orders) : 0, discounts: summary?.discounts ?? 0, serviceCharge: summary?.serviceCharge ?? 0, tax: (summary?.taxInclusive ?? 0) + (summary?.taxExclusive ?? 0), refunded: summary?.refunded ?? 0, netSales: rev - (summary?.taxExclusive ?? 0) - (summary?.taxInclusive ?? 0) - (summary?.serviceCharge ?? 0), guests: summary?.guests ?? 0, voids: voids[0] ?? { count: 0, value: 0 } },
-    trend, hourly, byBranch, byCashier, byWaiter, byType, byOutlet: byOutlet.map((x) => ({ outlet: x._id as string, revenue: x.revenue, orders: x.orders })), tips: { total: tipsByStaff.reduce((a, t) => a + t.total, 0), byStaff: tipsByStaff }, topItems: items.slice(0, 20), allItems: items, categories, payments, refunds,
+    trend, hourly, byBranch, byCashier, byWaiter, byType, byOutlet: byOutlet.map((x) => ({ outlet: x._id as string, revenue: x.revenue, orders: x.orders })), tips: { total: tipsByStaff.reduce((a, t) => a + t.total, 0), byStaff: tipsByStaff }, topItems: items.slice(0, 20), popularItems: [...items].sort((a, b) => b.qty - a.qty).slice(0, 20), allItems: items, categories, payments, refunds,
   };
 });
 

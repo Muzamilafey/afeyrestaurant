@@ -12,19 +12,60 @@ import { EndOfDay } from './EndOfDay';
 const PALETTE = ['#07963C', '#2B5FA8', '#F4B942', '#DC4545', '#7A5AF8', '#0EA5A4', '#9CA3AF'];
 const k = (c: number) => `${Math.round(c / 100).toLocaleString()}`;
 
-function useRange() {
+function shiftDateKey(dateKey: string, days: number) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Convert a wall-clock time in the business timezone to its UTC instant. */
+function zonedTimeToUtc(dateKey: string, hour: number, minute: number, second: number, millisecond: number, timezone: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const wanted = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
+  let instant = wanted;
+  const formatter = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  for (let i = 0; i < 4; i++) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(instant)).map((p) => [p.type, p.value]));
+    const observed = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+    const adjustment = wanted - observed;
+    if (!adjustment) break;
+    instant += adjustment;
+  }
+  return new Date(instant);
+}
+
+function dayStart(dateKey: string, timezone: string) {
+  return zonedTimeToUtc(dateKey, 0, 0, 0, 0, timezone);
+}
+
+function dayEnd(dateKey: string, timezone: string) {
+  return new Date(dayStart(shiftDateKey(dateKey, 1), timezone).getTime() - 1);
+}
+
+function useRange(timezone: string) {
   const [preset, setPreset] = useState('today');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const now = new Date();
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
+  const [todayKey, setTodayKey] = useState(() => dateKeyAt(new Date(), timezone));
+  useEffect(() => {
+    const currentKey = dateKeyAt(new Date(), timezone);
+    if (currentKey !== todayKey) {
+      setTodayKey(currentKey);
+      return;
+    }
+    const tomorrow = shiftDateKey(todayKey, 1);
+    const untilTomorrow = dayStart(tomorrow, timezone).getTime() - Date.now() + 100;
+    const timer = window.setTimeout(() => setTodayKey(dateKeyAt(new Date(), timezone)), Math.max(100, untilTomorrow));
+    return () => window.clearTimeout(timer);
+  }, [todayKey, timezone]);
+
+  const yesterday = shiftDateKey(todayKey, -1);
   const ranges: Record<string, [Date, Date]> = {
-    today: [start, now],
-    yesterday: [new Date(start.getTime() - 86400_000), start],
-    '7d': [new Date(start.getTime() - 6 * 86400_000), now],
-    '30d': [new Date(start.getTime() - 29 * 86400_000), now],
-    custom: [from ? new Date(`${from}T00:00:00`) : start, to ? new Date(`${to}T23:59:59`) : now],
+    today: [dayStart(todayKey, timezone), dayEnd(todayKey, timezone)],
+    yesterday: [dayStart(yesterday, timezone), dayEnd(yesterday, timezone)],
+    '7d': [dayStart(shiftDateKey(todayKey, -6), timezone), dayEnd(todayKey, timezone)],
+    '30d': [dayStart(shiftDateKey(todayKey, -29), timezone), dayEnd(todayKey, timezone)],
+    custom: [dayStart(from || todayKey, timezone), dayEnd(to || from || todayKey, timezone)],
   };
   const [f, t] = ranges[preset];
   return { preset, setPreset, from, setFrom, to, setTo, query: { from: f.toISOString(), to: t.toISOString() } };
@@ -33,7 +74,8 @@ function useRange() {
 export default function ReportsPage() {
   const { can, session } = useAuth();
   const [tab, setTab] = useState<'sales' | 'inventory' | 'kitchen' | 'eod'>(can('reports.sales') ? 'sales' : 'inventory');
-  const r = useRange();
+  const timezone = session?.business?.settings?.timezone ?? 'Africa/Nairobi';
+  const r = useRange(timezone);
   const [branch, setBranch] = useState('');
   const [outlet, setOutlet] = useState('');
   const q = { ...r.query, branchId: branch || undefined, outlet: outlet || undefined };
@@ -56,7 +98,7 @@ export default function ReportsPage() {
   );
 }
 
-interface SalesResp { summary: { revenue: number; orders: number; averageOrderValue: number; discounts: number; serviceCharge: number; tax: number; refunded: number; netSales: number; voids: { count: number; value: number } }; trend: Array<{ _id: string; revenue: number; orders: number }>; hourly: Array<{ _id: number; revenue: number }>; payments: Array<{ _id: string; amount: number; count: number; manual: number }>; topItems: Array<{ name: string; qty: number; revenue: number; category?: string }>; categories: Array<{ category: string; revenue: number; qty: number }>; byCashier: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byWaiter: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byType: Array<{ _id: string; revenue: number; orders: number }>; byOutlet?: Array<{ outlet: string; revenue: number; orders: number }>; tips?: { total: number; byStaff: Array<{ userId: string; name: string; cash: number; mpesa: number; total: number; count: number }> }; refunds: Array<{ _id: string; amount: number; count: number }> }
+interface SalesResp { summary: { revenue: number; orders: number; averageOrderValue: number; discounts: number; serviceCharge: number; tax: number; refunded: number; netSales: number; voids: { count: number; value: number } }; trend: Array<{ _id: string; revenue: number; orders: number }>; hourly: Array<{ _id: number; revenue: number }>; payments: Array<{ _id: string; amount: number; count: number; manual: number }>; topItems: Array<{ name: string; qty: number; revenue: number; category?: string }>; popularItems: Array<{ name: string; qty: number; revenue: number; category?: string }>; categories: Array<{ category: string; revenue: number; qty: number }>; byCashier: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byWaiter: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byType: Array<{ _id: string; revenue: number; orders: number }>; byOutlet?: Array<{ outlet: string; revenue: number; orders: number }>; tips?: { total: number; byStaff: Array<{ userId: string; name: string; cash: number; mpesa: number; total: number; count: number }> }; refunds: Array<{ _id: string; amount: number; count: number }> }
 
 function dateKeyAt(value: string | Date, timezone: string) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(value));
@@ -74,7 +116,7 @@ function Sales({ q }: { q: Record<string, string | undefined> }) {
     window.addEventListener('chili:local-orders', refresh);
     return () => window.removeEventListener('chili:local-orders', refresh);
   }, [branchId]);
-  const { data, isLoading, error, refetch } = useQuery<SalesResp>({ queryKey: ['report-sales', q], queryFn: () => get('/reports/sales', q) });
+  const { data, isLoading, error, refetch } = useQuery<SalesResp>({ queryKey: ['report-sales', q], queryFn: () => get('/reports/sales', q), refetchInterval: 60_000 });
   const timezone = session?.business?.settings?.timezone ?? 'Africa/Nairobi';
   const fromKey = q.from ? dateKeyAt(q.from, timezone) : dateKeyAt(new Date(), timezone);
   const toKey = q.to ? dateKeyAt(q.to, timezone) : dateKeyAt(new Date(), timezone);
@@ -104,7 +146,7 @@ function Sales({ q }: { q: Record<string, string | undefined> }) {
     }
     return [...rows.values()].sort((a, b) => b.date.localeCompare(a.date));
   }, [data?.trend, localOrders, timezone, fromKey, toKey, q.outlet]);
-  const dailySales = <Card title="Daily sales by date"><p className="mb-3 text-xs text-ink-soft">Device-only amounts are local estimates and are not sent to the server.</p><DataTable rows={dailyRows} empty="No sales or device orders in this date range" rowKey={(r) => r.date} columns={[
+  const dailySales = <Card title="Daily sales by date"><p className="mb-3 text-xs text-ink-soft">Sales are grouped by payment date in the business timezone and do not depend on a cash drawer session. Device-only amounts are local estimates and are not sent to the server.</p><DataTable rows={dailyRows} empty="No sales or device orders in this date range" rowKey={(r) => r.date} columns={[
     { key: 'd', header: 'Date', render: (r) => r.date },
     { key: 's', header: 'Server sales', render: (r) => <span>{money(r.serverSales)} <small>({r.serverOrders})</small></span> },
     { key: 'p', header: 'Device paid (est.)', render: (r) => <span>{money(r.devicePaid)} <small>({r.devicePaidOrders})</small></span> },
@@ -137,7 +179,8 @@ function Sales({ q }: { q: Record<string, string | undefined> }) {
         <Card title="Revenue by category"><div className="h-56"><ResponsiveContainer><BarChart data={data.categories} layout="vertical"><XAxis type="number" tickFormatter={k} tick={{ fontSize: 11 }} /><YAxis type="category" dataKey="category" width={100} tick={{ fontSize: 11 }} /><Tooltip formatter={(v: number) => money(v)} /><Bar dataKey="revenue" fill="#2B5FA8" radius={[0, 6, 6, 0]} /></BarChart></ResponsiveContainer></div></Card>
       </div>
       <div className="grid gap-4 xl:grid-cols-3">
-        <Card title="Best-selling items" className="xl:col-span-1"><DataTable rows={data.topItems} rowKey={(r) => r.name} columns={[{ key: 'n', header: 'Item', render: (r) => r.name }, { key: 'q', header: 'Qty', render: (r) => r.qty }, { key: 'r', header: 'Revenue', render: (r) => money(r.revenue) }]} /></Card>
+        <Card title="Foods & drinks most ordered" className="xl:col-span-1"><DataTable rows={data.popularItems} rowKey={(r) => r.name} columns={[{ key: 'n', header: 'Item', render: (r) => r.name }, { key: 'q', header: 'Qty', render: (r) => r.qty }, { key: 'r', header: 'Revenue', render: (r) => money(r.revenue) }]} /></Card>
+        <Card title="Top revenue items" className="xl:col-span-1"><DataTable rows={data.topItems} rowKey={(r) => r.name} columns={[{ key: 'n', header: 'Item', render: (r) => r.name }, { key: 'q', header: 'Qty', render: (r) => r.qty }, { key: 'r', header: 'Revenue', render: (r) => money(r.revenue) }]} /></Card>
         <Card title="By cashier"><DataTable rows={data.byCashier} rowKey={(r) => String(r._id)} columns={[{ key: 'n', header: 'Cashier', render: (r) => r.name ?? '—' }, { key: 'o', header: 'Orders', render: (r) => r.orders }, { key: 'r', header: 'Revenue', render: (r) => money(r.revenue) }]} /></Card>
         <Card title={`Tips · ${money(data.tips?.total ?? 0)}`}><DataTable rows={data.tips?.byStaff ?? []} rowKey={(r) => r.userId} empty="No tips in this period" columns={[{ key: 'n', header: 'Staff', render: (r) => r.name }, { key: 'c', header: 'Cash', render: (r) => money(r.cash) }, { key: 'm', header: 'M-Pesa', render: (r) => money(r.mpesa) }, { key: 't', header: 'Total', render: (r) => <b>{money(r.total)}</b> }]} /></Card>
         <Card title="By outlet"><DataTable rows={data.byOutlet ?? []} rowKey={(r) => r.outlet} columns={[{ key: 'n', header: 'Outlet', render: (r) => (r.outlet === 'bar' ? 'Bar POS' : 'Restaurant POS') }, { key: 'o', header: 'Orders', render: (r) => r.orders }, { key: 'r', header: 'Revenue', render: (r) => money(r.revenue) }]} /></Card>
