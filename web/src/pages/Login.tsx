@@ -26,7 +26,7 @@ export default function Login() {
   const { data: business, isLoading, isError, isFetching, refetch } = useQuery<PublicBusiness>({ queryKey: ['public-business'], queryFn: () => get('/business'), staleTime: 60_000 });
   useEffect(() => setMode(terminalToken ? 'pin' : 'email'), [terminalToken]);
   if (session) {
-    const roleHome = session.user.role?.key === 'waiter' ? '/pos' : session.user.role?.key === 'cashier' ? '/orders' : null;
+    const roleHome = session.user.role?.key === 'waiter' ? '/pos?start=table' : session.user.role?.key === 'cashier' ? '/orders' : null;
     return <Navigate to={roleHome ?? (from && from !== '/login' ? from : '/')} replace />;
   }
   // Signing in needs the server; say so instead of spinning forever (refetches automatically when back online).

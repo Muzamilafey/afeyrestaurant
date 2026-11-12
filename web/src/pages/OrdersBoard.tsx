@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, Pencil, Search, Plus, CloudOff, ChevronDown, ChevronRight } from 'lucide-react';
 import { get, post } from '@/lib/api';
@@ -20,13 +20,17 @@ function dateInputValue(date: Date) {
 }
 
 /** Board of open orders — one card per table/ticket with items, subtotal and quick actions. */
-export default function OrdersBoard() {
+export default function OrdersBoard({ initialView = 'current' }: { initialView?: OrdersView }) {
   const nav = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { can, branch, session } = useAuth();
   const { confirm, withApproval, handleError, toast } = useFeedback();
   const qc = useQueryClient();
-  const [view, setView] = useState<OrdersView>(() => searchParams.get('view') === 'device' ? 'device' : searchParams.get('view') === 'sales' ? 'sales' : 'current');
+  const [view, setView] = useState<OrdersView>(() => {
+    const requested = searchParams.get('view');
+    return requested && ['current', 'held', 'paid', 'device', 'sales'].includes(requested) ? requested as OrdersView : initialView;
+  });
   const [q, setQ] = useState('');
   const [datePreset, setDatePreset] = useState<DatePreset>('today');
   const [dateFrom, setDateFrom] = useState('');
@@ -125,6 +129,14 @@ export default function OrdersBoard() {
   const salesTotal = (salesQuery.data?.total ?? 0) + (view === 'sales' ? visibleDeviceOrders.length : 0);
   const changeView = (next: OrdersView) => {
     setView(next);
+    if (next === 'sales') {
+      nav('/sales');
+      return;
+    }
+    if (location.pathname === '/sales') {
+      nav(next === 'current' ? '/orders' : `/orders?view=${next}`);
+      return;
+    }
     setSearchParams(next === 'current' ? {} : { view: next }, { replace: true });
   };
 

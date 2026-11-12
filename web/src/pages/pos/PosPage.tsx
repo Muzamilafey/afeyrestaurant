@@ -133,7 +133,7 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<null | 'transfer' | 'merge' | 'split' | 'held' | 'customer' | 'recent'>(null);
   /** New dine-in orders choose a table before the product workspace. */
-  const [pickTableFor, setPickTableFor] = useState<null | 'new' | 'send' | 'pay'>(null);
+  const [pickTableFor, setPickTableFor] = useState<null | 'new' | 'send' | 'pay'>(() => session?.user.role?.key === 'waiter' && !params.get('order') && !params.get('table') ? 'new' : null);
   /** Delivery: confirm the address and assign a rider before the order is placed. */
   const [pickRiderFor, setPickRiderFor] = useState<null | 'send' | 'pay'>(null);
   const [offlineReceipt, setOfflineReceipt] = useState<Order | null>(null);
@@ -160,6 +160,19 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
       setMode('dine_in');
     }
   }, [params, orderId]);
+
+  useEffect(() => {
+    if (params.get('start') !== 'table') return;
+    const next = new URLSearchParams(params);
+    next.delete('start');
+    next.delete('order');
+    next.delete('table');
+    setParams(next, { replace: true });
+    setTableId('');
+    setMode('dine_in');
+    setDraft([]);
+    setPickTableFor('new');
+  }, [params, setParams]);
 
   useEffect(() => {
     if (!offlineOrderSaved && !orderId && !order && !params.get('table') && mode === 'dine_in' && !tableId && (waiter || tablesQ.isSuccess || (!online && !!offlineTables)) && !pickTableFor) {

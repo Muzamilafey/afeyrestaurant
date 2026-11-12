@@ -22,6 +22,7 @@ const NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard; perm
   { to: '/pos', label: 'Restaurant POS', icon: LayoutGrid, perms: ['orders.create'] },
   { to: '/bar-pos', label: 'Bar POS', icon: Martini, perms: ['orders.create'], feature: 'bar' },
   { to: '/orders', label: 'Orders', icon: ClipboardList, perms: ['orders.view'] },
+  { to: '/sales', label: 'Sales', icon: BarChart3, perms: ['orders.view'] },
   { to: '/tables', label: 'Table Services', icon: Armchair, perms: ['tables.view'] },
   { to: '/kitchen', label: 'Kitchen Orders', icon: ChefHat, perms: ['kitchen.view'] },
   { to: '/bar', label: 'Bar Orders', icon: Wine, perms: ['bar.view'], feature: 'bar' },

@@ -88,6 +88,7 @@ export default function App() {
             <Route path="pos" element={<Guard perms={['orders.create']}><PosPage outlet="restaurant" /></Guard>} />
             <Route path="bar-pos" element={<Guard perms={['orders.create']} feature="bar"><PosPage outlet="bar" /></Guard>} />
             <Route path="orders" element={<Guard perms={['orders.view']}><OrdersBoard /></Guard>} />
+            <Route path="sales" element={<Guard perms={['orders.view']}><OrdersBoard initialView="sales" /></Guard>} />
             <Route path="tables" element={<Guard perms={['tables.view']}><TablesPage /></Guard>} />
             <Route path="kitchen" element={<Guard perms={['kitchen.view']}><StationPage station="kitchen" /></Guard>} />
             <Route path="bar" element={<Guard perms={['bar.view']} feature="bar"><StationPage station="bar" /></Guard>} />
