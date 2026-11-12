@@ -94,28 +94,45 @@ function PinLogin({ business, onUseEmail }: { business: PublicBusiness; onUseEma
   }, [press]);
 
   return (
-    <div className="grid min-h-full place-items-center bg-[#0B0D0C] p-4 sm:p-6">
-      <section className="flex w-full max-w-md flex-col items-center rounded-[28px] border border-white/10 bg-[#111412] px-6 py-8 text-white sm:px-10">
-        <header className="mb-8 flex items-center gap-3 self-start">
-          <BusinessMark name={business.name} logoUrl={business.logoUrl} dark />
-          <p className="truncate font-bold">{business.name}</p>
-        </header>
-        <Lock className="mb-3 h-8 w-8 text-white/60" />
-        <h1 className="text-2xl font-bold">Enter your PIN</h1>
-        <p className="mt-1 text-sm text-white/50">Use your staff PIN to sign in.</p>
-        <div className={cx('my-6 flex min-h-5 gap-4', shake && 'animate-[shake_0.4s]')} aria-live="polite" aria-label={`${pin.length} digits entered`}>
-          {Array.from({ length: Math.max(4, Math.min(6, pin.length + (pin.length >= 4 ? 1 : 0))) }).map((_, i) => (
-            <span key={i} className={cx('h-3.5 w-3.5 rounded-full transition', i < pin.length ? 'bg-white' : 'bg-white/20')} />
-          ))}
+    <div className="min-h-dvh w-full bg-[#0B0D0C] p-3 sm:p-6 lg:p-8">
+      <section className="mx-auto grid min-h-[calc(100dvh-1.5rem)] w-full max-w-6xl overflow-hidden rounded-[28px] border border-white/10 bg-[#111412] text-white shadow-2xl sm:min-h-[calc(100dvh-3rem)] lg:min-h-[calc(100dvh-4rem)] lg:grid-cols-[0.9fr_1.1fr]">
+        <aside className="hidden flex-col justify-between bg-gradient-to-br from-[#17211B] via-[#111412] to-[#0B0D0C] p-10 lg:flex xl:p-14">
+          <header className="flex items-center gap-4">
+            <BusinessMark name={business.name} logoUrl={business.logoUrl} size={56} dark />
+            <p className="max-w-[18rem] truncate text-lg font-bold">{business.name}</p>
+          </header>
+          <div className="max-w-md">
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Staff access</p>
+            <h2 className="mt-4 text-4xl font-bold leading-tight xl:text-5xl">Welcome back</h2>
+            <p className="mt-4 text-base leading-relaxed text-white/60">Enter your staff PIN to open the point of sale.</p>
+          </div>
+          <p className="text-xs text-white/35">Chili POS · Secure staff sign-in</p>
+        </aside>
+
+        <div className="flex min-w-0 flex-col items-center px-5 py-7 sm:px-10 sm:py-9 lg:px-12 lg:py-10">
+          <header className="mb-6 flex w-full items-center gap-3 lg:hidden">
+            <BusinessMark name={business.name} logoUrl={business.logoUrl} dark />
+            <p className="max-w-[calc(100%-3.5rem)] truncate font-bold">{business.name}</p>
+          </header>
+          <main className="my-auto flex w-full max-w-lg flex-col items-center">
+            <Lock className="mb-3 h-8 w-8 text-white/60" />
+            <h1 className="text-2xl font-bold sm:text-3xl">Enter your PIN</h1>
+            <p className="mt-2 text-center text-sm text-white/50">Use your staff PIN to sign in.</p>
+            <div className={cx('my-7 flex min-h-5 gap-4 sm:gap-5', shake && 'animate-[shake_0.4s]')} aria-live="polite" aria-label={`${pin.length} digits entered`}>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <span key={i} className={cx('h-3.5 w-3.5 rounded-full transition sm:h-4 sm:w-4', i < pin.length ? 'bg-white' : 'bg-white/20')} />
+              ))}
+            </div>
+            <p className={cx('mb-4 h-5 text-center text-sm', error ? 'text-[#FF8A8A]' : 'text-white/40')} role={error ? 'alert' : undefined}>{busy ? 'Signing in…' : error ?? '4 to 6 digits'}</p>
+            <div className="grid w-full grid-cols-3 gap-3 sm:gap-4">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => <Key key={d} onClick={() => press(d)}>{d}</Key>)}
+              <Key onClick={() => press('ok')} disabled={pin.length < 4 || busy} className="bg-brand hover:bg-brand-dark" label="Sign in"><Check className="h-7 w-7" /></Key>
+              <Key onClick={() => press('0')} disabled={busy}>0</Key>
+              <Key onClick={() => press('back')} disabled={busy} className="bg-transparent hover:bg-white/10" label="Delete"><Delete className="h-7 w-7" /></Key>
+            </div>
+          </main>
+          <button onClick={onUseEmail} className="mt-7 inline-flex items-center gap-2 text-sm text-white/60 hover:text-white"><Mail className="h-4 w-4" /> Sign in with email instead</button>
         </div>
-        <p className={cx('mb-4 h-5 text-center text-sm', error ? 'text-[#FF8A8A]' : 'text-white/40')} role={error ? 'alert' : undefined}>{busy ? 'Signing in…' : error ?? '4 to 6 digits'}</p>
-        <div className="grid grid-cols-3 gap-3">
-          {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((d) => <Key key={d} onClick={() => press(d)}>{d}</Key>)}
-          <Key onClick={() => press('ok')} disabled={pin.length < 4 || busy} className="bg-brand hover:bg-brand-dark" label="Sign in"><Check className="h-6 w-6" /></Key>
-          <Key onClick={() => press('0')} disabled={busy}>0</Key>
-          <Key onClick={() => press('back')} disabled={busy} className="bg-transparent hover:bg-white/10" label="Delete"><Delete className="h-6 w-6" /></Key>
-        </div>
-        <button onClick={onUseEmail} className="mt-7 inline-flex items-center gap-2 text-sm text-white/60 hover:text-white"><Mail className="h-4 w-4" /> Sign in with email instead</button>
       </section>
       <style>{`@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}`}</style>
     </div>
@@ -124,7 +141,7 @@ function PinLogin({ business, onUseEmail }: { business: PublicBusiness; onUseEma
 
 function Key({ children, onClick, disabled, className, label }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; className?: string; label?: string }) {
   return (
-    <button type="button" aria-label={label} disabled={disabled} onClick={onClick} className={cx('grid h-[72px] w-[72px] select-none place-items-center rounded-2xl bg-white/10 text-2xl font-medium text-white transition hover:bg-white/15 active:scale-95 disabled:opacity-30 sm:h-20 sm:w-20', className)}>
+    <button type="button" aria-label={label} disabled={disabled} onClick={onClick} className={cx('grid h-16 w-full select-none place-items-center rounded-2xl bg-white/10 text-2xl font-medium text-white transition hover:bg-white/15 active:scale-95 disabled:opacity-30 sm:h-20 sm:text-3xl xl:h-24', className)}>
       {children}
     </button>
   );
