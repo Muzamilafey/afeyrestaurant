@@ -104,7 +104,8 @@ function PinLogin({ business, onUseEmail }: { business: PublicBusiness; onUseEma
             <BusinessMark name={business.name} logoUrl={business.logoUrl} size={56} dark />
             <p className="max-w-[18rem] truncate text-lg font-bold">{business.name}</p>
           </header>
-          <div className="max-w-md">
+          <div className="flex max-w-md flex-col items-start">
+            <BusinessMark name={business.name} logoUrl={business.logoUrl} size={160} dark />
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Staff access</p>
             <h2 className="mt-4 text-4xl font-bold leading-tight xl:text-5xl">Welcome back</h2>
             <p className="mt-4 text-base leading-relaxed text-white/60">Enter your staff PIN to open the point of sale.</p>
@@ -174,8 +175,9 @@ function EmailLogin({ business, onUsePin }: { business: PublicBusiness; onUsePin
       <div className="hidden flex-col justify-between bg-brand p-10 text-white lg:flex">
         <div className="flex items-center gap-3 text-xl font-bold"><BusinessMark name={business.name} logoUrl={business.logoUrl} size={44} /> {business.name}</div>
         <div>
-          <h1 className="text-4xl font-bold leading-tight">Good food.<br />Fast service.</h1>
-          <p className="mt-3 max-w-md text-white/80">Orders, kitchen and bar tickets, M-Pesa, inventory, staff attendance and reports in one place.</p>
+          <BusinessMark name={business.name} logoUrl={business.logoUrl} size={160} />
+          <h1 className="mt-8 text-4xl font-bold leading-tight">Welcome back</h1>
+          <p className="mt-3 max-w-md text-white/80">Sign in to continue to {business.name}.</p>
         </div>
         <p className="text-sm text-white/60">Powered by Chili POS</p>
       </div>
