@@ -55,6 +55,7 @@ function Menu() {
   const groups = useQuery<Array<{ _id: string; name: string; minSelect: number; maxSelect: number; options: Array<{ _id?: string; name: string; priceDelta: number }> }>>({ queryKey: ['modifier-groups'], queryFn: () => get('/menu/modifier-groups') });
   const taxes = useQuery<Array<{ _id: string; name: string; active: boolean }>>({ queryKey: ['taxes'], queryFn: () => get('/admin/taxes') });
   const [edit, setEdit] = useState<Partial<Product> | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [cat, setCat] = useState<Partial<Cat> | null>(null);
   const [grp, setGrp] = useState<null | { _id?: string; name: string; minSelect: number; maxSelect: number; options: Array<{ _id?: string; name: string; priceDelta: number }> }>(null);
   const cname = (id: string) => cats.data?.find((c) => c._id === id)?.name ?? '—';
@@ -62,7 +63,7 @@ function Menu() {
 
   async function saveProduct() {
     if (!edit) return;
-    const body = { categoryId: edit.categoryId, name: edit.name, description: edit.description || undefined, imageUrl: edit.imageUrl || undefined, sku: edit.sku || undefined, barcode: edit.barcode || undefined, plu: edit.plu || undefined, price: edit.price, happyHourPrice: edit.happyHourPrice ?? null, status: edit.status, dietary: edit.dietary, allergens: edit.allergens, ageRestricted: edit.ageRestricted, modifierGroupIds: edit.modifierGroupIds, taxRateIds: edit.taxRateIds, station: edit.station, variants: edit.variants, combo: edit.combo?.isCombo ? { isCombo: true, items: (edit.combo.items ?? []).filter((c) => c.productId && c.qty > 0) } : { isCombo: false, items: [] }, etims: { itemClsCd: edit.etims?.itemClsCd?.trim() ?? '', taxTyCd: edit.etims?.taxTyCd ?? '' } };
+    const body = { categoryId: edit.categoryId, name: edit.name, description: edit.description || undefined, imageUrl: edit.imageUrl, sku: edit.sku || undefined, barcode: edit.barcode || undefined, plu: edit.plu || undefined, price: edit.price, happyHourPrice: edit.happyHourPrice ?? null, status: edit.status, dietary: edit.dietary, allergens: edit.allergens, ageRestricted: edit.ageRestricted, modifierGroupIds: edit.modifierGroupIds, taxRateIds: edit.taxRateIds, station: edit.station, variants: edit.variants, combo: edit.combo?.isCombo ? { isCombo: true, items: (edit.combo.items ?? []).filter((c) => c.productId && c.qty > 0) } : { isCombo: false, items: [] }, etims: { itemClsCd: edit.etims?.itemClsCd?.trim() ?? '', taxTyCd: edit.etims?.taxTyCd ?? '' } };
     try {
       if (edit._id) {
         let reason: string | undefined;
@@ -81,13 +82,17 @@ function Menu() {
     }
   }
   async function upload(file: File) {
+    if (file.size > 5 * 1024 * 1024) return toast('Choose an image smaller than 5 MB', 'error');
     const fd = new FormData();
     fd.append('file', file);
+    setUploadingImage(true);
     try {
       const r = await api<{ url: string }>('/menu/uploads/image', { method: 'POST', body: fd });
       setEdit((e) => ({ ...e, imageUrl: r.url }));
     } catch (e) {
       handleError(e);
+    } finally {
+      setUploadingImage(false);
     }
   }
   const DIET = ['vegetarian', 'vegan', 'halal', 'gluten_free', 'spicy', 'dairy_free', 'contains_nuts'];
@@ -111,7 +116,7 @@ function Menu() {
       </div>
 
       {edit && (
-        <Modal open onClose={() => setEdit(null)} title={edit._id ? `Edit ${edit.name}` : 'New product'} size="xl" footer={<Button onClick={saveProduct}>Save</Button>}>
+        <Modal open onClose={() => !uploadingImage && setEdit(null)} title={edit._id ? `Edit ${edit.name}` : 'New product'} size="xl" footer={<Button disabled={uploadingImage} onClick={saveProduct}>{uploadingImage ? 'Uploading image…' : 'Save'}</Button>}>
           <div className="grid gap-3 md:grid-cols-3">
             <Field label="Name" className="md:col-span-2"><Input value={edit.name ?? ''} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <Field label="Category"><Select value={edit.categoryId ?? ''} onChange={(e) => setEdit({ ...edit, categoryId: e.target.value })}>{cats.data?.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}</Select></Field>
@@ -122,7 +127,7 @@ function Menu() {
             <Field label="Barcode"><Input value={edit.barcode ?? ''} onChange={(e) => setEdit({ ...edit, barcode: e.target.value })} /></Field>
             <Field label="PLU"><Input value={edit.plu ?? ''} onChange={(e) => setEdit({ ...edit, plu: e.target.value })} /></Field>
             <Field label="Station"><Select value={edit.station} onChange={(e) => setEdit({ ...edit, station: e.target.value })}><option value="inherit">From category</option><option value="kitchen">Kitchen</option><option value="bar">Bar</option><option value="none">None (counter)</option></Select></Field>
-            <Field label="Image" className="md:col-span-2"><div className="flex items-center gap-2">{edit.imageUrl && <img src={edit.imageUrl} alt="" className="h-10 w-14 rounded-lg object-cover" />}<label className="btn-secondary cursor-pointer"><Upload className="h-4 w-4" /> Upload<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} /></label></div></Field>
+            <Field label="Product image" hint="Upload a JPG, PNG or WebP from this device (up to 5 MB)." className="md:col-span-2"><div className="flex flex-wrap items-center gap-3">{edit.imageUrl ? <img src={edit.imageUrl} alt={`${edit.name ?? 'Product'} preview`} className="h-20 w-24 rounded-xl border border-line object-cover" /> : <div className="grid h-20 w-24 place-items-center rounded-xl border border-dashed border-line bg-page text-xs text-ink-soft">No image</div>}<div className="flex items-center gap-2"><label className={`btn-secondary cursor-pointer ${uploadingImage ? 'pointer-events-none opacity-60' : ''}`}><Upload className="h-4 w-4" />{uploadingImage ? 'Uploading…' : 'Upload from device'}<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={uploadingImage} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void upload(file); }} /></label>{edit.imageUrl && <Button variant="ghost" disabled={uploadingImage} onClick={() => setEdit({ ...edit, imageUrl: '' })}>Remove image</Button>}</div></div></Field>
             <Field label="Description" className="md:col-span-3"><Textarea value={edit.description ?? ''} onChange={(e) => setEdit({ ...edit, description: e.target.value })} /></Field>
             <div className="md:col-span-3"><p className="label">Dietary labels</p><div className="flex flex-wrap gap-2">{DIET.map((d) => <button type="button" key={d} onClick={() => setEdit({ ...edit, dietary: edit.dietary?.includes(d) ? edit.dietary.filter((x) => x !== d) : [...(edit.dietary ?? []), d] })} className={`rounded-full border px-3 py-1 text-xs font-semibold ${edit.dietary?.includes(d) ? 'border-brand bg-brand-pale text-brand-dark' : 'border-line'}`}>{titleCase(d)}</button>)}</div></div>
             <Field label="Allergens (comma separated)" className="md:col-span-2"><Input value={(edit.allergens ?? []).join(', ')} onChange={(e) => setEdit({ ...edit, allergens: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} /></Field>

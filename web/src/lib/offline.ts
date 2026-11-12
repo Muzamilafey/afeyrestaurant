@@ -45,11 +45,16 @@ export interface LocalOfflineOrder {
   tableNumber?: string;
   customerName?: string;
   customerPhone?: string;
+  createdBy?: string;
   deliveryAddress?: string;
   items: Array<{ lineId: string; productId: string; name: string; qty: number; unitPrice: number; variant?: string; modifiers: string[]; notes?: string; station: string }>;
   subtotal: number;
   serviceCharge: number;
   total: number;
+  paymentStatus?: 'unpaid' | 'paid';
+  paymentMethod?: 'cash' | 'card' | 'mpesa';
+  paidAt?: string;
+  paidBy?: string;
 }
 
 let dbp: Promise<IDBPDatabase<ChiliDB>> | null = null;
@@ -89,8 +94,19 @@ export async function saveLocalOrder(order: LocalOfflineOrder) {
   await (await db()).put('localOrders', order);
   window.dispatchEvent(new Event('chili:local-orders'));
 }
-export async function localOrders(branchId: string): Promise<LocalOfflineOrder[]> {
-  return (await (await db()).getAllFromIndex('localOrders', 'byBranch', branchId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+export async function localOrders(branchId?: string): Promise<LocalOfflineOrder[]> {
+  const d = await db();
+  const orders = branchId ? await d.getAllFromIndex('localOrders', 'byBranch', branchId) : await d.getAll('localOrders');
+  return orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+export async function markLocalOrderPaid(id: string, paymentMethod: 'cash' | 'card' | 'mpesa', paidBy: string) {
+  const d = await db();
+  const order = await d.get('localOrders', id);
+  if (!order || order.paymentStatus === 'paid') return order ?? null;
+  const paid = { ...order, paymentStatus: 'paid' as const, paymentMethod, paidAt: new Date().toISOString(), paidBy };
+  await d.put('localOrders', paid);
+  window.dispatchEvent(new Event('chili:local-orders'));
+  return paid;
 }
 
 export async function queueOfflineOrder(branchId: string, payload: OfflineOrderPayload) {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { TrendingUp, Receipt, Wallet, Percent, Download, Package, AlertTriangle } from 'lucide-react';
@@ -6,6 +6,7 @@ import { download, get } from '@/lib/api';
 import { money, titleCase } from '@/lib/format';
 import { Button, Card, DataTable, Input, PageHeader, Pill, Select, Skeleton, Stat, Tabs, ErrorBox } from '@/components/ui';
 import { useAuth } from '@/auth/AuthContext';
+import { localOrders as readLocalOrders, type LocalOfflineOrder } from '@/lib/offline';
 import { EndOfDay } from './EndOfDay';
 
 const PALETTE = ['#07963C', '#2B5FA8', '#F4B942', '#DC4545', '#7A5AF8', '#0EA5A4', '#9CA3AF'];
@@ -21,8 +22,8 @@ function useRange() {
   const ranges: Record<string, [Date, Date]> = {
     today: [start, now],
     yesterday: [new Date(start.getTime() - 86400_000), start],
-    week: [new Date(start.getTime() - ((start.getDay() + 6) % 7) * 86400_000), now],
-    month: [new Date(start.getFullYear(), start.getMonth(), 1), now],
+    '7d': [new Date(start.getTime() - 6 * 86400_000), now],
+    '30d': [new Date(start.getTime() - 29 * 86400_000), now],
     custom: [from ? new Date(`${from}T00:00:00`) : start, to ? new Date(`${to}T23:59:59`) : now],
   };
   const [f, t] = ranges[preset];
@@ -38,9 +39,9 @@ export default function ReportsPage() {
   const q = { ...r.query, branchId: branch || undefined, outlet: outlet || undefined };
   return (
     <div>
-      <PageHeader title="Reports & analytics" subtitle="Server-side reports scoped to your branches" actions={
+      <PageHeader title="Reports & analytics" subtitle="Branch reports with device-only offline sales shown separately" actions={
         <>
-          <Select value={r.preset} onChange={(e) => r.setPreset(e.target.value)} className="w-36"><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="week">This week</option><option value="month">This month</option><option value="custom">Custom</option></Select>
+          <Select value={r.preset} onChange={(e) => r.setPreset(e.target.value)} className="w-36"><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="7d">7 days</option><option value="30d">30 days</option><option value="custom">Date filter</option></Select>
           {r.preset === 'custom' && <><Input type="date" className="w-40" value={r.from} onChange={(e) => r.setFrom(e.target.value)} /><Input type="date" className="w-40" value={r.to} onChange={(e) => r.setTo(e.target.value)} /></>}
           <Select value={outlet} onChange={(e) => setOutlet(e.target.value)} className="w-40" aria-label="Outlet"><option value="">Restaurant + bar</option><option value="restaurant">Restaurant POS</option><option value="bar">Bar POS</option></Select>
           {(session?.branches.length ?? 0) > 1 && <Select value={branch} onChange={(e) => setBranch(e.target.value)} className="w-44"><option value="">Active branch</option>{session?.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}<option value="all">All branches</option></Select>}
@@ -57,10 +58,61 @@ export default function ReportsPage() {
 
 interface SalesResp { summary: { revenue: number; orders: number; averageOrderValue: number; discounts: number; serviceCharge: number; tax: number; refunded: number; netSales: number; voids: { count: number; value: number } }; trend: Array<{ _id: string; revenue: number; orders: number }>; hourly: Array<{ _id: number; revenue: number }>; payments: Array<{ _id: string; amount: number; count: number; manual: number }>; topItems: Array<{ name: string; qty: number; revenue: number; category?: string }>; categories: Array<{ category: string; revenue: number; qty: number }>; byCashier: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byWaiter: Array<{ _id: string; name?: string; revenue: number; orders: number }>; byType: Array<{ _id: string; revenue: number; orders: number }>; byOutlet?: Array<{ outlet: string; revenue: number; orders: number }>; tips?: { total: number; byStaff: Array<{ userId: string; name: string; cash: number; mpesa: number; total: number; count: number }> }; refunds: Array<{ _id: string; amount: number; count: number }> }
 
+function dateKeyAt(value: string | Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(value));
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
 function Sales({ q }: { q: Record<string, string | undefined> }) {
+  const { session } = useAuth();
+  const [localOrders, setLocalOrders] = useState<LocalOfflineOrder[]>([]);
+  const branchId = q.branchId === 'all' ? undefined : q.branchId ?? session?.activeBranchId ?? undefined;
+  useEffect(() => {
+    const refresh = () => readLocalOrders(branchId).then(setLocalOrders).catch(() => setLocalOrders([]));
+    refresh();
+    window.addEventListener('chili:local-orders', refresh);
+    return () => window.removeEventListener('chili:local-orders', refresh);
+  }, [branchId]);
   const { data, isLoading, error, refetch } = useQuery<SalesResp>({ queryKey: ['report-sales', q], queryFn: () => get('/reports/sales', q) });
-  if (error) return <ErrorBox error={error} onRetry={() => refetch()} />;
-  if (isLoading || !data) return <div className="grid gap-3 md:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24" />)}<Skeleton className="h-72 md:col-span-4" /></div>;
+  const timezone = session?.business?.settings?.timezone ?? 'Africa/Nairobi';
+  const fromKey = q.from ? dateKeyAt(q.from, timezone) : dateKeyAt(new Date(), timezone);
+  const toKey = q.to ? dateKeyAt(q.to, timezone) : dateKeyAt(new Date(), timezone);
+  const dailyRows = useMemo(() => {
+    const rows = new Map<string, { date: string; serverSales: number; serverOrders: number; devicePaid: number; devicePaidOrders: number; deviceUnpaid: number; deviceUnpaidOrders: number }>();
+    const rowFor = (date: string) => {
+      let row = rows.get(date);
+      if (!row) { row = { date, serverSales: 0, serverOrders: 0, devicePaid: 0, devicePaidOrders: 0, deviceUnpaid: 0, deviceUnpaidOrders: 0 }; rows.set(date, row); }
+      return row;
+    };
+    const day = new Date(`${fromKey}T00:00:00.000Z`);
+    const lastDay = new Date(`${toKey}T00:00:00.000Z`);
+    for (; day <= lastDay; day.setUTCDate(day.getUTCDate() + 1)) rowFor(day.toISOString().slice(0, 10));
+    for (const trend of data?.trend ?? []) {
+      const date = trend._id.slice(0, 10);
+      const row = rowFor(date);
+      row.serverSales += trend.revenue;
+      row.serverOrders += trend.orders;
+    }
+    for (const order of localOrders) {
+      if (q.outlet && order.outlet !== q.outlet) continue;
+      const date = dateKeyAt(order.paymentStatus === 'paid' ? order.paidAt ?? order.createdAt : order.createdAt, timezone);
+      if (date < fromKey || date > toKey) continue;
+      const row = rowFor(date);
+      if (order.paymentStatus === 'paid') { row.devicePaid += order.total; row.devicePaidOrders++; }
+      else { row.deviceUnpaid += order.total; row.deviceUnpaidOrders++; }
+    }
+    return [...rows.values()].sort((a, b) => b.date.localeCompare(a.date));
+  }, [data?.trend, localOrders, timezone, fromKey, toKey, q.outlet]);
+  const dailySales = <Card title="Daily sales by date"><p className="mb-3 text-xs text-ink-soft">Device-only amounts are local estimates and are not sent to the server.</p><DataTable rows={dailyRows} empty="No sales or device orders in this date range" rowKey={(r) => r.date} columns={[
+    { key: 'd', header: 'Date', render: (r) => r.date },
+    { key: 's', header: 'Server sales', render: (r) => <span>{money(r.serverSales)} <small>({r.serverOrders})</small></span> },
+    { key: 'p', header: 'Device paid (est.)', render: (r) => <span>{money(r.devicePaid)} <small>({r.devicePaidOrders})</small></span> },
+    { key: 'u', header: 'Device unpaid (est.)', render: (r) => <span>{money(r.deviceUnpaid)} <small>({r.deviceUnpaidOrders})</small></span> },
+    { key: 't', header: 'Total paid', render: (r) => <b>{money(r.serverSales + r.devicePaid)}</b> },
+  ]} /></Card>;
+  if (error) return <div className="space-y-4"><ErrorBox error={error} onRetry={() => refetch()} />{dailySales}</div>;
+  if (isLoading || !data) return <div className="space-y-4"><div className="grid gap-3 md:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24" />)}<Skeleton className="h-72 md:col-span-4" /></div>{localOrders.length > 0 && dailySales}</div>;
   const s = data.summary;
   return (
     <div className="space-y-4">
@@ -70,6 +122,7 @@ function Sales({ q }: { q: Record<string, string | undefined> }) {
         <Stat label="Discounts" value={money(s.discounts)} hint={`Voids: ${s.voids.count} (${money(s.voids.value)})`} icon={<Percent className="h-5 w-5" />} tone="yellow" />
         <Stat label="Refunds" value={money(s.refunded)} hint={`Tax collected ${money(s.tax)}`} icon={<Wallet className="h-5 w-5" />} tone={s.refunded ? 'red' : 'default'} />
       </div>
+      {dailySales}
       <div className="grid gap-4 xl:grid-cols-3">
         <Card title="Sales trend" className="xl:col-span-2" actions={<Button size="sm" variant="secondary" icon={<Download className="h-4 w-4" />} onClick={() => download('/reports/sales/export', q, 'sales.csv')}>CSV</Button>}>
           <div className="h-64"><ResponsiveContainer><AreaChart data={data.trend}><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#07963C" stopOpacity={0.35} /><stop offset="100%" stopColor="#07963C" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="#E4E8E5" vertical={false} /><XAxis dataKey="_id" tick={{ fontSize: 11 }} /><YAxis tickFormatter={k} tick={{ fontSize: 11 }} width={60} /><Tooltip formatter={(v: number) => money(v)} /><Area dataKey="revenue" stroke="#07963C" fill="url(#g)" strokeWidth={2} /></AreaChart></ResponsiveContainer></div>

@@ -392,9 +392,9 @@ export default function PosPage({ outlet = 'restaurant' }: { outlet?: Outlet }) 
       id, branchId, number: `LOCAL-${id.slice(0, 6).toUpperCase()}`, createdAt, outlet, type,
       tableId: mode === 'dine_in' ? table || undefined : undefined,
       tableNumber: mode === 'dine_in' ? tableNumber : undefined,
-      customerName: customer || undefined, customerPhone: phone || undefined,
+      customerName: customer || undefined, customerPhone: phone || undefined, createdBy: session?.user.name,
       deliveryAddress: mode === 'delivery' ? address || undefined : undefined,
-      items, subtotal, serviceCharge, total: subtotal + serviceCharge,
+      items, subtotal, serviceCharge, total: subtotal + serviceCharge, paymentStatus: 'unpaid',
     };
     await saveLocalOrder(saved);
     setOfflineOrderSaved(saved);
